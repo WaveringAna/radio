@@ -812,7 +812,7 @@ async fn enqueue_song(
     State(state): State<AppState>,
     session_token: SessionToken,
     Json(payload): Json<EnqueueSongRequest>,
-) -> Result<Json<crate::radio::QueueItem>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<crate::radio::RadioSnapshot>, (StatusCode, Json<ErrorResponse>)> {
     let session = admin_session(&state, session_token.0.as_deref()).await?;
 
     state

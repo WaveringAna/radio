@@ -728,18 +728,15 @@ impl RadioService {
         &self,
         song_id: &str,
         admin_did: &str,
-    ) -> anyhow::Result<QueueItem> {
+    ) -> anyhow::Result<RadioSnapshot> {
         if find_song(&self.db, song_id).await?.is_none() {
             return Err(anyhow!("song not found"));
         }
 
-        let queue_id = append_queue_item(&self.db, song_id, admin_did).await?;
-        let item = queue_item(&self.db, &queue_id)
-            .await?
-            .ok_or_else(|| anyhow!("inserted queue item disappeared"))?;
+        append_queue_item(&self.db, song_id, admin_did).await?;
         play_next_if_idle(&self.db, admin_did).await?;
         self.broadcast_snapshot().await;
-        Ok(item)
+        self.snapshot().await
     }
 
     /// Appends multiple songs to the queue in order with a single broadcast.
@@ -1113,22 +1110,6 @@ async fn album_loops(db: &Database) -> anyhow::Result<Vec<RadioAlbum>> {
     }
 
     Ok(albums)
-}
-
-async fn queue_item(db: &Database, queue_id: &str) -> anyhow::Result<Option<QueueItem>> {
-    sqlx::query_as::<_, QueueItem>(
-        r#"
-        select radio_queue.id, radio_queue.position, radio_queue.queued_by_did,
-            songs.id as song_id, songs.title, songs.artist, songs.album, songs.added_by_did
-        from radio_queue
-        join songs on songs.id = radio_queue.song_id
-        where radio_queue.id = ?
-        "#,
-    )
-    .bind(queue_id)
-    .fetch_optional(db.pool())
-    .await
-    .context("loading queue item")
 }
 
 async fn append_queue_item(

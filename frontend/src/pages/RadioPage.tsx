@@ -149,6 +149,35 @@ export default function RadioPage(props: RadioPageProps) {
     onCleanup(() => window.clearInterval(interval))
   })
 
+  // Merges incoming queue items with the current localQueue, reusing the
+  // existing object reference whenever an id is unchanged. Snapshots arrive
+  // with all-new objects on every WS push, so without this <For> would remount
+  // every row on every broadcast.
+  const mergeQueue = (incoming: QueueItem[]): QueueItem[] => {
+    const existing = new Map(untrack(() => localQueue()).map((item) => [item.id, item]))
+    return incoming.map((item) => {
+      const prev = existing.get(item.id)
+      if (
+        prev &&
+        prev.songId === item.songId &&
+        prev.position === item.position &&
+        prev.queuedByDid === item.queuedByDid &&
+        prev.title === item.title &&
+        prev.artist === item.artist &&
+        prev.album === item.album &&
+        prev.addedByDid === item.addedByDid
+      ) {
+        return prev
+      }
+      return item
+    })
+  }
+
+  const applyMergedQueue = (incoming: QueueItem[]) => {
+    const filtered = incoming.filter((item) => !consumedQueueIds.has(item.id))
+    setLocalQueue(mergeQueue(filtered))
+  }
+
   // Snapshot diff: cold-start init, admin-action resync, queue-only merge.
   // Compare song id against what's locally playing, not against the previous
   // snapshot — the frontend self-advances ahead of the backend, so a snapshot
@@ -170,36 +199,65 @@ export default function RadioPage(props: RadioPageProps) {
         setLocalQueue(snap.queue)
         setLocalCurrentSong(snap.currentSong ?? null)
       } else {
-        setLocalQueue(snap.queue.filter((item) => !consumedQueueIds.has(item.id)))
+        applyMergedQueue(snap.queue)
       }
       if (!isFirst) {
         void applyBackendPlayback(snap.state, snap.currentSong ?? null, songChanged)
       }
     } else {
-      setLocalQueue(snap.queue.filter((item) => !consumedQueueIds.has(item.id)))
+      applyMergedQueue(snap.queue)
     }
   })
 
   createEffect(() => {
-    const socket = openRadioSocket()
+    let socket: WebSocket | null = null
+    let reconnectTimer: number | null = null
+    let reconnectAttempt = 0
+    let cancelled = false
 
-    socket.addEventListener('message', (message) => {
-      const event = JSON.parse(message.data) as RadioEvent
-      if (event.type === 'snapshotChanged') {
-        mutate(event.snapshot)
-        // Don't refetch songs/albums here — most snapshot events are queue
-        // mutations that don't affect the library. Local actions that do
-        // change the library refetch explicitly.
+    const connect = () => {
+      if (cancelled) return
+      socket = openRadioSocket()
+
+      socket.addEventListener('open', () => {
+        reconnectAttempt = 0
+      })
+
+      socket.addEventListener('message', (message) => {
+        const event = JSON.parse(message.data) as RadioEvent
+        if (event.type === 'snapshotChanged') {
+          mutate(event.snapshot)
+          // Don't refetch songs/albums here — most snapshot events are queue
+          // mutations that don't affect the library. Local actions that do
+          // change the library refetch explicitly.
+        }
+      })
+
+      const scheduleReconnect = () => {
+        if (cancelled || reconnectTimer !== null) return
+        // Refetch on every drop so state stays fresh while we wait to reopen.
+        void refetch()
+        void refetchSongs()
+        void refetchAlbums()
+        const delay = Math.min(30000, 500 * 2 ** Math.min(reconnectAttempt, 6))
+        reconnectAttempt += 1
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null
+          connect()
+        }, delay)
       }
-    })
 
-    socket.addEventListener('close', () => {
-      void refetch()
-      void refetchSongs()
-      void refetchAlbums()
-    })
+      socket.addEventListener('close', scheduleReconnect)
+      socket.addEventListener('error', () => socket?.close())
+    }
 
-    onCleanup(() => socket.close())
+    connect()
+
+    onCleanup(() => {
+      cancelled = true
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      socket?.close()
+    })
   })
 
   createEffect(() => {
@@ -350,8 +408,7 @@ export default function RadioPage(props: RadioPageProps) {
   const addSongToQueue = async (songId: string) => {
     try {
       setPageError(null)
-      await enqueueSong(songId)
-      // WS broadcast will deliver the updated snapshot.
+      mutate(await enqueueSong(songId))
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'queue add faceplanted.')
     }

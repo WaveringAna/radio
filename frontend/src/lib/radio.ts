@@ -287,7 +287,7 @@ export async function enqueueAlbum(songIds: string[]): Promise<RadioSnapshot> {
   return (await response.json()) as RadioSnapshot
 }
 
-export async function enqueueSong(songId: string): Promise<QueueItem> {
+export async function enqueueSong(songId: string): Promise<RadioSnapshot> {
   const response = await fetch(`${API_BASE}/api/radio/queue`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...authHeaders() },
@@ -299,7 +299,7 @@ export async function enqueueSong(songId: string): Promise<QueueItem> {
     throw new Error('failed to add song to queue')
   }
 
-  return (await response.json()) as QueueItem
+  return (await response.json()) as RadioSnapshot
 }
 
 /**
