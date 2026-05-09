@@ -1,3 +1,5 @@
+import { API_BASE } from './radio'
+
 /**
  * Auth session payload returned by the backend.
  */
@@ -36,7 +38,7 @@ export interface AdminPermissionsResponse {
  * @throws Error When the backend session endpoint fails.
  */
 export async function fetchSession(): Promise<SessionResponse> {
-  const response = await fetch('/api/session', {
+  const response = await fetch(`${API_BASE}/api/session`, {
     credentials: 'include',
   })
 
@@ -53,7 +55,7 @@ export async function fetchSession(): Promise<SessionResponse> {
  * @throws Error When the current session is not an admin or the request fails.
  */
 export async function fetchAdminPermissions(): Promise<AdminPermissionsResponse> {
-  const response = await fetch('/api/admin/permissions', {
+  const response = await fetch(`${API_BASE}/api/admin/permissions`, {
     credentials: 'include',
   })
 
@@ -79,7 +81,7 @@ export async function fetchAdminPermissions(): Promise<AdminPermissionsResponse>
  * @throws Error When the request fails.
  */
 export async function addAdminDid(did: string): Promise<AdminPermissionsResponse> {
-  const response = await fetch('/api/admin/dids', {
+  const response = await fetch(`${API_BASE}/api/admin/dids`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     credentials: 'include',
@@ -100,7 +102,7 @@ export async function addAdminDid(did: string): Promise<AdminPermissionsResponse
  * @throws Error When the request fails.
  */
 export async function removeAdminDid(did: string): Promise<AdminPermissionsResponse> {
-  const response = await fetch(`/api/admin/dids/${encodeURIComponent(did)}`, {
+  const response = await fetch(`${API_BASE}/api/admin/dids/${encodeURIComponent(did)}`, {
     method: 'DELETE',
     credentials: 'include',
   })
@@ -123,7 +125,7 @@ export function startSignIn(input: string): void {
     throw new Error('please enter a handle or did first.')
   }
 
-  window.location.assign(`/api/oauth/start?input=${encodeURIComponent(value)}`)
+  window.location.assign(`${API_BASE}/api/oauth/start?input=${encodeURIComponent(value)}`)
 }
 
 /**
@@ -132,7 +134,7 @@ export function startSignIn(input: string): void {
  * @throws Error When the backend logout endpoint fails.
  */
 export async function signOut(): Promise<void> {
-  const response = await fetch('/api/logout', {
+  const response = await fetch(`${API_BASE}/api/logout`, {
     method: 'POST',
     credentials: 'include',
   })
