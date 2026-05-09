@@ -65,6 +65,7 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .route("/api/radio/state", get(get_radio_state))
         .route("/api/radio/ws", get(radio_ws))
         .route("/api/radio/queue", post(enqueue_song))
+        .route("/api/radio/queue/album", post(enqueue_album))
         .route("/api/radio/queue/{queue_id}", delete(remove_queue_item))
         .route("/api/radio/control/{action}", post(control_radio))
         .route("/api/songs", get(get_songs).post(upload_song))
@@ -182,6 +183,12 @@ struct EnqueueSongRequest {
 #[derive(Deserialize)]
 struct AdminDidRequest {
     did: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EnqueueAlbumRequest {
+    song_ids: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -598,6 +605,20 @@ async fn enqueue_song(
     state
         .radio
         .enqueue_song(&payload.song_id, &session.account_did)
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
+async fn enqueue_album(
+    State(state): State<AppState>,
+    session_token: SessionToken,
+    Json(payload): Json<EnqueueAlbumRequest>,
+) -> Result<Json<crate::radio::RadioSnapshot>, (StatusCode, Json<ErrorResponse>)> {
+    let session = admin_session(&state, session_token.0.as_deref()).await?;
+    state
+        .radio
+        .enqueue_songs(&payload.song_ids, &session.account_did)
         .await
         .map(Json)
         .map_err(internal_api_error)

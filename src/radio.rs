@@ -496,6 +496,47 @@ impl RadioService {
         Ok(item)
     }
 
+    /// Appends multiple songs to the queue in order with a single broadcast.
+    ///
+    /// # Errors
+    /// Returns an error when any song is not found or sqlite persistence fails.
+    pub(crate) async fn enqueue_songs(
+        &self,
+        song_ids: &[String],
+        admin_did: &str,
+    ) -> anyhow::Result<RadioSnapshot> {
+        for song_id in song_ids {
+            if find_song(&self.db, song_id).await?.is_none() {
+                return Err(anyhow!("song not found: {song_id}"));
+            }
+        }
+
+        let base_position = sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_queue")
+            .fetch_one(self.db.pool())
+            .await
+            .context("loading max queue position")?
+            .unwrap_or(0);
+
+        for (i, song_id) in song_ids.iter().enumerate() {
+            let id = Uuid::new_v4().to_string();
+            let position = base_position + i as i64 + 1;
+            sqlx::query(
+                "insert into radio_queue (id, song_id, position, queued_by_did) values (?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(song_id)
+            .bind(position)
+            .bind(admin_did)
+            .execute(self.db.pool())
+            .await
+            .context("inserting queue item")?;
+        }
+
+        play_next_if_idle(&self.db, admin_did).await?;
+        self.broadcast_snapshot().await;
+        self.snapshot().await
+    }
+
     /// Removes an item from the queue.
     ///
     /// # Errors

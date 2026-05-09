@@ -5,6 +5,7 @@ import { extractAudioMetadata, type ExtractedAudioMetadata } from './audioMetada
 import {
   API_BASE,
   controlRadio,
+  enqueueAlbum,
   enqueueSong,
   fetchAlbums,
   fetchRadioSnapshot,
@@ -433,10 +434,7 @@ export default function RadioPage(props: RadioPageProps) {
   const addAlbumToQueue = async (songIds: string[]) => {
     try {
       setUploadError(null)
-      for (const songId of songIds) {
-        await enqueueSong(songId)
-      }
-      await refetch()
+      mutate(await enqueueAlbum(songIds))
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : 'album queue add faceplanted.')
     }

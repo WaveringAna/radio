@@ -231,6 +231,21 @@ export async function fetchSongs(): Promise<Song[]> {
  * @returns The created queue item.
  * @throws Error When the backend request fails.
  */
+export async function enqueueAlbum(songIds: string[]): Promise<RadioSnapshot> {
+  const response = await fetch(`${API_BASE}/api/radio/queue/album`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    credentials: 'include',
+    body: JSON.stringify({ songIds }),
+  })
+
+  if (!response.ok) {
+    throw new Error('failed to queue album')
+  }
+
+  return (await response.json()) as RadioSnapshot
+}
+
 export async function enqueueSong(songId: string): Promise<QueueItem> {
   const response = await fetch(`${API_BASE}/api/radio/queue`, {
     method: 'POST',
