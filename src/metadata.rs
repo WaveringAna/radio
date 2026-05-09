@@ -13,7 +13,10 @@ pub(crate) async fn fetch_online_genre(
     };
 
     let (_, genre) = lookup_mbids_and_genre(&client, artist, album, title).await;
-    genre
+    if let Some(g) = genre {
+        return Some(g);
+    }
+    fetch_itunes_genre(&client, artist, title).await
 }
 
 pub(crate) async fn fetch_online_metadata(
@@ -30,6 +33,11 @@ pub(crate) async fn fetch_online_metadata(
 
     let (mbids, genre) = lookup_mbids_and_genre(&client, artist, album, title).await;
 
+    let genre = match genre {
+        Some(g) => Some(g),
+        None => fetch_itunes_genre(&client, artist, title).await,
+    };
+
     let mut cover = None;
     for mbid in &mbids {
         if let Some(c) = caa_front_cover(&client, mbid).await {
@@ -39,6 +47,48 @@ pub(crate) async fn fetch_online_metadata(
     }
 
     OnlineLookup { cover, genre }
+}
+
+async fn fetch_itunes_genre(
+    client: &reqwest::Client,
+    artist: &str,
+    title: &str,
+) -> Option<String> {
+    let term = format!("{artist} {title}");
+    let resp = client
+        .get("https://itunes.apple.com/search")
+        .query(&[
+            ("term", term.as_str()),
+            ("entity", "song"),
+            ("limit", "10"),
+        ])
+        .send()
+        .await
+        .ok()?;
+    let json: serde_json::Value = resp.json().await.ok()?;
+    let results = json["results"].as_array()?;
+    if results.is_empty() {
+        return None;
+    }
+
+    // Prefer a result whose artist and title both match (case-insensitive
+    // substring); otherwise fall back to the first result, since iTunes's
+    // own ranking is usually sensible.
+    let artist_lower = artist.to_lowercase();
+    let title_lower = title.to_lowercase();
+    let best = results
+        .iter()
+        .find(|r| {
+            let a = r["artistName"].as_str().unwrap_or("").to_lowercase();
+            let t = r["trackName"].as_str().unwrap_or("").to_lowercase();
+            a.contains(&artist_lower) && t.contains(&title_lower)
+        })
+        .or_else(|| results.first())?;
+
+    best["primaryGenreName"]
+        .as_str()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
 }
 
 async fn lookup_mbids_and_genre(
@@ -65,7 +115,7 @@ async fn musicbrainz_release_lookup(
             ("query", query.as_str()),
             ("fmt", "json"),
             ("limit", "5"),
-            ("inc", "genres"),
+            ("inc", "genres tags"),
         ])
         .send()
         .await
@@ -79,14 +129,7 @@ async fn musicbrainz_release_lookup(
         .as_array()
         .map(|v| v.as_slice())
         .unwrap_or(&[]);
-    let genre = releases.first().and_then(|r| {
-        r["genres"]
-            .as_array()?
-            .first()?
-            .get("name")?
-            .as_str()
-            .map(|s| s.to_owned())
-    });
+    let genre = releases.iter().find_map(extract_genre_or_tag);
     let ids = releases
         .iter()
         .filter_map(|r| r["id"].as_str().map(|s| s.to_owned()))
@@ -106,7 +149,7 @@ async fn musicbrainz_recording_lookup(
             ("query", query.as_str()),
             ("fmt", "json"),
             ("limit", "5"),
-            ("inc", "releases genres"),
+            ("inc", "releases genres tags"),
         ])
         .send()
         .await
@@ -120,14 +163,7 @@ async fn musicbrainz_recording_lookup(
         .as_array()
         .map(|v| v.as_slice())
         .unwrap_or(&[]);
-    let genre = recordings.first().and_then(|r| {
-        r["genres"]
-            .as_array()?
-            .first()?
-            .get("name")?
-            .as_str()
-            .map(|s| s.to_owned())
-    });
+    let genre = recordings.iter().find_map(extract_genre_or_tag);
     let ids: Vec<String> = recordings
         .iter()
         .flat_map(|rec| {
@@ -141,6 +177,34 @@ async fn musicbrainz_recording_lookup(
         .take(5)
         .collect();
     (ids, genre)
+}
+
+fn extract_genre_or_tag(entry: &serde_json::Value) -> Option<String> {
+    // Prefer curated genres if present.
+    if let Some(name) = entry["genres"]
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|g| g.get("name"))
+        .and_then(|n| n.as_str())
+    {
+        return Some(name.to_owned());
+    }
+    // Fall back to community tags, picking the one with the highest count.
+    let tags = entry["tags"].as_array()?;
+    let mut best: Option<(i64, &str)> = None;
+    for tag in tags {
+        let count = tag.get("count").and_then(|c| c.as_i64()).unwrap_or(0);
+        let Some(name) = tag.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        if best.map(|(c, _)| count > c).unwrap_or(true) {
+            best = Some((count, name));
+        }
+    }
+    best.map(|(_, n)| n.to_owned())
 }
 
 async fn caa_front_cover(client: &reqwest::Client, mbid: &str) -> Option<(Vec<u8>, String)> {

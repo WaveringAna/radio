@@ -670,6 +670,20 @@ main {
   border: 1px dashed var(--line);
   color: var(--accent);
   background: var(--surface);
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, padding 0.15s ease;
+}
+
+.drop-zone:hover,
+.drop-zone.drop-zone-active {
+  transform: scale(1.015);
+  padding: 1.4rem 1rem;
+  border-color: var(--accent);
+}
+
+.drop-zone-hint {
+  opacity: 0.6;
+  font-size: 0.75rem;
 }
 
 .drop-zone input {
@@ -867,4 +881,42 @@ form input[type='text'] {
     grid-template-columns: 1fr;
     gap: 0.45rem;
   }
+}
+
+.multi-add-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.multi-add-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.multi-add-cell input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.queue-drag-source {
+  opacity: 0.4;
+}
+
+.song-list li[draggable="true"] {
+  cursor: grab;
+}
+
+.song-list li[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.clear-queue-pill {
+  padding: 0.2rem 0.7rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
 }

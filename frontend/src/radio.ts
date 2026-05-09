@@ -211,6 +211,27 @@ export async function deleteAlbum(albumId: string): Promise<RadioAlbum[]> {
 }
 
 /**
+ * Appends songs to an existing album loop, skipping duplicates.
+ * @param albumId Album loop id.
+ * @param songIds Song ids to add.
+ * @returns Updated album.
+ * @throws Error When the backend request fails.
+ */
+export async function addSongsToAlbum(albumId: string, songIds: string[]): Promise<RadioAlbum> {
+  const response = await fetch(`${API_BASE}/api/radio/albums/${albumId}/songs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    credentials: 'include',
+    body: JSON.stringify({ songIds }),
+  })
+  if (!response.ok) {
+    throw new Error('failed to add songs to album loop')
+  }
+
+  return (await response.json()) as RadioAlbum
+}
+
+/**
  * Enables or disables an album loop.
  * @param albumId Album loop id.
  * @param enabled Whether the album should loop.
@@ -296,6 +317,46 @@ export async function removeQueueItem(queueId: string): Promise<RadioSnapshot> {
 
   if (!response.ok) {
     throw new Error('failed to remove queue item')
+  }
+
+  return (await response.json()) as RadioSnapshot
+}
+
+/**
+ * Clears every item from the queue.
+ * @returns The updated radio snapshot.
+ * @throws Error When the backend request fails.
+ */
+export async function clearQueue(): Promise<RadioSnapshot> {
+  const response = await fetch(`${API_BASE}/api/radio/queue`, {
+    method: 'DELETE',
+    credentials: 'include',
+    headers: authHeaders(),
+  })
+
+  if (!response.ok) {
+    throw new Error('failed to clear queue')
+  }
+
+  return (await response.json()) as RadioSnapshot
+}
+
+/**
+ * Reorders the queue using the supplied ordered list of queue ids.
+ * @param queueIds Queue item ids in the desired order.
+ * @returns The updated radio snapshot.
+ * @throws Error When the backend request fails.
+ */
+export async function reorderQueue(queueIds: string[]): Promise<RadioSnapshot> {
+  const response = await fetch(`${API_BASE}/api/radio/queue/reorder`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    credentials: 'include',
+    body: JSON.stringify({ queueIds }),
+  })
+
+  if (!response.ok) {
+    throw new Error('failed to reorder queue')
   }
 
   return (await response.json()) as RadioSnapshot

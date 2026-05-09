@@ -1,25 +1,29 @@
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from 'solid-js'
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show, untrack } from 'solid-js'
 import { ListPlus, Pause, Play, SkipForward, Trash2, UploadCloud, Volume2 } from 'lucide-solid'
 import { resolveAtprotoProfile, type AtprotoProfile } from './atproto'
 import { extractAudioMetadata, type ExtractedAudioMetadata } from './audioMetadata'
 import {
   API_BASE,
+  clearQueue,
   controlRadio,
   enqueueAlbum,
   enqueueSong,
   fetchAlbums,
-  fetchRadioSeek,
   fetchRadioSnapshot,
   fetchSongs,
   importFromSubsonic,
   loadSubsonicCreds,
   openRadioSocket,
   removeQueueItem,
+  reorderQueue,
   saveSubsonicCreds,
   searchSubsonic,
   uploadSong,
   uploadSongFromUrl,
+  type QueueItem,
   type RadioEvent,
+  type RadioState,
+  type Song,
   type SubsonicSongResult,
 } from './radio'
 
@@ -75,7 +79,10 @@ export default function RadioPage(props: RadioPageProps) {
   const inFlightDids = new Set<string>()
   const [title, setTitle] = createSignal('')
   const [artist, setArtist] = createSignal('')
-  const [file, setFile] = createSignal<File | null>(null)
+  const [files, setFiles] = createSignal<File[]>([])
+  const [uploadStatus, setUploadStatus] = createSignal<string | null>(null)
+  const [isUploading, setIsUploading] = createSignal(false)
+  const [isDropZoneActive, setIsDropZoneActive] = createSignal(false)
   const [coverFile, setCoverFile] = createSignal<File | null>(null)
   const [addToQueue, setAddToQueue] = createSignal(true)
   const [uploadMode, setUploadMode] = createSignal<'file' | 'url' | 'subsonic'>('file')
@@ -94,30 +101,80 @@ export default function RadioPage(props: RadioPageProps) {
   const [subsonicAddToQueue, setSubsonicAddToQueue] = createSignal(true)
   const [importingId, setImportingId] = createSignal<string | null>(null)
   const [volume, setVolume] = createSignal(readVolumeCookie())
-  const [isListening, setIsListening] = createSignal(false)
+  const [hasStarted, setHasStarted] = createSignal(false)
+  const [isAudioPlaying, setIsAudioPlaying] = createSignal(false)
   const [clock, setClock] = createSignal(Date.now())
-  const [serverSeekSeconds, setServerSeekSeconds] = createSignal(0)
-  const [seekSyncedAt, setSeekSyncedAt] = createSignal(Date.now())
   const [songPage, setSongPage] = createSignal(0)
   const [upNextPage, setUpNextPage] = createSignal(0)
   const [queueControlPage, setQueueControlPage] = createSignal(0)
   const [songFilterArtist, setSongFilterArtist] = createSignal('')
   const [songFilterGenre, setSongFilterGenre] = createSignal('')
   const [songFilterDid, setSongFilterDid] = createSignal('')
-  let audioRef: HTMLAudioElement | undefined
-  let lastAudioSyncKey = ''
+  const [selectedSongIds, setSelectedSongIds] = createSignal<string[]>([])
+  const [draggingQueueId, setDraggingQueueId] = createSignal<string | null>(null)
 
-  const applyBackendSeek = (positionSeconds: number) => {
-    setServerSeekSeconds(Math.max(0, positionSeconds))
-    setSeekSyncedAt(Date.now())
+  // Local playback state. Frontend self-advances through localQueue; backend
+  // resyncs only on admin actions (detected via playbackKey diff).
+  const [localCurrentSong, setLocalCurrentSong] = createSignal<Song | null>(null)
+  const [localQueue, setLocalQueue] = createSignal<QueueItem[]>([])
+  let consumedQueueIds = new Set<string>()
+  let lastPlaybackKey: string | null = null
+  let audioRef: HTMLAudioElement | undefined
+
+  const playbackKey = (state: RadioState | undefined) =>
+    state ? `${state.currentSongId ?? ''}|${state.status}|${state.startedAt ?? ''}|${state.pausedAt ?? ''}` : ''
+
+  const lookupSong = (id: string): Song | null =>
+    (songs() ?? []).find((song) => song.id === id) ?? null
+
+  const queueItemAsSong = (item: QueueItem): Song =>
+    lookupSong(item.songId) ?? {
+      id: item.songId,
+      title: item.title,
+      artist: item.artist,
+      album: item.album ?? null,
+      genre: null,
+      durationSeconds: null,
+      mimeType: null,
+      hasCover: false,
+      addedByDid: item.addedByDid,
+      createdAt: 0,
+    }
+
+  const seekAudioTo = async (positionSeconds: number): Promise<void> => {
+    if (!audioRef) return
+    if (audioRef.readyState >= 1) {
+      audioRef.currentTime = positionSeconds
+      return
+    }
+    const element = audioRef
+    await new Promise<void>((resolve) => {
+      element.addEventListener('loadedmetadata', () => {
+        element.currentTime = positionSeconds
+        resolve()
+      }, { once: true })
+      element.addEventListener('error', () => resolve(), { once: true })
+    })
   }
 
-  const refreshSeekFromBackend = async () => {
-    try {
-      const seek = await fetchRadioSeek()
-      applyBackendSeek(seek.positionSeconds)
-    } catch {
-      // Best-effort refresh: keep the last known seek until the next success.
+  const applyBackendPlayback = async (state: RadioState, song: Song | null, songChanged: boolean) => {
+    if (!audioRef) return
+    if (!song || state.status === 'stopped') {
+      audioRef.pause()
+      return
+    }
+    if (songChanged) {
+      const expected = `${API_BASE}/api/songs/${song.id}/audio`
+      if (audioRef.src !== expected && !audioRef.src.endsWith(`/api/songs/${song.id}/audio`)) {
+        audioRef.src = expected
+        audioRef.load()
+      }
+      await seekAudioTo(Math.max(0, state.positionSeconds))
+    }
+    if (state.status === 'playing' && hasStarted()) {
+      void audioRef.play().catch(() => undefined)
+    } else if (state.status === 'paused') {
+      audioRef.pause()
     }
   }
 
@@ -126,26 +183,35 @@ export default function RadioPage(props: RadioPageProps) {
     onCleanup(() => window.clearInterval(interval))
   })
 
+  // Snapshot diff: cold-start init, admin-action resync, queue-only merge.
+  // Compare song id against what's locally playing, not against the previous
+  // snapshot — the frontend self-advances ahead of the backend, so a snapshot
+  // arriving with the song we already moved to should not trigger a reload.
   createEffect(() => {
-    const state = snapshot()?.state
-    if (state) {
-      applyBackendSeek(state.positionSeconds)
+    const snap = snapshot()
+    if (!snap) return
+    const key = playbackKey(snap.state)
+    const isFirst = lastPlaybackKey === null
+
+    if (isFirst || key !== lastPlaybackKey) {
+      const prevSongId = untrack(() => localCurrentSong())?.id ?? null
+      const newSongId = snap.currentSong?.id ?? null
+      const songChanged = prevSongId !== newSongId
+
+      lastPlaybackKey = key
+      if (songChanged) {
+        consumedQueueIds = new Set()
+        setLocalQueue(snap.queue)
+        setLocalCurrentSong(snap.currentSong ?? null)
+      } else {
+        setLocalQueue(snap.queue.filter((item) => !consumedQueueIds.has(item.id)))
+      }
+      if (!isFirst) {
+        void applyBackendPlayback(snap.state, snap.currentSong ?? null, songChanged)
+      }
+    } else {
+      setLocalQueue(snap.queue.filter((item) => !consumedQueueIds.has(item.id)))
     }
-  })
-
-  createEffect(() => {
-    void refreshSeekFromBackend()
-  })
-
-  createEffect(() => {
-    const state = snapshot()?.state
-    if (!state || state.status !== 'playing' || !state.currentSongId) {
-      return
-    }
-
-    void refreshSeekFromBackend()
-    const interval = window.setInterval(() => void refreshSeekFromBackend(), 1000)
-    onCleanup(() => window.clearInterval(interval))
   })
 
   createEffect(() => {
@@ -155,8 +221,9 @@ export default function RadioPage(props: RadioPageProps) {
       const event = JSON.parse(message.data) as RadioEvent
       if (event.type === 'snapshotChanged') {
         mutate(event.snapshot)
-        void refetchSongs()
-        void refetchAlbums()
+        // Don't refetch songs/albums here — most snapshot events are queue
+        // mutations that don't affect the library. Local actions that do
+        // change the library refetch explicitly.
       }
     })
 
@@ -183,36 +250,25 @@ export default function RadioPage(props: RadioPageProps) {
     }
   })
 
-  const currentSong = () => snapshot()?.currentSong
-  const currentAudioUrl = () => (currentSong() ? `${API_BASE}/api/songs/${currentSong()?.id}/audio` : undefined)
+  const currentSong = () => localCurrentSong()
+  const currentAudioUrl = () => {
+    const songId = localCurrentSong()?.id
+    return songId ? `${API_BASE}/api/songs/${songId}/audio` : undefined
+  }
   const nextAudioUrl = () => {
-    const queue = snapshot()?.queue
-    return queue && queue.length > 0 ? `${API_BASE}/api/songs/${queue[0].songId}/audio` : undefined
+    const next = localQueue()[0]
+    return next ? `${API_BASE}/api/songs/${next.songId}/audio` : undefined
   }
   const livePositionSeconds = () => {
     // Re-evaluate every second for queue progress labels.
     void clock()
-
-    // When we're actually listening, the audio element's currentTime is the
-    // truth - this is what the listener hears.
-    if (audioRef && !audioRef.paused && Number.isFinite(audioRef.currentTime)) {
+    if (audioRef && Number.isFinite(audioRef.currentTime)) {
       return audioRef.currentTime
     }
-
-    const state = snapshot()?.state
-    if (state?.status === 'playing') {
-      const elapsed = (clock() - seekSyncedAt()) / 1000
-      return serverSeekSeconds() + Math.max(0, elapsed)
-    }
-
-    return serverSeekSeconds()
+    return Math.max(0, snapshot()?.state.positionSeconds ?? 0)
   }
-  const needsMetadataPrompt = () => file() && !hasRequiredMetadata(metadata())
+  const needsMetadataPrompt = () => files().length === 1 && !hasRequiredMetadata(metadata())
   const profileFor = (did: string) => profiles()[did] ?? fallbackProfile(did)
-  const clampSeekPosition = (positionSeconds: number, durationSeconds: number | null | undefined): number => {
-    const maxSeek = durationSeconds ? Math.max(0, durationSeconds - 2) : Infinity
-    return Math.min(Math.max(0, positionSeconds), maxSeek)
-  }
   const songPageSize = 6
   const queuePageSize = 6
   const filteredSongs = createMemo(() => {
@@ -230,6 +286,7 @@ export default function RadioPage(props: RadioPageProps) {
     })
   })
   const queuePageCount = createMemo(() => Math.max(1, Math.ceil((snapshot()?.queue.length ?? 0) / queuePageSize)))
+  const upNextPageCount = createMemo(() => Math.max(1, Math.ceil(localQueue().length / queuePageSize)))
   const songPageCount = createMemo(() => Math.max(1, Math.ceil(filteredSongs().length / songPageSize)))
   const pagedSongs = createMemo(() => {
     const start = songPage() * songPageSize
@@ -237,63 +294,50 @@ export default function RadioPage(props: RadioPageProps) {
   })
   const pagedUpNext = createMemo(() => {
     const start = upNextPage() * queuePageSize
-    return (snapshot()?.queue ?? []).slice(start, start + queuePageSize)
+    return localQueue().slice(start, start + queuePageSize)
   })
   const pagedQueueControl = createMemo(() => {
     const start = queueControlPage() * queuePageSize
     return (snapshot()?.queue ?? []).slice(start, start + queuePageSize)
   })
 
-  const playCurrentAudio = () => {
+  const startListening = async () => {
+    if (!audioRef) return
+    setHasStarted(true)
+    audioRef.volume = volume()
+    const snap = snapshot()
+    if (snap?.state) {
+      await seekAudioTo(Math.max(0, snap.state.positionSeconds))
+    }
+    void audioRef.play().catch(() => undefined)
+  }
+
+  const advanceLocally = () => {
+    const queue = localQueue()
+    if (queue.length === 0) {
+      setLocalCurrentSong(null)
+      return
+    }
+    const next = queue[0]
+    consumedQueueIds.add(next.id)
+    setLocalCurrentSong(queueItemAsSong(next))
+    setLocalQueue(queue.slice(1))
+
     window.setTimeout(() => {
-      if (audioRef) {
-        audioRef.volume = volume()
+      if (audioRef && hasStarted()) {
+        audioRef.currentTime = 0
         void audioRef.play().catch(() => undefined)
       }
     }, 0)
   }
 
-  const startLocalPlayback = async () => {
-    if (!audioRef || !snapshot()?.state) {
-      return
-    }
+  const handleAudioEnded = () => advanceLocally()
 
-    audioRef.volume = volume()
-    await refreshSeekFromBackend()
-    const seekPosition = livePositionSeconds()
-
-    audioRef.currentTime = clampSeekPosition(seekPosition, currentSong()?.durationSeconds)
-    void audioRef.play().catch(() => undefined)
-  }
-
+  // If we ran out of songs and admin later adds one, kick playback again.
   createEffect(() => {
-    if (!audioRef) {
-      return
+    if (localCurrentSong() === null && localQueue().length > 0 && hasStarted()) {
+      advanceLocally()
     }
-
-    const state = snapshot()?.state
-    const song = currentSong()
-    if (!state || !song) {
-      audioRef.pause()
-      return
-    }
-
-    // Only resync on real transitions (song change, play/pause/skip).
-    const syncKey = `${song.id}:${state.status}:${state.startedAt ?? ''}`
-    if (syncKey !== lastAudioSyncKey) {
-      lastAudioSyncKey = syncKey
-      audioRef.volume = volume()
-      audioRef.load()
-      // Cap at duration - 2s so seeking never triggers a spurious onEnded.
-      audioRef.currentTime = clampSeekPosition(livePositionSeconds(), song.durationSeconds)
-    }
-
-    if (state.status === 'playing') {
-      playCurrentAudio()
-      return
-    }
-
-    audioRef.pause()
   })
 
   createEffect(() => {
@@ -307,8 +351,8 @@ export default function RadioPage(props: RadioPageProps) {
     if (songPage() >= songPageCount()) {
       setSongPage(songPageCount() - 1)
     }
-    if (upNextPage() >= queuePageCount()) {
-      setUpNextPage(queuePageCount() - 1)
+    if (upNextPage() >= upNextPageCount()) {
+      setUpNextPage(upNextPageCount() - 1)
     }
     if (queueControlPage() >= queuePageCount()) {
       setQueueControlPage(queuePageCount() - 1)
@@ -337,14 +381,14 @@ export default function RadioPage(props: RadioPageProps) {
         ? [{ src: `${API_BASE}/api/songs/${song.id}/cover`, sizes: '512x512', type: 'image/jpeg' }]
         : [],
     })
-    navigator.mediaSession.setActionHandler('play', () => startLocalPlayback())
+    navigator.mediaSession.setActionHandler('play', () => void startListening())
     navigator.mediaSession.setActionHandler('pause', () => audioRef?.pause())
     navigator.mediaSession.setActionHandler('stop', () => audioRef?.pause())
   })
 
   createEffect(() => {
     if (!('mediaSession' in navigator)) return
-    if (isListening()) {
+    if (isAudioPlaying()) {
       navigator.mediaSession.playbackState = 'playing'
     } else if (currentSong()) {
       navigator.mediaSession.playbackState = 'paused'
@@ -353,19 +397,19 @@ export default function RadioPage(props: RadioPageProps) {
     }
   })
 
-  const selectFile = async (selectedFile: File | null) => {
-    setFile(selectedFile)
+  const selectFiles = async (selectedFiles: File[]) => {
+    setFiles(selectedFiles)
     setMetadata(null)
     setTitle('')
     setArtist('')
     setUploadError(null)
 
-    if (!selectedFile) {
+    if (selectedFiles.length !== 1) {
       return
     }
 
     try {
-      const extracted = await extractAudioMetadata(selectedFile)
+      const extracted = await extractAudioMetadata(selectedFiles[0])
       setMetadata(extracted)
       setTitle(extracted.title ?? '')
       setArtist(extracted.artist ?? '')
@@ -376,41 +420,60 @@ export default function RadioPage(props: RadioPageProps) {
 
   const submitUpload = async (event: SubmitEvent) => {
     event.preventDefault()
-    const selectedFile = file()
+    const selectedFiles = files()
 
-    if (!selectedFile) {
-      setUploadError('pick an audio file first.')
+    if (selectedFiles.length === 0) {
+      setUploadError('pick audio files first.')
       return
     }
 
-    const resolvedTitle = metadata()?.title ?? title().trim()
-    const resolvedArtist = metadata()?.artist ?? artist().trim()
-
-    if (!resolvedTitle || !resolvedArtist) {
-      setUploadError('this file is missing title or artist metadata.')
-      return
-    }
-
+    setIsUploading(true)
     try {
       setUploadError(null)
-      await uploadSong({
-        file: selectedFile,
-        title: resolvedTitle,
-        artist: resolvedArtist,
-        album: metadata()?.album,
-        genre: metadata()?.genre,
-        durationSeconds: metadata()?.durationSeconds,
-        cover: coverFile(),
-        addToQueue: addToQueue(),
-      })
+      for (const [index, selectedFile] of selectedFiles.entries()) {
+        setUploadStatus(`uploading ${index + 1}/${selectedFiles.length}: ${selectedFile.name}`)
+
+        let resolvedTitle: string
+        let resolvedArtist: string
+        let extracted: ExtractedAudioMetadata | null = null
+
+        if (selectedFiles.length === 1) {
+          extracted = metadata()
+          resolvedTitle = metadata()?.title ?? title().trim()
+          resolvedArtist = metadata()?.artist ?? artist().trim()
+        } else {
+          extracted = await extractAudioMetadata(selectedFile).catch(() => ({} as ExtractedAudioMetadata))
+          resolvedTitle = extracted.title ?? selectedFile.name.replace(/\.[^/.]+$/, '')
+          resolvedArtist = extracted.artist ?? ''
+        }
+
+        if (!resolvedTitle || !resolvedArtist) {
+          throw new Error(`${selectedFile.name} is missing title or artist metadata.`)
+        }
+
+        await uploadSong({
+          file: selectedFile,
+          title: resolvedTitle,
+          artist: resolvedArtist,
+          album: extracted?.album,
+          genre: extracted?.genre,
+          durationSeconds: extracted?.durationSeconds,
+          cover: coverFile(),
+          addToQueue: addToQueue(),
+        })
+      }
+
       setTitle('')
       setArtist('')
       setMetadata(null)
-      setFile(null)
+      setFiles([])
       setCoverFile(null)
-      await Promise.all([refetch(), refetchSongs()])
+      void refetchSongs()
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : 'upload exploded a little.')
+    } finally {
+      setUploadStatus(null)
+      setIsUploading(false)
     }
   }
 
@@ -435,7 +498,7 @@ export default function RadioPage(props: RadioPageProps) {
       setUrlTitle('')
       setUrlArtist('')
       setUrlAlbum('')
-      await Promise.all([refetch(), refetchSongs()])
+      void refetchSongs()
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : 'url import exploded a little.')
     }
@@ -477,7 +540,7 @@ export default function RadioPage(props: RadioPageProps) {
         result.coverArtId,
         subsonicAddToQueue(),
       )
-      await Promise.all([refetch(), refetchSongs()])
+      void refetchSongs()
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : 'import failed.')
     } finally {
@@ -489,9 +552,6 @@ export default function RadioPage(props: RadioPageProps) {
     try {
       setUploadError(null)
       mutate(await controlRadio(action, 'explicit_admin_action'))
-      if (action === 'play' || action === 'skip') {
-        playCurrentAudio()
-      }
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : 'radio control faceplanted.')
     }
@@ -501,7 +561,7 @@ export default function RadioPage(props: RadioPageProps) {
     try {
       setUploadError(null)
       await enqueueSong(songId)
-      await refetch()
+      // WS broadcast will deliver the updated snapshot.
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : 'queue add faceplanted.')
     }
@@ -522,6 +582,51 @@ export default function RadioPage(props: RadioPageProps) {
       mutate(await removeQueueItem(queueId))
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : 'queue remove faceplanted.')
+    }
+  }
+
+  const clearTheQueue = async () => {
+    try {
+      setUploadError(null)
+      mutate(await clearQueue())
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'clear queue faceplanted.')
+    }
+  }
+
+  const toggleSongSelection = (songId: string, checked: boolean) => {
+    setSelectedSongIds((current) => (checked ? [...current, songId] : current.filter((id) => id !== songId)))
+  }
+
+  const addSelectedToQueue = async () => {
+    const ids = selectedSongIds()
+    if (ids.length === 0) return
+    try {
+      setUploadError(null)
+      mutate(await enqueueAlbum(ids))
+      setSelectedSongIds([])
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'multi add faceplanted.')
+    }
+  }
+
+  const handleQueueDrop = async (targetQueueId: string) => {
+    const sourceId = draggingQueueId()
+    setDraggingQueueId(null)
+    if (!sourceId || sourceId === targetQueueId) return
+    const queue = snapshot()?.queue ?? []
+    const ids = queue.map((item) => item.id)
+    const sourceIndex = ids.indexOf(sourceId)
+    const targetIndex = ids.indexOf(targetQueueId)
+    if (sourceIndex < 0 || targetIndex < 0) return
+    const reordered = [...ids]
+    reordered.splice(sourceIndex, 1)
+    reordered.splice(targetIndex, 0, sourceId)
+    try {
+      setUploadError(null)
+      mutate(await reorderQueue(reordered))
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'reorder faceplanted.')
     }
   }
 
@@ -547,17 +652,17 @@ export default function RadioPage(props: RadioPageProps) {
           class="radio-audio"
           src={currentAudioUrl() ?? ''}
           preload="auto"
-          onPlay={() => setIsListening(true)}
-          onPause={() => setIsListening(false)}
-          onEnded={() => setIsListening(false)}
+          onPlay={() => setIsAudioPlaying(true)}
+          onPause={() => setIsAudioPlaying(false)}
+          onEnded={handleAudioEnded}
         />
         <Show when={nextAudioUrl()}>
           {(url) => <audio src={url()} preload="auto" aria-hidden="true" style="display:none" />}
         </Show>
         <div class="listener-controls">
           <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
-            <button class="listen-button" type="button" onClick={startLocalPlayback}>
-              {isListening() ? 'listening live' : 'click to listen live'}
+            <button class="listen-button" type="button" onClick={() => void startListening()}>
+              {isAudioPlaying() ? 'listening live' : 'click to listen live'}
             </button>
           </Show>
           <label class="volume-control local-volume">
@@ -610,13 +715,13 @@ export default function RadioPage(props: RadioPageProps) {
                 }}
               </For>
             </ul>
-            <Show when={(snapshot()?.queue.length ?? 0) > queuePageSize}>
+            <Show when={localQueue().length > queuePageSize}>
               <div class="pagination-row compact">
                 <button class="pill-button subtle" type="button" disabled={upNextPage() === 0} onClick={() => setUpNextPage((page) => Math.max(0, page - 1))}>
                   prev
                 </button>
-                <span>{upNextPage() + 1} / {queuePageCount()}</span>
-                <button class="pill-button subtle" type="button" disabled={upNextPage() >= queuePageCount() - 1} onClick={() => setUpNextPage((page) => Math.min(queuePageCount() - 1, page + 1))}>
+                <span>{upNextPage() + 1} / {upNextPageCount()}</span>
+                <button class="pill-button subtle" type="button" disabled={upNextPage() >= upNextPageCount() - 1} onClick={() => setUpNextPage((page) => Math.min(upNextPageCount() - 1, page + 1))}>
                   next
                 </button>
               </div>
@@ -649,10 +754,30 @@ export default function RadioPage(props: RadioPageProps) {
 
             <Show when={uploadMode() === 'file'}>
               <form class="upload-form" onSubmit={submitUpload}>
-                <label class="drop-zone">
+                <label
+                  class="drop-zone"
+                  classList={{ 'drop-zone-active': isDropZoneActive() }}
+                  onDragOver={(e) => { e.preventDefault(); setIsDropZoneActive(true) }}
+                  onDragLeave={() => setIsDropZoneActive(false)}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    setIsDropZoneActive(false)
+                    const dropped = [...(e.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith('audio/'))
+                    if (dropped.length > 0) {
+                      void selectFiles(dropped)
+                    }
+                  }}
+                >
                   <UploadCloud size={24} />
-                  <span>{file()?.name ?? 'choose an audio file'}</span>
-                  <input type="file" accept="audio/*" onChange={(event) => void selectFile(event.currentTarget.files?.[0] ?? null)} />
+                  <span>
+                    {files().length === 0
+                      ? 'choose audio files or drop them here'
+                      : files().length === 1
+                        ? files()[0].name
+                        : `${files().length} files selected`}
+                  </span>
+                  <small class="drop-zone-hint">multiple files supported</small>
+                  <input type="file" accept="audio/*" multiple onChange={(event) => void selectFiles([...(event.currentTarget.files ?? [])])} />
                 </label>
 
                 <div class="upload-options-row">
@@ -677,7 +802,13 @@ export default function RadioPage(props: RadioPageProps) {
                   </div>
                 </Show>
 
-                <button class="pill-button" type="submit">upload</button>
+                <Show when={uploadStatus()}>
+                  {(status) => <small class="muted upload-status">{status()}</small>}
+                </Show>
+
+                <button class="pill-button" type="submit" disabled={isUploading()}>
+                  {isUploading() ? 'uploading…' : files().length > 1 ? `upload ${files().length} files` : 'upload'}
+                </button>
               </form>
             </Show>
 
@@ -768,7 +899,14 @@ export default function RadioPage(props: RadioPageProps) {
           <section class="glass-card">
             <div class="section-heading">
               <p class="eyebrow">queue control</p>
-              <span>{snapshot()?.queue.length ?? 0}</span>
+              <Show
+                when={(snapshot()?.queue.length ?? 0) > 0}
+                fallback={<span>0</span>}
+              >
+                <button class="pill-button subtle clear-queue-pill" type="button" onClick={() => void clearTheQueue()}>
+                  clear ({snapshot()?.queue.length})
+                </button>
+              </Show>
             </div>
             <Show when={currentSong()}>
               {(song) => (
@@ -785,7 +923,20 @@ export default function RadioPage(props: RadioPageProps) {
                 {(item) => {
                   const profile = () => profileFor(item.addedByDid)
                   return (
-                    <li>
+                    <li
+                      draggable={true}
+                      classList={{ 'queue-drag-source': draggingQueueId() === item.id }}
+                      onDragStart={(e) => {
+                        setDraggingQueueId(item.id)
+                        e.dataTransfer?.setData('text/plain', item.id)
+                      }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        void handleQueueDrop(item.id)
+                      }}
+                      onDragEnd={() => setDraggingQueueId(null)}
+                    >
                       <ProfileAvatar profile={profile()} />
                       <div class="song-copy">
                         <span>{item.title}</span>
@@ -839,6 +990,16 @@ export default function RadioPage(props: RadioPageProps) {
                 onInput={(e) => setSongFilterDid(e.currentTarget.value)}
               />
             </div>
+            <Show when={selectedSongIds().length > 0}>
+              <div class="multi-add-row">
+                <button class="pill-button" type="button" onClick={() => void addSelectedToQueue()}>
+                  add {selectedSongIds().length} to queue
+                </button>
+                <button class="pill-button subtle" type="button" onClick={() => setSelectedSongIds([])}>
+                  clear selection
+                </button>
+              </div>
+            </Show>
             <Show when={!songs.loading} fallback={<p class="list-empty">loading songs...</p>}>
               <ul class="song-list">
                 <For each={pagedSongs()} fallback={<li class="list-empty">no songs added yet</li>}>
@@ -846,10 +1007,17 @@ export default function RadioPage(props: RadioPageProps) {
                     const profile = () => profileFor(song.addedByDid)
                     return (
                       <li>
-                        <ProfileAvatar profile={profile()} />
+                        <label class="multi-add-cell">
+                          <input
+                            type="checkbox"
+                            checked={selectedSongIds().includes(song.id)}
+                            onChange={(event) => toggleSongSelection(song.id, event.currentTarget.checked)}
+                          />
+                          <ProfileAvatar profile={profile()} />
+                        </label>
                         <div class="song-copy">
                           <span>{song.title}</span>
-                          <small>{song.artist}</small>
+                          <small>{song.artist}{song.genre ? ` · ${song.genre}` : ''}</small>
                         </div>
                         <small class="profile-handle">@{profile().handle}</small>
                         <button class="icon-button" type="button" aria-label="add to queue" onClick={() => void addSongToQueue(song.id)}>
@@ -913,7 +1081,7 @@ function SongCoverThumb(props: { songId: string; hasCover: boolean }) {
   return (
     <span class="song-cover-thumb" aria-hidden="true">
       <Show when={props.hasCover} fallback={<span class="song-cover-fallback">art</span>}>
-        <img src={`${API_BASE}/api/songs/${props.songId}/cover`} alt="" loading="lazy" />
+        <img src={`${API_BASE}/api/songs/${props.songId}/cover/thumbnail`} alt="" loading="lazy" />
       </Show>
     </span>
   )

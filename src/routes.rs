@@ -8,7 +8,7 @@ use axum::{
         DefaultBodyLimit, FromRequestParts, Multipart, Path, Query, State, WebSocketUpgrade,
         ws::WebSocket,
     },
-    http::{HeaderValue, Method, StatusCode, header, request::Parts},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header, request::Parts},
     response::{IntoResponse, Redirect, Response},
     routing::{delete, get, post, put},
 };
@@ -78,11 +78,16 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
             "/api/radio/albums/{album_id}/enabled",
             put(set_album_enabled),
         )
+        .route(
+            "/api/radio/albums/{album_id}/songs",
+            post(add_songs_to_album),
+        )
         .route("/api/radio/state", get(get_radio_state))
         .route("/api/radio/seek", get(get_radio_seek))
         .route("/api/radio/ws", get(radio_ws))
-        .route("/api/radio/queue", post(enqueue_song))
+        .route("/api/radio/queue", post(enqueue_song).delete(clear_queue))
         .route("/api/radio/queue/album", post(enqueue_album))
+        .route("/api/radio/queue/reorder", post(reorder_queue))
         .route("/api/radio/queue/{queue_id}", delete(remove_queue_item))
         .route("/api/radio/control/{action}", post(control_radio))
         .route("/api/songs", get(get_songs).post(upload_song))
@@ -95,6 +100,7 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
             "/api/songs/{song_id}/cover",
             get(song_cover).put(upload_song_cover),
         )
+        .route("/api/songs/{song_id}/cover/thumbnail", get(song_cover_thumbnail))
         .route("/api/logout", post(logout))
         .layer(cors);
 
@@ -411,7 +417,7 @@ async fn get_radio_state(
 ) -> Result<Json<crate::radio::RadioSnapshot>, (StatusCode, Json<ErrorResponse>)> {
     state
         .radio
-        .snapshot()
+        .external_snapshot()
         .await
         .map(Json)
         .map_err(internal_api_error)
@@ -501,6 +507,27 @@ async fn set_album_enabled(
         .map_err(internal_api_error)
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AddAlbumSongsRequest {
+    song_ids: Vec<String>,
+}
+
+async fn add_songs_to_album(
+    State(state): State<AppState>,
+    session_token: SessionToken,
+    Path(album_id): Path<String>,
+    Json(payload): Json<AddAlbumSongsRequest>,
+) -> Result<Json<crate::radio::RadioAlbum>, (StatusCode, Json<ErrorResponse>)> {
+    let _session = admin_session(&state, session_token.0.as_deref()).await?;
+    state
+        .radio
+        .add_songs_to_album(&album_id, payload.song_ids)
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
 async fn get_songs(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<crate::radio::Song>>, (StatusCode, Json<ErrorResponse>)> {
@@ -515,6 +542,7 @@ async fn get_songs(
 async fn read_song_file_response(
     song_file: crate::radio::SongFile,
     not_found_error: &str,
+    range_header: Option<&str>,
 ) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
     let bytes = tokio::fs::read(&song_file.file_path)
         .await
@@ -526,17 +554,84 @@ async fn read_song_file_response(
     let content_type = song_file
         .mime_type
         .unwrap_or_else(|| "application/octet-stream".into());
+    let total_len = bytes.len() as u64;
+
+    if let Some(range_header) = range_header {
+        if let Some((start, end)) = parse_byte_range(range_header, total_len) {
+            let chunk = bytes[start as usize..=end as usize].to_vec();
+            return Ok(Response::builder()
+                .status(StatusCode::PARTIAL_CONTENT)
+                .header(header::CONTENT_TYPE, &content_type)
+                .header(header::ACCEPT_RANGES, "bytes")
+                .header(
+                    header::CONTENT_RANGE,
+                    format!("bytes {start}-{end}/{total_len}"),
+                )
+                .header(header::CONTENT_LENGTH, chunk.len().to_string())
+                .body(Body::from(chunk))
+                .expect("partial file response should be valid"));
+        }
+
+        return Ok(Response::builder()
+            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::CONTENT_RANGE, format!("bytes */{total_len}"))
+            .body(Body::empty())
+            .expect("range error response should be valid"));
+    }
 
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_LENGTH, total_len.to_string())
         .body(Body::from(bytes))
         .expect("file response should be valid"))
+}
+
+fn parse_byte_range(range_header: &str, total_len: u64) -> Option<(u64, u64)> {
+    if total_len == 0 {
+        return None;
+    }
+
+    let bytes_spec = range_header.trim().strip_prefix("bytes=")?;
+    if bytes_spec.contains(',') {
+        return None;
+    }
+
+    let (start_text, end_text) = bytes_spec.split_once('-')?;
+    if start_text.is_empty() {
+        let suffix_len = end_text.parse::<u64>().ok()?;
+        if suffix_len == 0 {
+            return None;
+        }
+        let clamped = suffix_len.min(total_len);
+        let start = total_len.saturating_sub(clamped);
+        return Some((start, total_len - 1));
+    }
+
+    let start = start_text.parse::<u64>().ok()?;
+    if start >= total_len {
+        return None;
+    }
+
+    let end = if end_text.is_empty() {
+        total_len - 1
+    } else {
+        let parsed_end = end_text.parse::<u64>().ok()?;
+        if parsed_end < start {
+            return None;
+        }
+        parsed_end.min(total_len - 1)
+    };
+
+    Some((start, end))
 }
 
 async fn song_audio(
     State(state): State<AppState>,
     Path(song_id): Path<String>,
+    headers: HeaderMap,
 ) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
     let Some(song_file) = state
         .radio
@@ -547,7 +642,14 @@ async fn song_audio(
         return Err(api_error(StatusCode::NOT_FOUND, "song_not_found"));
     };
 
-    read_song_file_response(song_file, "audio_not_found").await
+    read_song_file_response(
+        song_file,
+        "audio_not_found",
+        headers
+            .get(header::RANGE)
+            .and_then(|value| value.to_str().ok()),
+    )
+    .await
 }
 
 async fn song_cover(
@@ -563,7 +665,38 @@ async fn song_cover(
         return Err(api_error(StatusCode::NOT_FOUND, "cover_not_found"));
     };
 
-    read_song_file_response(song_file, "cover_not_found").await
+    let mut response = read_song_file_response(song_file, "cover_not_found", None).await?;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=31536000, immutable"));
+    Ok(response)
+}
+
+async fn song_cover_thumbnail(
+    State(state): State<AppState>,
+    Path(song_id): Path<String>,
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+    let Some(thumb_path) = state
+        .radio
+        .cover_thumbnail(&song_id)
+        .await
+        .map_err(internal_api_error)?
+    else {
+        return Err(api_error(StatusCode::NOT_FOUND, "cover_not_found"));
+    };
+
+    let bytes = tokio::fs::read(&thumb_path).await.map_err(|error| {
+        tracing::error!(?error, "failed to read thumbnail");
+        api_error(StatusCode::INTERNAL_SERVER_ERROR, "thumbnail_read_error")
+    })?;
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "image/jpeg")
+        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+        .header(header::CONTENT_LENGTH, bytes.len().to_string())
+        .body(Body::from(bytes))
+        .expect("thumbnail response should be valid"))
 }
 
 async fn upload_song_cover(
@@ -719,6 +852,41 @@ async fn remove_queue_item(
         .map_err(internal_api_error)
 }
 
+async fn clear_queue(
+    State(state): State<AppState>,
+    session_token: SessionToken,
+) -> Result<Json<crate::radio::RadioSnapshot>, (StatusCode, Json<ErrorResponse>)> {
+    let _session = admin_session(&state, session_token.0.as_deref()).await?;
+
+    state
+        .radio
+        .clear_queue()
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReorderQueueRequest {
+    queue_ids: Vec<String>,
+}
+
+async fn reorder_queue(
+    State(state): State<AppState>,
+    session_token: SessionToken,
+    Json(payload): Json<ReorderQueueRequest>,
+) -> Result<Json<crate::radio::RadioSnapshot>, (StatusCode, Json<ErrorResponse>)> {
+    let _session = admin_session(&state, session_token.0.as_deref()).await?;
+
+    state
+        .radio
+        .reorder_queue(&payload.queue_ids)
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
 async fn control_radio(
     State(state): State<AppState>,
     session_token: SessionToken,
@@ -752,7 +920,7 @@ async fn radio_ws(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl I
 }
 
 async fn radio_socket(radio: Arc<RadioService>, mut socket: WebSocket) {
-    match radio.snapshot().await {
+    match radio.external_snapshot().await {
         Ok(snapshot) => {
             let event = crate::radio::RadioEvent::SnapshotChanged { snapshot };
             if let Ok(message) = event_message(&event) {
@@ -1444,4 +1612,26 @@ fn api_error(status: StatusCode, error: &str) -> (StatusCode, Json<ErrorResponse
 fn internal_api_error(error: Error) -> (StatusCode, Json<ErrorResponse>) {
     tracing::error!(?error, "api request failed");
     api_error(StatusCode::INTERNAL_SERVER_ERROR, "internal_server_error")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_byte_range;
+
+    #[test]
+    fn parses_open_ended_byte_range() {
+        assert_eq!(parse_byte_range("bytes=10-", 100), Some((10, 99)));
+    }
+
+    #[test]
+    fn parses_suffix_byte_range() {
+        assert_eq!(parse_byte_range("bytes=-25", 100), Some((75, 99)));
+    }
+
+    #[test]
+    fn rejects_invalid_ranges() {
+        assert_eq!(parse_byte_range("bytes=101-120", 100), None);
+        assert_eq!(parse_byte_range("bytes=30-20", 100), None);
+        assert_eq!(parse_byte_range("bytes=0-1,5-6", 100), None);
+    }
 }

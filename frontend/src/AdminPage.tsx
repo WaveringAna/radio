@@ -2,7 +2,7 @@ import { createMemo, createResource, createSignal, For, Show } from 'solid-js'
 import { Plus, Trash2, UploadCloud } from 'lucide-solid'
 import { addAdminDid, fetchAdminPermissions, removeAdminDid } from './auth'
 import { extractAudioMetadata, type ExtractedAudioMetadata } from './audioMetadata'
-import { createAlbum, createAlbumFromMetadata, deleteAlbum, deleteSong, fetchAlbums, fetchSongs, setAlbumEnabled, uploadSong, uploadSongCover } from './radio'
+import { API_BASE, addSongsToAlbum, createAlbum, createAlbumFromMetadata, deleteAlbum, deleteSong, fetchAlbums, fetchSongs, setAlbumEnabled, uploadSong, uploadSongCover } from './radio'
 
 interface AdminPageProps {
   accountDid: string
@@ -39,13 +39,21 @@ export default function AdminPage(props: AdminPageProps) {
   const [songs, { refetch: refetchSongs }] = createResource(() => (props.isAdmin ? fetchSongs() : undefined))
   const [albums, { mutate: mutateAlbums, refetch: refetchAlbums }] = createResource(() => (props.isAdmin ? fetchAlbums() : undefined))
   const metadataAlbums = createMemo(() => {
-    const groups = new Map<string, number>()
+    const groups = new Map<string, string[]>()
     for (const song of songs() ?? []) {
       if (song.album) {
-        groups.set(song.album, (groups.get(song.album) ?? 0) + 1)
+        const ids = groups.get(song.album) ?? []
+        ids.push(song.id)
+        groups.set(song.album, ids)
       }
     }
-    return [...groups.entries()].map(([title, count]) => ({ title, count }))
+    const loopsByTitle = new Map((albums() ?? []).map((a) => [a.title, a]))
+    return [...groups.entries()].map(([title, songIds]) => {
+      const existingLoop = loopsByTitle.get(title)
+      const loopSongIds = new Set(existingLoop?.tracks.map((t) => t.id) ?? [])
+      const missingSongIds = songIds.filter((id) => !loopSongIds.has(id))
+      return { title, count: songIds.length, songIds, existingLoop, missingSongIds }
+    })
   })
 
   const addDid = async (event: SubmitEvent) => {
@@ -149,6 +157,16 @@ export default function AdminPage(props: AdminPageProps) {
     try {
       setLocalError(null)
       await createAlbumFromMetadata(title)
+      await refetchAlbums()
+    } catch (error) {
+      setLocalError(readableError(error))
+    }
+  }
+
+  const addMissingSongs = async (albumId: string, songIds: string[]) => {
+    try {
+      setLocalError(null)
+      await addSongsToAlbum(albumId, songIds)
       await refetchAlbums()
     } catch (error) {
       setLocalError(readableError(error))
@@ -271,9 +289,20 @@ export default function AdminPage(props: AdminPageProps) {
               <div class="mass-add-row">
                 <For each={metadataAlbums()}>
                   {(album) => (
-                    <button class="pill-button subtle" type="button" onClick={() => void massAddAlbum(album.title)}>
-                      mass add {album.title} ({album.count})
-                    </button>
+                    <Show
+                      when={album.existingLoop}
+                      fallback={
+                        <button class="pill-button subtle" type="button" onClick={() => void massAddAlbum(album.title)}>
+                          add loop: {album.title} ({album.count})
+                        </button>
+                      }
+                    >
+                      <Show when={album.missingSongIds.length > 0}>
+                        <button class="pill-button subtle" type="button" onClick={() => void addMissingSongs(album.existingLoop!.id, album.missingSongIds)}>
+                          add {album.missingSongIds.length} missing to {album.title}
+                        </button>
+                      </Show>
+                    </Show>
                   )}
                 </For>
               </div>
@@ -310,7 +339,7 @@ export default function AdminPage(props: AdminPageProps) {
                     {(song) => (
                       <li>
                         <Show when={song.hasCover} fallback={<span class="cover-thumb" />}>
-                          <img class="cover-thumb" src={`/api/songs/${song.id}/cover`} alt="" />
+                          <img class="cover-thumb" src={`${API_BASE}/api/songs/${song.id}/cover/thumbnail`} alt="" />
                         </Show>
                         <div class="song-copy">
                           <span>{song.title}</span>
