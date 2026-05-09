@@ -1,5 +1,6 @@
 mod auth;
 mod db;
+mod metadata;
 mod radio;
 mod routes;
 mod subsonic;
@@ -35,7 +36,8 @@ impl AppConfig {
     fn from_env() -> anyhow::Result<Self> {
         let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".into());
         let app_url = std::env::var("APP_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".into());
-        let cors_origin = std::env::var("CORS_ORIGIN").unwrap_or_else(|_| "http://127.0.0.1:5173".into());
+        let cors_origin =
+            std::env::var("CORS_ORIGIN").unwrap_or_else(|_| "http://127.0.0.1:5173".into());
         let database_url =
             std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://radio.db".into());
         let session_cookie_name =
@@ -87,6 +89,11 @@ async fn main() -> anyhow::Result<()> {
     db.prepare().await?;
     let auth = AuthService::new(config.auth_config(), db.clone())?;
     let radio = RadioService::new(db, config.audio_dir.clone());
+    match radio.backfill_missing_genres_on_boot().await {
+        Ok(0) => {}
+        Ok(updated) => tracing::info!(updated, "backfilled missing song genres on boot"),
+        Err(error) => tracing::warn!(%error, "failed to backfill missing song genres on boot"),
+    }
     let app = routes::app(routes::AppState::new(auth, radio), &config.cors_origin)
         .layer(TraceLayer::new_for_http());
 

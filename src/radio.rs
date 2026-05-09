@@ -8,7 +8,7 @@ use time::OffsetDateTime;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::db::Database;
+use crate::{db::Database, metadata};
 
 /// Radio playback status persisted by the backend.
 #[derive(Clone, Debug, Serialize, FromRow)]
@@ -40,6 +40,8 @@ pub(crate) struct Song {
     pub(crate) artist: String,
     /// Optional album title.
     pub(crate) album: Option<String>,
+    /// Optional genre.
+    pub(crate) genre: Option<String>,
     /// Optional duration in seconds.
     pub(crate) duration_seconds: Option<i64>,
     /// MIME type of the stored audio file.
@@ -58,6 +60,14 @@ pub(crate) struct SongFile {
     pub(crate) file_path: String,
     /// Stored file MIME type.
     pub(crate) mime_type: Option<String>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+struct MissingGenreSong {
+    id: String,
+    title: String,
+    artist: String,
+    album: Option<String>,
 }
 
 /// Queue item joined with song metadata.
@@ -141,6 +151,8 @@ pub(crate) struct NewSongUpload {
     pub(crate) artist: String,
     /// Optional album supplied by the admin.
     pub(crate) album: Option<String>,
+    /// Optional genre from tags or the admin.
+    pub(crate) genre: Option<String>,
     /// Optional duration in seconds extracted from the audio file.
     pub(crate) duration_seconds: Option<i64>,
     /// Whether the song should be queued immediately.
@@ -198,7 +210,7 @@ impl RadioService {
     pub(crate) async fn songs(&self) -> anyhow::Result<Vec<Song>> {
         sqlx::query_as::<_, Song>(
             r#"
-            select id, title, artist, album, duration_seconds, mime_type,
+            select id, title, artist, album, genre, duration_seconds, mime_type,
                 cover_path is not null as has_cover, added_by_did, created_at
             from songs
             order by created_at desc
@@ -207,6 +219,52 @@ impl RadioService {
         .fetch_all(self.db.pool())
         .await
         .context("listing songs")
+    }
+
+    /// Fetches and stores genres for songs where genre is currently empty.
+    ///
+    /// # Errors
+    /// Returns an error when sqlite queries fail.
+    pub(crate) async fn backfill_missing_genres_on_boot(&self) -> anyhow::Result<usize> {
+        let missing = sqlx::query_as::<_, MissingGenreSong>(
+            r#"
+            select id, title, artist, album
+            from songs
+            where genre is null or trim(genre) = ''
+            "#,
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .context("listing songs missing genre")?;
+
+        let mut updated = 0usize;
+        for song in missing {
+            let Some(genre) =
+                metadata::fetch_online_genre(&song.artist, song.album.as_deref(), &song.title)
+                    .await
+            else {
+                continue;
+            };
+            let genre = genre.trim();
+            if genre.is_empty() {
+                continue;
+            }
+            let result = sqlx::query(
+                r#"
+                update songs
+                set genre = ?
+                where id = ? and (genre is null or trim(genre) = '')
+                "#,
+            )
+            .bind(genre)
+            .bind(&song.id)
+            .execute(self.db.pool())
+            .await
+            .with_context(|| format!("updating genre for song {}", song.id))?;
+            updated += result.rows_affected() as usize;
+        }
+
+        Ok(updated)
     }
 
     /// Lists admin-defined album loops.
@@ -287,7 +345,7 @@ impl RadioService {
     ) -> anyhow::Result<RadioAlbum> {
         let songs = sqlx::query_as::<_, Song>(
             r#"
-            select id, title, artist, album, duration_seconds, mime_type,
+            select id, title, artist, album, genre, duration_seconds, mime_type,
                 cover_path is not null as has_cover, added_by_did, created_at
             from songs
             where album = ?
@@ -443,16 +501,18 @@ impl RadioService {
         let file_path_string = file_path.to_string_lossy().into_owned();
         let album = upload.album.filter(|value| !value.trim().is_empty());
 
+        let genre = upload.genre.filter(|g| !g.trim().is_empty());
         sqlx::query(
             r#"
-            insert into songs (id, title, artist, album, duration_seconds, file_path, mime_type, added_by_did, created_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            insert into songs (id, title, artist, album, genre, duration_seconds, file_path, mime_type, added_by_did, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
         .bind(upload.title.trim())
         .bind(upload.artist.trim())
         .bind(album.as_deref())
+        .bind(genre.as_deref())
         .bind(upload.duration_seconds)
         .bind(&file_path_string)
         .bind(upload.mime_type.as_deref())
@@ -511,11 +571,12 @@ impl RadioService {
             }
         }
 
-        let base_position = sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_queue")
-            .fetch_one(self.db.pool())
-            .await
-            .context("loading max queue position")?
-            .unwrap_or(0);
+        let base_position =
+            sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_queue")
+                .fetch_one(self.db.pool())
+                .await
+                .context("loading max queue position")?
+                .unwrap_or(0);
 
         for (i, song_id) in song_ids.iter().enumerate() {
             let id = Uuid::new_v4().to_string();
@@ -637,7 +698,7 @@ async fn radio_state(db: &Database) -> anyhow::Result<RadioState> {
 async fn find_song(db: &Database, song_id: &str) -> anyhow::Result<Option<Song>> {
     sqlx::query_as::<_, Song>(
         r#"
-        select id, title, artist, album, duration_seconds, mime_type,
+        select id, title, artist, album, genre, duration_seconds, mime_type,
             cover_path is not null as has_cover, added_by_did, created_at
         from songs
         where id = ?
@@ -679,8 +740,9 @@ async fn album_loops(db: &Database) -> anyhow::Result<Vec<RadioAlbum>> {
     for album in &mut albums {
         album.tracks = sqlx::query_as::<_, Song>(
             r#"
-            select songs.id, songs.title, songs.artist, songs.album, songs.duration_seconds,
-                songs.mime_type, songs.cover_path is not null as has_cover,
+            select songs.id, songs.title, songs.artist, songs.album, songs.genre,
+                songs.duration_seconds, songs.mime_type,
+                songs.cover_path is not null as has_cover,
                 songs.added_by_did, songs.created_at
             from radio_album_tracks
             join songs on songs.id = radio_album_tracks.song_id

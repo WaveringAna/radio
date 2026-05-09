@@ -39,9 +39,9 @@ async fn dispatch(
         "getLicense" => ok_xml(
             r#"<license valid="true" email="radio@nekomimi.pet" licenseExpires="2099-12-31T23:59:59"/>"#,
         ),
-        "getMusicFolders" => ok_xml(
-            r#"<musicFolders><musicFolder id="1" name="radio"/></musicFolders>"#,
-        ),
+        "getMusicFolders" => {
+            ok_xml(r#"<musicFolders><musicFolder id="1" name="radio"/></musicFolders>"#)
+        }
         "getIndexes" | "getArtists" => get_artists(&state).await,
         "getArtist" => get_artist(&state, q.id.as_deref()).await,
         "getAlbumList" | "getAlbumList2" => get_album_list(&state).await,
@@ -50,14 +50,16 @@ async fn dispatch(
         "stream" | "download" => stream_song(q.id.as_deref()),
         "getCoverArt" => cover_art(q.id.as_deref()),
         "getNowPlaying" => now_playing(&state).await,
-        "search2" | "search3" => search(
-            &state,
-            q.query.as_deref(),
-            q.artist_count.unwrap_or(20),
-            q.album_count.unwrap_or(20),
-            q.song_count.unwrap_or(20),
-        )
-        .await,
+        "search2" | "search3" => {
+            search(
+                &state,
+                q.query.as_deref(),
+                q.artist_count.unwrap_or(20),
+                q.album_count.unwrap_or(20),
+                q.song_count.unwrap_or(20),
+            )
+            .await
+        }
         _ => err_xml(0, "unknown method"),
     }
 }
@@ -125,12 +127,18 @@ async fn get_artist(state: &AppState, id: Option<&str>) -> Response {
         }
     };
 
-    let artist_songs: Vec<_> = songs.into_iter().filter(|s| s.artist == artist_name).collect();
+    let artist_songs: Vec<_> = songs
+        .into_iter()
+        .filter(|s| s.artist == artist_name)
+        .collect();
     if artist_songs.is_empty() {
         return err_xml(70, "artist not found");
     }
 
-    let cover_id = artist_songs.iter().find(|s| s.has_cover).map(|s| s.id.clone());
+    let cover_id = artist_songs
+        .iter()
+        .find(|s| s.has_cover)
+        .map(|s| s.id.clone());
     let total_duration: i64 = artist_songs.iter().filter_map(|s| s.duration_seconds).sum();
 
     let mut xml = format!(
@@ -165,9 +173,17 @@ async fn get_album_list(state: &AppState) -> Response {
 
     let mut xml = String::from("<albumList2>");
     for album in &albums {
-        let cover_id = album.tracks.iter().find(|s| s.has_cover).map(|s| s.id.clone());
+        let cover_id = album
+            .tracks
+            .iter()
+            .find(|s| s.has_cover)
+            .map(|s| s.id.clone());
         let duration: i64 = album.tracks.iter().filter_map(|s| s.duration_seconds).sum();
-        let artist = album.tracks.first().map(|s| s.artist.as_str()).unwrap_or("Various");
+        let artist = album
+            .tracks
+            .first()
+            .map(|s| s.artist.as_str())
+            .unwrap_or("Various");
         write!(
             xml,
             r#"<album id="{}" name="{}" artist="{}" songCount="{}" duration="{}""#,
@@ -200,12 +216,18 @@ async fn get_album(state: &AppState, id: Option<&str>) -> Response {
                 return err_xml(0, "internal error");
             }
         };
-        let artist_songs: Vec<_> = songs.into_iter().filter(|s| s.artist == artist_name).collect();
+        let artist_songs: Vec<_> = songs
+            .into_iter()
+            .filter(|s| s.artist == artist_name)
+            .collect();
         if artist_songs.is_empty() {
             return err_xml(70, "album not found");
         }
         let duration: i64 = artist_songs.iter().filter_map(|s| s.duration_seconds).sum();
-        let cover_id = artist_songs.iter().find(|s| s.has_cover).map(|s| s.id.clone());
+        let cover_id = artist_songs
+            .iter()
+            .find(|s| s.has_cover)
+            .map(|s| s.id.clone());
         let mut xml = format!(
             r#"<album id="{}" name="Songs" artist="{}" songCount="{}" duration="{}""#,
             esc(id),
@@ -237,8 +259,16 @@ async fn get_album(state: &AppState, id: Option<&str>) -> Response {
     };
 
     let duration: i64 = album.tracks.iter().filter_map(|s| s.duration_seconds).sum();
-    let artist = album.tracks.first().map(|s| s.artist.as_str()).unwrap_or("Various");
-    let cover_id = album.tracks.iter().find(|s| s.has_cover).map(|s| s.id.clone());
+    let artist = album
+        .tracks
+        .first()
+        .map(|s| s.artist.as_str())
+        .unwrap_or("Various");
+    let cover_id = album
+        .tracks
+        .iter()
+        .find(|s| s.has_cover)
+        .map(|s| s.id.clone());
 
     let mut xml = format!(
         r#"<album id="{}" name="{}" artist="{}" songCount="{}" duration="{}""#,
@@ -358,8 +388,16 @@ async fn search(
         Ok(a) => a,
         Err(_) => vec![],
     };
-    for album in albums.iter().filter(|a| a.title.to_lowercase().contains(&q)).take(album_count) {
-        let artist = album.tracks.first().map(|s| s.artist.as_str()).unwrap_or("Various");
+    for album in albums
+        .iter()
+        .filter(|a| a.title.to_lowercase().contains(&q))
+        .take(album_count)
+    {
+        let artist = album
+            .tracks
+            .first()
+            .map(|s| s.artist.as_str())
+            .unwrap_or("Various");
         write!(
             xml,
             r#"<album id="{}" name="{}" artist="{}"/>"#,
@@ -375,7 +413,10 @@ async fn search(
         .filter(|s| {
             s.title.to_lowercase().contains(&q)
                 || s.artist.to_lowercase().contains(&q)
-                || s.album.as_ref().map(|a| a.to_lowercase().contains(&q)).unwrap_or(false)
+                || s.album
+                    .as_ref()
+                    .map(|a| a.to_lowercase().contains(&q))
+                    .unwrap_or(false)
         })
         .take(song_count)
     {
@@ -397,7 +438,13 @@ fn song_attrs(song: &Song, parent_id: &str) -> String {
 
     let mut s = format!(
         r#"id="{}" parent="{}" title="{}" artist="{}" duration="{}" suffix="{}" contentType="{}" isVideo="false" type="music""#,
-        song.id, parent_id, esc(&song.title), esc(&song.artist), duration, suffix, content_type
+        song.id,
+        parent_id,
+        esc(&song.title),
+        esc(&song.artist),
+        duration,
+        suffix,
+        content_type
     );
 
     if let Some(album) = &song.album {

@@ -4,6 +4,7 @@ export interface ExtractedAudioMetadata {
   title?: string
   artist?: string
   album?: string
+  genre?: string
   durationSeconds?: number
 }
 
@@ -17,6 +18,7 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedAudioMe
   const title = metadata.common.title?.trim()
   const artist = metadata.common.artist?.trim()
   const album = metadata.common.album?.trim()
+  const genre = metadata.common.genre?.[0]?.trim()
   const durationSeconds = metadata.format.duration
     ? Math.round(metadata.format.duration)
     : undefined
@@ -25,6 +27,7 @@ export async function extractAudioMetadata(file: File): Promise<ExtractedAudioMe
     title: title || undefined,
     artist: artist || undefined,
     album: album || undefined,
+    genre: genre || undefined,
     durationSeconds,
   }
 }

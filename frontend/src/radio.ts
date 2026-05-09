@@ -24,6 +24,7 @@ export interface Song {
   title: string
   artist: string
   album?: string | null
+  genre?: string | null
   durationSeconds?: number | null
   mimeType?: string | null
   hasCover: boolean
@@ -80,6 +81,7 @@ export interface SongUploadInput {
   title: string
   artist: string
   album?: string
+  genre?: string
   durationSeconds?: number
   cover?: File | null
   addToQueue: boolean
@@ -293,6 +295,9 @@ export async function uploadSong(input: SongUploadInput): Promise<Song> {
   formData.set('title', input.title)
   formData.set('artist', input.artist)
   formData.set('album', input.album ?? '')
+  if (input.genre) {
+    formData.set('genre', input.genre)
+  }
   if (input.durationSeconds !== undefined) {
     formData.set('durationSeconds', String(input.durationSeconds))
   }

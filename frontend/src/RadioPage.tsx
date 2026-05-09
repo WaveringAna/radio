@@ -71,6 +71,7 @@ export default function RadioPage(props: RadioPageProps) {
   const [uploadError, setUploadError] = createSignal<string | null>(null)
   const [metadata, setMetadata] = createSignal<ExtractedAudioMetadata | null>(null)
   const [profiles, setProfiles] = createSignal<Record<string, AtprotoProfile>>({})
+  const inFlightDids = new Set<string>()
   const [title, setTitle] = createSignal('')
   const [artist, setArtist] = createSignal('')
   const [file, setFile] = createSignal<File | null>(null)
@@ -98,6 +99,9 @@ export default function RadioPage(props: RadioPageProps) {
   const [songPage, setSongPage] = createSignal(0)
   const [upNextPage, setUpNextPage] = createSignal(0)
   const [queueControlPage, setQueueControlPage] = createSignal(0)
+  const [songFilterArtist, setSongFilterArtist] = createSignal('')
+  const [songFilterGenre, setSongFilterGenre] = createSignal('')
+  const [songFilterDid, setSongFilterDid] = createSignal('')
   let audioRef: HTMLAudioElement | undefined
   let lastAudioSyncKey = ''
 
@@ -137,12 +141,13 @@ export default function RadioPage(props: RadioPageProps) {
     const dids = [
       ...(songs() ?? []).map((song) => song.addedByDid),
       ...(snapshot()?.queue ?? []).flatMap((item) => [item.addedByDid, item.queuedByDid]),
-    ].filter((did, index, values) => values.indexOf(did) === index && !profiles()[did])
+    ].filter((did, index, values) => values.indexOf(did) === index && !profiles()[did] && !inFlightDids.has(did))
 
     for (const did of dids) {
-      void resolveAtprotoProfile(did).then((profile) => {
-        setProfiles((current) => ({ ...current, [did]: profile }))
-      })
+      inFlightDids.add(did)
+      void resolveAtprotoProfile(did)
+        .then((profile) => setProfiles((current) => ({ ...current, [did]: profile })))
+        .finally(() => inFlightDids.delete(did))
     }
   })
 
@@ -153,13 +158,25 @@ export default function RadioPage(props: RadioPageProps) {
     return queue && queue.length > 0 ? `${API_BASE}/api/songs/${queue[0].songId}/audio` : undefined
   }
   const livePositionSeconds = () => {
+    // Re-evaluate every second.
+    void clock()
+
+    // When we're actually listening, the audio element's currentTime is the
+    // truth - the user hears what's at that position. Don't trust the server's
+    // recomputed positionSeconds here, since it can drift ahead of the audio
+    // (buffering, network jitter) and would mislead the onEnded guard into
+    // skipping mid-song.
+    if (audioRef && !audioRef.paused && Number.isFinite(audioRef.currentTime)) {
+      return audioRef.currentTime
+    }
+
     const state = snapshot()?.state
     if (!state) {
       return 0
     }
 
     const elapsedSinceSync = state.status === 'playing'
-      ? Math.floor((clock() - snapshotSyncedAt()) / 1000)
+      ? (clock() - snapshotSyncedAt()) / 1000
       : 0
 
     return state.positionSeconds + Math.max(0, elapsedSinceSync)
@@ -168,11 +185,25 @@ export default function RadioPage(props: RadioPageProps) {
   const profileFor = (did: string) => profiles()[did] ?? fallbackProfile(did)
   const songPageSize = 6
   const queuePageSize = 6
+  const filteredSongs = createMemo(() => {
+    const filterArtist = songFilterArtist().trim().toLowerCase()
+    const filterGenre = songFilterGenre().trim().toLowerCase()
+    const filterDid = songFilterDid().trim().toLowerCase()
+    return (songs() ?? []).filter((song) => {
+      if (filterArtist && !song.artist.toLowerCase().includes(filterArtist)) return false
+      if (filterGenre && !song.genre?.toLowerCase().includes(filterGenre)) return false
+      if (filterDid) {
+        const profile = profileFor(song.addedByDid)
+        if (!song.addedByDid.toLowerCase().includes(filterDid) && !profile.handle.toLowerCase().includes(filterDid)) return false
+      }
+      return true
+    })
+  })
   const queuePageCount = createMemo(() => Math.max(1, Math.ceil((snapshot()?.queue.length ?? 0) / queuePageSize)))
-  const songPageCount = createMemo(() => Math.max(1, Math.ceil((songs()?.length ?? 0) / songPageSize)))
+  const songPageCount = createMemo(() => Math.max(1, Math.ceil(filteredSongs().length / songPageSize)))
   const pagedSongs = createMemo(() => {
     const start = songPage() * songPageSize
-    return (songs() ?? []).slice(start, start + songPageSize)
+    return filteredSongs().slice(start, start + songPageSize)
   })
   const pagedUpNext = createMemo(() => {
     const start = upNextPage() * queuePageSize
@@ -212,12 +243,18 @@ export default function RadioPage(props: RadioPageProps) {
       return
     }
 
-    const syncKey = `${song.id}:${state.status}:${state.startedAt ?? ''}:${state.positionSeconds}`
+    // Only resync on real transitions (song change, play/pause/skip).
+    // The server's positionSeconds is recomputed live on every snapshot, so
+    // including it here would force a reseek on every queue change and jump
+    // the audio forward whenever it had drifted behind (buffering, stalls).
+    const syncKey = `${song.id}:${state.status}:${state.startedAt ?? ''}`
     if (syncKey !== lastAudioSyncKey) {
       lastAudioSyncKey = syncKey
       audioRef.volume = volume()
       audioRef.load()
-      audioRef.currentTime = Math.max(0, state.positionSeconds)
+      // Cap at duration - 2s so seeking never triggers a spurious onEnded
+      const maxSeek = song.durationSeconds ? Math.max(0, song.durationSeconds - 2) : Infinity
+      audioRef.currentTime = Math.min(Math.max(0, state.positionSeconds), maxSeek)
     }
 
     if (state.status === 'playing') {
@@ -226,6 +263,13 @@ export default function RadioPage(props: RadioPageProps) {
     }
 
     audioRef.pause()
+  })
+
+  createEffect(() => {
+    void songFilterArtist()
+    void songFilterGenre()
+    void songFilterDid()
+    setSongPage(0)
   })
 
   createEffect(() => {
@@ -323,6 +367,7 @@ export default function RadioPage(props: RadioPageProps) {
         title: resolvedTitle,
         artist: resolvedArtist,
         album: metadata()?.album,
+        genre: metadata()?.genre,
         durationSeconds: metadata()?.durationSeconds,
         cover: coverFile(),
         addToQueue: addToQueue(),
@@ -466,22 +511,24 @@ export default function RadioPage(props: RadioPageProps) {
         <h1>{currentSong()?.title ?? 'nothing playing yet'}</h1>
         <p class="subtitle">{currentSong()?.artist ?? 'queue something lovely'}</p>
         <Show when={currentSong()?.album}>{(album) => <p class="muted">{album()}</p>}</Show>
-        <Show when={currentAudioUrl()}>
-          {(url) => (
-            <audio
-              ref={audioRef}
-              class="radio-audio"
-              src={url()}
-              preload="auto"
-              onPlay={() => setIsListening(true)}
-              onPause={() => setIsListening(false)}
-              onEnded={() => {
-                setIsListening(false)
-                void sendControl('skip')
-              }}
-            />
-          )}
-        </Show>
+        <audio
+          ref={audioRef}
+          class="radio-audio"
+          src={currentAudioUrl() ?? ''}
+          preload="auto"
+          onPlay={() => setIsListening(true)}
+          onPause={() => setIsListening(false)}
+          onEnded={() => {
+            setIsListening(false)
+            if (!props.isAdmin) return
+            // Guard: only skip if we're genuinely near the song's end.
+            // Prevents spurious skips from seek-past-end on reconnect.
+            const duration = currentSong()?.durationSeconds
+            if (!duration || livePositionSeconds() >= duration - 8) {
+              void sendControl('skip')
+            }
+          }}
+        />
         <Show when={nextAudioUrl()}>
           {(url) => <audio src={url()} preload="auto" aria-hidden="true" style="display:none" />}
         </Show>
@@ -748,7 +795,24 @@ export default function RadioPage(props: RadioPageProps) {
           <section class="glass-card">
             <div class="section-heading">
               <p class="eyebrow">songs added</p>
-              <span>{songs()?.length ?? 0}</span>
+              <span>{filteredSongs().length}{filteredSongs().length !== (songs()?.length ?? 0) ? ` / ${songs()?.length ?? 0}` : ''}</span>
+            </div>
+            <div class="song-filters">
+              <input
+                placeholder="artist"
+                value={songFilterArtist()}
+                onInput={(e) => setSongFilterArtist(e.currentTarget.value)}
+              />
+              <input
+                placeholder="genre"
+                value={songFilterGenre()}
+                onInput={(e) => setSongFilterGenre(e.currentTarget.value)}
+              />
+              <input
+                placeholder="@handle or did"
+                value={songFilterDid()}
+                onInput={(e) => setSongFilterDid(e.currentTarget.value)}
+              />
             </div>
             <Show when={!songs.loading} fallback={<p class="list-empty">loading songs...</p>}>
               <ul class="song-list">
