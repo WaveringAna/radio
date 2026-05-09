@@ -121,6 +121,14 @@ pub(crate) struct RadioSnapshot {
     pub(crate) queue: Vec<QueueItem>,
 }
 
+/// Live seek position returned by the backend.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RadioSeek {
+    /// Current playback offset in seconds.
+    pub(crate) position_seconds: i64,
+}
+
 /// Realtime events broadcast to websocket clients.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
@@ -200,6 +208,17 @@ impl RadioService {
             state,
             current_song,
             queue,
+        })
+    }
+
+    /// Loads the current live seek position.
+    ///
+    /// # Errors
+    /// Returns an error when sqlite queries fail.
+    pub(crate) async fn seek(&self) -> anyhow::Result<RadioSeek> {
+        let state = radio_state(&self.db).await?;
+        Ok(RadioSeek {
+            position_seconds: state.position_seconds,
         })
     }
 

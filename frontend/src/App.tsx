@@ -138,7 +138,7 @@ export default function App() {
           <RadioPage isAdmin={session()?.isAdmin ?? false} />
         </section>
 
-        <Show when={path() === '/auth' || path() === '/admin'}>
+        <section hidden={path() !== '/auth' && path() !== '/admin'}>
           <h1>sign in with bluesky oauth</h1>
           <Show when={session()?.authenticated} fallback={signInForm()}>
             <p>you are signed in.</p>
@@ -150,7 +150,7 @@ export default function App() {
               sign out
             </button>
           </Show>
-        </Show>
+        </section>
       </Show>
 
       <Show when={authError()}>

@@ -60,6 +60,10 @@ export interface RadioState {
   updatedByDid?: string | null
 }
 
+export interface RadioSeek {
+  positionSeconds: number
+}
+
 export interface RadioSnapshot {
   state: RadioState
   currentSong?: Song | null
@@ -107,6 +111,20 @@ export async function fetchRadioSnapshot(): Promise<RadioSnapshot> {
   }
 
   return (await response.json()) as RadioSnapshot
+}
+
+/**
+ * Loads the current backend seek position in seconds.
+ * @returns The current seek position.
+ * @throws Error When the backend request fails.
+ */
+export async function fetchRadioSeek(): Promise<RadioSeek> {
+  const response = await fetch(`${API_BASE}/api/radio/seek`)
+  if (!response.ok) {
+    throw new Error('failed to load radio seek')
+  }
+
+  return (await response.json()) as RadioSeek
 }
 
 /**
@@ -448,11 +466,15 @@ export async function uploadSongFromUrl(input: UrlSongInput): Promise<Song> {
   return (await response.json()) as Song
 }
 
-export async function controlRadio(action: 'play' | 'pause' | 'stop' | 'skip'): Promise<RadioSnapshot> {
+export async function controlRadio(
+  action: 'play' | 'pause' | 'stop' | 'skip',
+  intent: 'explicit_admin_action',
+): Promise<RadioSnapshot> {
   const response = await fetch(`${API_BASE}/api/radio/control/${action}`, {
     method: 'POST',
     credentials: 'include',
-    headers: authHeaders(),
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ intent }),
   })
 
   if (!response.ok) {

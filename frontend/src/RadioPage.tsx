@@ -8,6 +8,7 @@ import {
   enqueueAlbum,
   enqueueSong,
   fetchAlbums,
+  fetchRadioSeek,
   fetchRadioSnapshot,
   fetchSongs,
   importFromSubsonic,
@@ -94,8 +95,7 @@ export default function RadioPage(props: RadioPageProps) {
   const [importingId, setImportingId] = createSignal<string | null>(null)
   const [volume, setVolume] = createSignal(readVolumeCookie())
   const [isListening, setIsListening] = createSignal(false)
-  const [clock, setClock] = createSignal(Date.now())
-  const [snapshotSyncedAt, setSnapshotSyncedAt] = createSignal(Date.now())
+  const [serverSeekSeconds, setServerSeekSeconds] = createSignal(0)
   const [songPage, setSongPage] = createSignal(0)
   const [upNextPage, setUpNextPage] = createSignal(0)
   const [queueControlPage, setQueueControlPage] = createSignal(0)
@@ -106,14 +106,36 @@ export default function RadioPage(props: RadioPageProps) {
   let lastAudioSyncKey = ''
 
   createEffect(() => {
-    const interval = window.setInterval(() => setClock(Date.now()), 1000)
-    onCleanup(() => window.clearInterval(interval))
+    const state = snapshot()?.state
+    if (state) {
+      setServerSeekSeconds(Math.max(0, state.positionSeconds))
+    }
   })
 
   createEffect(() => {
-    if (snapshot()) {
-      setSnapshotSyncedAt(Date.now())
+    const state = snapshot()?.state
+    if (!state || state.status !== 'playing' || !state.currentSongId) {
+      return
     }
+
+    let disposed = false
+    const refreshSeek = async () => {
+      try {
+        const seek = await fetchRadioSeek()
+        if (!disposed) {
+          setServerSeekSeconds(Math.max(0, seek.positionSeconds))
+        }
+      } catch {
+        // Best-effort polling: keep prior seek until the next successful refresh.
+      }
+    }
+
+    void refreshSeek()
+    const interval = window.setInterval(() => void refreshSeek(), 1000)
+    onCleanup(() => {
+      disposed = true
+      window.clearInterval(interval)
+    })
   })
 
   createEffect(() => {
@@ -158,31 +180,19 @@ export default function RadioPage(props: RadioPageProps) {
     return queue && queue.length > 0 ? `${API_BASE}/api/songs/${queue[0].songId}/audio` : undefined
   }
   const livePositionSeconds = () => {
-    // Re-evaluate every second.
-    void clock()
-
     // When we're actually listening, the audio element's currentTime is the
-    // truth - the user hears what's at that position. Don't trust the server's
-    // recomputed positionSeconds here, since it can drift ahead of the audio
-    // (buffering, network jitter) and would mislead the onEnded guard into
-    // skipping mid-song.
+    // truth - this is what the listener hears.
     if (audioRef && !audioRef.paused && Number.isFinite(audioRef.currentTime)) {
       return audioRef.currentTime
     }
-
-    const state = snapshot()?.state
-    if (!state) {
-      return 0
-    }
-
-    const elapsedSinceSync = state.status === 'playing'
-      ? (clock() - snapshotSyncedAt()) / 1000
-      : 0
-
-    return state.positionSeconds + Math.max(0, elapsedSinceSync)
+    return serverSeekSeconds()
   }
   const needsMetadataPrompt = () => file() && !hasRequiredMetadata(metadata())
   const profileFor = (did: string) => profiles()[did] ?? fallbackProfile(did)
+  const clampSeekPosition = (positionSeconds: number, durationSeconds: number | null | undefined): number => {
+    const maxSeek = durationSeconds ? Math.max(0, durationSeconds - 2) : Infinity
+    return Math.min(Math.max(0, positionSeconds), maxSeek)
+  }
   const songPageSize = 6
   const queuePageSize = 6
   const filteredSongs = createMemo(() => {
@@ -223,12 +233,23 @@ export default function RadioPage(props: RadioPageProps) {
     }, 0)
   }
 
-  const startLocalPlayback = () => {
-    if (audioRef && snapshot()?.state) {
-      audioRef.volume = volume()
-      audioRef.currentTime = Math.max(0, livePositionSeconds())
-      void audioRef.play().catch(() => undefined)
+  const startLocalPlayback = async () => {
+    if (!audioRef || !snapshot()?.state) {
+      return
     }
+
+    audioRef.volume = volume()
+    let seekPosition = livePositionSeconds()
+    try {
+      const seek = await fetchRadioSeek()
+      seekPosition = seek.positionSeconds
+      setServerSeekSeconds(Math.max(0, seek.positionSeconds))
+    } catch {
+      // Keep the last known seek if a one-off refresh fails.
+    }
+
+    audioRef.currentTime = clampSeekPosition(seekPosition, currentSong()?.durationSeconds)
+    void audioRef.play().catch(() => undefined)
   }
 
   createEffect(() => {
@@ -244,17 +265,13 @@ export default function RadioPage(props: RadioPageProps) {
     }
 
     // Only resync on real transitions (song change, play/pause/skip).
-    // The server's positionSeconds is recomputed live on every snapshot, so
-    // including it here would force a reseek on every queue change and jump
-    // the audio forward whenever it had drifted behind (buffering, stalls).
     const syncKey = `${song.id}:${state.status}:${state.startedAt ?? ''}`
     if (syncKey !== lastAudioSyncKey) {
       lastAudioSyncKey = syncKey
       audioRef.volume = volume()
       audioRef.load()
-      // Cap at duration - 2s so seeking never triggers a spurious onEnded
-      const maxSeek = song.durationSeconds ? Math.max(0, song.durationSeconds - 2) : Infinity
-      audioRef.currentTime = Math.min(Math.max(0, state.positionSeconds), maxSeek)
+      // Cap at duration - 2s so seeking never triggers a spurious onEnded.
+      audioRef.currentTime = clampSeekPosition(state.positionSeconds, song.durationSeconds)
     }
 
     if (state.status === 'playing') {
@@ -457,7 +474,7 @@ export default function RadioPage(props: RadioPageProps) {
   const sendControl = async (action: 'play' | 'pause' | 'stop' | 'skip') => {
     try {
       setUploadError(null)
-      mutate(await controlRadio(action))
+      mutate(await controlRadio(action, 'explicit_admin_action'))
       if (action === 'play' || action === 'skip') {
         playCurrentAudio()
       }
@@ -518,16 +535,7 @@ export default function RadioPage(props: RadioPageProps) {
           preload="auto"
           onPlay={() => setIsListening(true)}
           onPause={() => setIsListening(false)}
-          onEnded={() => {
-            setIsListening(false)
-            if (!props.isAdmin) return
-            // Guard: only skip if we're genuinely near the song's end.
-            // Prevents spurious skips from seek-past-end on reconnect.
-            const duration = currentSong()?.durationSeconds
-            if (!duration || livePositionSeconds() >= duration - 8) {
-              void sendControl('skip')
-            }
-          }}
+          onEnded={() => setIsListening(false)}
         />
         <Show when={nextAudioUrl()}>
           {(url) => <audio src={url()} preload="auto" aria-hidden="true" style="display:none" />}
@@ -573,13 +581,16 @@ export default function RadioPage(props: RadioPageProps) {
               <For each={pagedUpNext()} fallback={<li class="muted">queue is empty</li>}>
                 {(item, index) => {
                   const profile = () => profileFor(item.addedByDid)
+                  const hasCover = () => (songs() ?? []).some((song) => song.id === item.songId && song.hasCover)
                   return (
                     <li>
                       <span class="queue-number">{upNextPage() * queuePageSize + index() + 1}</span>
-                      <ProfileAvatar profile={profile()} />
-                      <span>{item.title}</span>
-                      <small>{item.album ?? 'unknown album'}</small>
-                      <small class="profile-handle">@{profile().handle}</small>
+                      <SongCoverThumb songId={item.songId} hasCover={hasCover()} />
+                      <div class="up-next-copy">
+                        <span class="up-next-title">{item.title}</span>
+                        <small class="up-next-artist">{item.artist || 'unknown artist'}</small>
+                      </div>
+                      <ProfileAvatar profile={profile()} class="up-next-profile-avatar" title={`@${profile().handle}`} />
                     </li>
                   )
                 }}
@@ -884,9 +895,19 @@ export default function RadioPage(props: RadioPageProps) {
   )
 }
 
-function ProfileAvatar(props: { profile: AtprotoProfile }) {
+function SongCoverThumb(props: { songId: string; hasCover: boolean }) {
   return (
-    <span class="profile-avatar">
+    <span class="song-cover-thumb" aria-hidden="true">
+      <Show when={props.hasCover} fallback={<span class="song-cover-fallback">art</span>}>
+        <img src={`${API_BASE}/api/songs/${props.songId}/cover`} alt="" loading="lazy" />
+      </Show>
+    </span>
+  )
+}
+
+function ProfileAvatar(props: { profile: AtprotoProfile; class?: string; title?: string }) {
+  return (
+    <span class={`profile-avatar${props.class ? ` ${props.class}` : ''}`} title={props.title}>
       <Show when={props.profile.avatar} fallback={props.profile.handle.slice(0, 1).toUpperCase()}>
         {(avatar) => <img src={avatar()} alt="" />}
       </Show>

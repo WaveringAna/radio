@@ -20,7 +20,9 @@ use tower_http::cors::CorsLayer;
 use crate::{
     auth::{AppSession, AuthService},
     metadata::fetch_online_metadata,
-    radio::{NewRadioAlbum, NewSongUpload, RadioControlAction, RadioService, event_message},
+    radio::{
+        NewRadioAlbum, NewSongUpload, RadioControlAction, RadioSeek, RadioService, event_message,
+    },
 };
 
 /// Shared application state for HTTP routes.
@@ -77,6 +79,7 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
             put(set_album_enabled),
         )
         .route("/api/radio/state", get(get_radio_state))
+        .route("/api/radio/seek", get(get_radio_seek))
         .route("/api/radio/ws", get(radio_ws))
         .route("/api/radio/queue", post(enqueue_song))
         .route("/api/radio/queue/album", post(enqueue_album))
@@ -207,6 +210,12 @@ struct AdminDidRequest {
 #[serde(rename_all = "camelCase")]
 struct EnqueueAlbumRequest {
     song_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ControlRadioRequest {
+    intent: String,
 }
 
 #[derive(Deserialize)]
@@ -403,6 +412,17 @@ async fn get_radio_state(
     state
         .radio
         .snapshot()
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
+async fn get_radio_seek(
+    State(state): State<AppState>,
+) -> Result<Json<RadioSeek>, (StatusCode, Json<ErrorResponse>)> {
+    state
+        .radio
+        .seek()
         .await
         .map(Json)
         .map_err(internal_api_error)
@@ -703,8 +723,13 @@ async fn control_radio(
     State(state): State<AppState>,
     session_token: SessionToken,
     Path(action): Path<String>,
+    Json(payload): Json<ControlRadioRequest>,
 ) -> Result<Json<crate::radio::RadioSnapshot>, (StatusCode, Json<ErrorResponse>)> {
     let session = admin_session(&state, session_token.0.as_deref()).await?;
+    if payload.intent != "explicit_admin_action" {
+        return Err(api_error(StatusCode::BAD_REQUEST, "invalid_control_intent"));
+    }
+
     let action = match action.as_str() {
         "play" => RadioControlAction::Play,
         "pause" => RadioControlAction::Pause,
