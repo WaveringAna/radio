@@ -1,7 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show, untrack } from 'solid-js'
-import { ListPlus, Pause, Play, SkipForward, Trash2, UploadCloud, Volume2 } from 'lucide-solid'
-import { resolveAtprotoProfile, type AtprotoProfile } from './atproto'
-import { extractAudioMetadata, type ExtractedAudioMetadata } from './audioMetadata'
+import { ListPlus, Trash2, Volume2 } from 'lucide-solid'
+import { resolveAtprotoProfile, type AtprotoProfile } from '../lib/atproto'
 import {
   API_BASE,
   clearQueue,
@@ -11,28 +10,22 @@ import {
   fetchAlbums,
   fetchRadioSnapshot,
   fetchSongs,
-  importFromSubsonic,
-  loadSubsonicCreds,
   openRadioSocket,
   removeQueueItem,
   reorderQueue,
-  saveSubsonicCreds,
-  searchSubsonic,
-  uploadSong,
-  uploadSongFromUrl,
   type QueueItem,
   type RadioEvent,
   type RadioState,
   type Song,
-  type SubsonicSongResult,
-} from './radio'
+} from '../lib/radio'
+import { AdminUploadPanel } from '../components/AdminUploadPanel'
+import { PaginationRow } from '../components/PaginationRow'
+import { ProfileAvatar } from '../components/ProfileAvatar'
+import { SongCoverThumb } from '../components/SongCoverThumb'
+import { createPagedList } from '../primitives/createPagedList'
 
 interface RadioPageProps {
   isAdmin: boolean
-}
-
-function hasRequiredMetadata(metadata: ExtractedAudioMetadata | null): boolean {
-  return Boolean(metadata?.title && metadata.artist)
 }
 
 function fallbackProfile(did: string): AtprotoProfile {
@@ -73,40 +66,13 @@ export default function RadioPage(props: RadioPageProps) {
   const [snapshot, { mutate, refetch }] = createResource(fetchRadioSnapshot)
   const [songs, { refetch: refetchSongs }] = createResource(fetchSongs)
   const [albums, { refetch: refetchAlbums }] = createResource(() => props.isAdmin, (enabled) => (enabled ? fetchAlbums() : []))
-  const [uploadError, setUploadError] = createSignal<string | null>(null)
-  const [metadata, setMetadata] = createSignal<ExtractedAudioMetadata | null>(null)
+  const [pageError, setPageError] = createSignal<string | null>(null)
   const [profiles, setProfiles] = createSignal<Record<string, AtprotoProfile>>({})
   const inFlightDids = new Set<string>()
-  const [title, setTitle] = createSignal('')
-  const [artist, setArtist] = createSignal('')
-  const [files, setFiles] = createSignal<File[]>([])
-  const [uploadStatus, setUploadStatus] = createSignal<string | null>(null)
-  const [isUploading, setIsUploading] = createSignal(false)
-  const [isDropZoneActive, setIsDropZoneActive] = createSignal(false)
-  const [coverFile, setCoverFile] = createSignal<File | null>(null)
-  const [addToQueue, setAddToQueue] = createSignal(true)
-  const [uploadMode, setUploadMode] = createSignal<'file' | 'url' | 'subsonic'>('file')
-  const [urlInput, setUrlInput] = createSignal('')
-  const [urlTitle, setUrlTitle] = createSignal('')
-  const [urlArtist, setUrlArtist] = createSignal('')
-  const [urlAlbum, setUrlAlbum] = createSignal('')
-  const [urlAddToQueue, setUrlAddToQueue] = createSignal(true)
-  const savedCreds = loadSubsonicCreds()
-  const [subsonicServerUrl, setSubsonicServerUrl] = createSignal(savedCreds.serverUrl ?? '')
-  const [subsonicUsername, setSubsonicUsername] = createSignal(savedCreds.username ?? '')
-  const [subsonicPassword, setSubsonicPassword] = createSignal(savedCreds.password ?? '')
-  const [subsonicQuery, setSubsonicQuery] = createSignal('')
-  const [subsonicResults, setSubsonicResults] = createSignal<SubsonicSongResult[]>([])
-  const [subsonicSearching, setSubsonicSearching] = createSignal(false)
-  const [subsonicAddToQueue, setSubsonicAddToQueue] = createSignal(true)
-  const [importingId, setImportingId] = createSignal<string | null>(null)
   const [volume, setVolume] = createSignal(readVolumeCookie())
   const [hasStarted, setHasStarted] = createSignal(false)
   const [isAudioPlaying, setIsAudioPlaying] = createSignal(false)
   const [clock, setClock] = createSignal(Date.now())
-  const [songPage, setSongPage] = createSignal(0)
-  const [upNextPage, setUpNextPage] = createSignal(0)
-  const [queueControlPage, setQueueControlPage] = createSignal(0)
   const [songFilterArtist, setSongFilterArtist] = createSignal('')
   const [songFilterGenre, setSongFilterGenre] = createSignal('')
   const [songFilterDid, setSongFilterDid] = createSignal('')
@@ -267,9 +233,7 @@ export default function RadioPage(props: RadioPageProps) {
     }
     return Math.max(0, snapshot()?.state.positionSeconds ?? 0)
   }
-  const needsMetadataPrompt = () => files().length === 1 && !hasRequiredMetadata(metadata())
   const profileFor = (did: string) => profiles()[did] ?? fallbackProfile(did)
-  const songPageSize = 6
   const queuePageSize = 6
   const filteredSongs = createMemo(() => {
     const filterArtist = songFilterArtist().trim().toLowerCase()
@@ -285,21 +249,10 @@ export default function RadioPage(props: RadioPageProps) {
       return true
     })
   })
-  const queuePageCount = createMemo(() => Math.max(1, Math.ceil((snapshot()?.queue.length ?? 0) / queuePageSize)))
-  const upNextPageCount = createMemo(() => Math.max(1, Math.ceil(localQueue().length / queuePageSize)))
-  const songPageCount = createMemo(() => Math.max(1, Math.ceil(filteredSongs().length / songPageSize)))
-  const pagedSongs = createMemo(() => {
-    const start = songPage() * songPageSize
-    return filteredSongs().slice(start, start + songPageSize)
-  })
-  const pagedUpNext = createMemo(() => {
-    const start = upNextPage() * queuePageSize
-    return localQueue().slice(start, start + queuePageSize)
-  })
-  const pagedQueueControl = createMemo(() => {
-    const start = queueControlPage() * queuePageSize
-    return (snapshot()?.queue ?? []).slice(start, start + queuePageSize)
-  })
+  const songsPaging = createPagedList(filteredSongs, 6)
+  const upNextPaging = createPagedList(localQueue, queuePageSize)
+  const queueControlPaging = createPagedList(() => snapshot()?.queue ?? [], queuePageSize)
+  const albumsPaging = createPagedList(() => albums() ?? [], 6)
 
   const startListening = async () => {
     if (!audioRef) return
@@ -344,19 +297,7 @@ export default function RadioPage(props: RadioPageProps) {
     void songFilterArtist()
     void songFilterGenre()
     void songFilterDid()
-    setSongPage(0)
-  })
-
-  createEffect(() => {
-    if (songPage() >= songPageCount()) {
-      setSongPage(songPageCount() - 1)
-    }
-    if (upNextPage() >= upNextPageCount()) {
-      setUpNextPage(upNextPageCount() - 1)
-    }
-    if (queueControlPage() >= queuePageCount()) {
-      setQueueControlPage(queuePageCount() - 1)
-    }
+    songsPaging.setPage(0)
   })
 
   createEffect(() => {
@@ -397,200 +338,49 @@ export default function RadioPage(props: RadioPageProps) {
     }
   })
 
-  const selectFiles = async (selectedFiles: File[]) => {
-    setFiles(selectedFiles)
-    setMetadata(null)
-    setTitle('')
-    setArtist('')
-    setUploadError(null)
-
-    if (selectedFiles.length !== 1) {
-      return
-    }
-
-    try {
-      const extracted = await extractAudioMetadata(selectedFiles[0])
-      setMetadata(extracted)
-      setTitle(extracted.title ?? '')
-      setArtist(extracted.artist ?? '')
-    } catch {
-      setMetadata({})
-    }
-  }
-
-  const submitUpload = async (event: SubmitEvent) => {
-    event.preventDefault()
-    const selectedFiles = files()
-
-    if (selectedFiles.length === 0) {
-      setUploadError('pick audio files first.')
-      return
-    }
-
-    setIsUploading(true)
-    try {
-      setUploadError(null)
-      for (const [index, selectedFile] of selectedFiles.entries()) {
-        setUploadStatus(`uploading ${index + 1}/${selectedFiles.length}: ${selectedFile.name}`)
-
-        let resolvedTitle: string
-        let resolvedArtist: string
-        let extracted: ExtractedAudioMetadata | null = null
-
-        if (selectedFiles.length === 1) {
-          extracted = metadata()
-          resolvedTitle = metadata()?.title ?? title().trim()
-          resolvedArtist = metadata()?.artist ?? artist().trim()
-        } else {
-          extracted = await extractAudioMetadata(selectedFile).catch(() => ({} as ExtractedAudioMetadata))
-          resolvedTitle = extracted.title ?? selectedFile.name.replace(/\.[^/.]+$/, '')
-          resolvedArtist = extracted.artist ?? ''
-        }
-
-        if (!resolvedTitle || !resolvedArtist) {
-          throw new Error(`${selectedFile.name} is missing title or artist metadata.`)
-        }
-
-        await uploadSong({
-          file: selectedFile,
-          title: resolvedTitle,
-          artist: resolvedArtist,
-          album: extracted?.album,
-          genre: extracted?.genre,
-          durationSeconds: extracted?.durationSeconds,
-          cover: coverFile(),
-          addToQueue: addToQueue(),
-        })
-      }
-
-      setTitle('')
-      setArtist('')
-      setMetadata(null)
-      setFiles([])
-      setCoverFile(null)
-      void refetchSongs()
-    } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'upload exploded a little.')
-    } finally {
-      setUploadStatus(null)
-      setIsUploading(false)
-    }
-  }
-
-  const isYtdlpUrl = (url: string) =>
-    url.includes('youtube.com/') || url.includes('youtu.be/') ||
-    url.includes('soundcloud.com/') || url.includes('bandcamp.com/') || url.includes('vimeo.com/')
-
-  const submitUrlUpload = async (event: SubmitEvent) => {
-    event.preventDefault()
-    const url = urlInput().trim()
-    const title = urlTitle().trim()
-    const artist = urlArtist().trim()
-
-    if (!url) { setUploadError('paste a url first.'); return }
-    if (!isYtdlpUrl(url) && !title) { setUploadError('title is required.'); return }
-    if (!isYtdlpUrl(url) && !artist) { setUploadError('artist is required.'); return }
-
-    try {
-      setUploadError(null)
-      await uploadSongFromUrl({ url, title: title || undefined, artist: artist || undefined, album: urlAlbum().trim() || undefined, addToQueue: urlAddToQueue() })
-      setUrlInput('')
-      setUrlTitle('')
-      setUrlArtist('')
-      setUrlAlbum('')
-      void refetchSongs()
-    } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'url import exploded a little.')
-    }
-  }
-
-  createEffect(() => {
-    const url = subsonicServerUrl()
-    const user = subsonicUsername()
-    const pass = subsonicPassword()
-    saveSubsonicCreds({ serverUrl: url, username: user, password: pass })
-  })
-
-  createEffect(() => {
-    const query = subsonicQuery()
-    if (!query.trim() || uploadMode() !== 'subsonic') {
-      setSubsonicResults([])
-      return
-    }
-    const timer = setTimeout(() => {
-      setSubsonicSearching(true)
-      void searchSubsonic(
-        { serverUrl: subsonicServerUrl(), username: subsonicUsername(), password: subsonicPassword() },
-        query,
-      )
-        .then(setSubsonicResults)
-        .catch(() => setSubsonicResults([]))
-        .finally(() => setSubsonicSearching(false))
-    }, 500)
-    onCleanup(() => clearTimeout(timer))
-  })
-
-  const importSubsonicSong = async (result: SubsonicSongResult) => {
-    setImportingId(result.id)
-    try {
-      setUploadError(null)
-      await importFromSubsonic(
-        { serverUrl: subsonicServerUrl(), username: subsonicUsername(), password: subsonicPassword() },
-        result.id,
-        result.coverArtId,
-        subsonicAddToQueue(),
-      )
-      void refetchSongs()
-    } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'import failed.')
-    } finally {
-      setImportingId(null)
-    }
-  }
-
   const sendControl = async (action: 'play' | 'pause' | 'stop' | 'skip') => {
     try {
-      setUploadError(null)
+      setPageError(null)
       mutate(await controlRadio(action, 'explicit_admin_action'))
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'radio control faceplanted.')
+      setPageError(error instanceof Error ? error.message : 'radio control faceplanted.')
     }
   }
 
   const addSongToQueue = async (songId: string) => {
     try {
-      setUploadError(null)
+      setPageError(null)
       await enqueueSong(songId)
       // WS broadcast will deliver the updated snapshot.
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'queue add faceplanted.')
+      setPageError(error instanceof Error ? error.message : 'queue add faceplanted.')
     }
   }
 
   const addAlbumToQueue = async (songIds: string[]) => {
     try {
-      setUploadError(null)
+      setPageError(null)
       mutate(await enqueueAlbum(songIds))
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'album queue add faceplanted.')
+      setPageError(error instanceof Error ? error.message : 'album queue add faceplanted.')
     }
   }
 
   const removeFromQueue = async (queueId: string) => {
     try {
-      setUploadError(null)
+      setPageError(null)
       mutate(await removeQueueItem(queueId))
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'queue remove faceplanted.')
+      setPageError(error instanceof Error ? error.message : 'queue remove faceplanted.')
     }
   }
 
   const clearTheQueue = async () => {
     try {
-      setUploadError(null)
+      setPageError(null)
       mutate(await clearQueue())
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'clear queue faceplanted.')
+      setPageError(error instanceof Error ? error.message : 'clear queue faceplanted.')
     }
   }
 
@@ -602,11 +392,11 @@ export default function RadioPage(props: RadioPageProps) {
     const ids = selectedSongIds()
     if (ids.length === 0) return
     try {
-      setUploadError(null)
+      setPageError(null)
       mutate(await enqueueAlbum(ids))
       setSelectedSongIds([])
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'multi add faceplanted.')
+      setPageError(error instanceof Error ? error.message : 'multi add faceplanted.')
     }
   }
 
@@ -623,10 +413,10 @@ export default function RadioPage(props: RadioPageProps) {
     reordered.splice(sourceIndex, 1)
     reordered.splice(targetIndex, 0, sourceId)
     try {
-      setUploadError(null)
+      setPageError(null)
       mutate(await reorderQueue(reordered))
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'reorder faceplanted.')
+      setPageError(error instanceof Error ? error.message : 'reorder faceplanted.')
     }
   }
 
@@ -697,13 +487,13 @@ export default function RadioPage(props: RadioPageProps) {
           </div>
           <Show when={!snapshot.loading} fallback={<p class="muted">loading queue...</p>}>
             <ul class="queue-list">
-              <For each={pagedUpNext()} fallback={<li class="muted">queue is empty</li>}>
+              <For each={upNextPaging.paged()} fallback={<li class="muted">queue is empty</li>}>
                 {(item, index) => {
                   const profile = () => profileFor(item.queuedByDid)
                   const hasCover = () => (songs() ?? []).some((song) => song.id === item.songId && song.hasCover)
                   return (
                     <li>
-                      <span class="queue-number">{upNextPage() * queuePageSize + index() + 1}</span>
+                      <span class="queue-number">{upNextPaging.page() * queuePageSize + index() + 1}</span>
                       <SongCoverThumb songId={item.songId} hasCover={hasCover()} />
                       <div class="up-next-copy">
                         <span class="up-next-title">{item.title}</span>
@@ -715,186 +505,19 @@ export default function RadioPage(props: RadioPageProps) {
                 }}
               </For>
             </ul>
-            <Show when={localQueue().length > queuePageSize}>
-              <div class="pagination-row compact">
-                <button class="pill-button subtle" type="button" disabled={upNextPage() === 0} onClick={() => setUpNextPage((page) => Math.max(0, page - 1))}>
-                  prev
-                </button>
-                <span>{upNextPage() + 1} / {upNextPageCount()}</span>
-                <button class="pill-button subtle" type="button" disabled={upNextPage() >= upNextPageCount() - 1} onClick={() => setUpNextPage((page) => Math.min(upNextPageCount() - 1, page + 1))}>
-                  next
-                </button>
-              </div>
+            <Show when={upNextPaging.pageCount() > 1}>
+              <PaginationRow page={upNextPaging.page()} pageCount={upNextPaging.pageCount()} onPageChange={upNextPaging.setPage} compact />
             </Show>
           </Show>
         </section>
 
         <Show when={props.isAdmin}>
-          <section class="glass-card admin-controls">
-            <div class="section-heading">
-              <p class="eyebrow">admin control</p>
-              <div class="transport-controls">
-                <button class="icon-button primary" type="button" aria-label="play" onClick={() => void sendControl('play')}>
-                  <Play size={20} fill="currentColor" />
-                </button>
-                <button class="icon-button" type="button" aria-label="pause" onClick={() => void sendControl('pause')}>
-                  <Pause size={18} />
-                </button>
-                <button class="icon-button" type="button" aria-label="skip" onClick={() => void sendControl('skip')}>
-                  <SkipForward size={18} />
-                </button>
-              </div>
-            </div>
-
-            <div class="upload-mode-tabs">
-              <button class="pill-button" classList={{ subtle: uploadMode() !== 'file' }} type="button" onClick={() => setUploadMode('file')}>file</button>
-              <button class="pill-button" classList={{ subtle: uploadMode() !== 'url' }} type="button" onClick={() => setUploadMode('url')}>url</button>
-              <button class="pill-button" classList={{ subtle: uploadMode() !== 'subsonic' }} type="button" onClick={() => setUploadMode('subsonic')}>subsonic</button>
-            </div>
-
-            <Show when={uploadMode() === 'file'}>
-              <form class="upload-form" onSubmit={submitUpload}>
-                <label
-                  class="drop-zone"
-                  classList={{ 'drop-zone-active': isDropZoneActive() }}
-                  onDragOver={(e) => { e.preventDefault(); setIsDropZoneActive(true) }}
-                  onDragLeave={() => setIsDropZoneActive(false)}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    setIsDropZoneActive(false)
-                    const dropped = [...(e.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith('audio/'))
-                    if (dropped.length > 0) {
-                      void selectFiles(dropped)
-                    }
-                  }}
-                >
-                  <UploadCloud size={24} />
-                  <span>
-                    {files().length === 0
-                      ? 'choose audio files or drop them here'
-                      : files().length === 1
-                        ? files()[0].name
-                        : `${files().length} files selected`}
-                  </span>
-                  <small class="drop-zone-hint">multiple files supported</small>
-                  <input type="file" accept="audio/*" multiple onChange={(event) => void selectFiles([...(event.currentTarget.files ?? [])])} />
-                </label>
-
-                <div class="upload-options-row">
-                  <label class="inline-file cover-picker">
-                    <span>cover image</span>
-                    <span class="file-button">choose cover</span>
-                    <input type="file" accept="image/*" onChange={(event) => setCoverFile(event.currentTarget.files?.[0] ?? null)} />
-                    <small>{coverFile()?.name ?? 'no cover selected'}</small>
-                  </label>
-
-                  <label class="inline-check">
-                    <input type="checkbox" checked={addToQueue()} onChange={(event) => setAddToQueue(event.currentTarget.checked)} />
-                    add to queue
-                  </label>
-                </div>
-
-                <Show when={needsMetadataPrompt()}>
-                  <div class="metadata-prompt">
-                    <p class="muted">no title/artist tags found. add the minimum so the queue is readable.</p>
-                    <input placeholder="title" value={title()} onInput={(event) => setTitle(event.currentTarget.value)} />
-                    <input placeholder="artist" value={artist()} onInput={(event) => setArtist(event.currentTarget.value)} />
-                  </div>
-                </Show>
-
-                <Show when={uploadStatus()}>
-                  {(status) => <small class="muted upload-status">{status()}</small>}
-                </Show>
-
-                <button class="pill-button" type="submit" disabled={isUploading()}>
-                  {isUploading() ? 'uploading…' : files().length > 1 ? `upload ${files().length} files` : 'upload'}
-                </button>
-              </form>
-            </Show>
-
-            <Show when={uploadMode() === 'url'}>
-              <form class="upload-form" onSubmit={submitUrlUpload}>
-                <input
-                  type="url"
-                  placeholder="https://example.com/song.mp3 or youtube.com/watch?v=..."
-                  value={urlInput()}
-                  onInput={(e) => setUrlInput(e.currentTarget.value)}
-                />
-                <Show when={isYtdlpUrl(urlInput())}>
-                  <p class="subsonic-searching">youtube · title and artist auto-detected, or fill in below to override</p>
-                </Show>
-                <input placeholder={isYtdlpUrl(urlInput()) ? 'title (optional, auto-detected)' : 'title'} value={urlTitle()} onInput={(e) => setUrlTitle(e.currentTarget.value)} />
-                <input placeholder={isYtdlpUrl(urlInput()) ? 'artist (optional, auto-detected)' : 'artist'} value={urlArtist()} onInput={(e) => setUrlArtist(e.currentTarget.value)} />
-                <input placeholder="album (optional)" value={urlAlbum()} onInput={(e) => setUrlAlbum(e.currentTarget.value)} />
-                <label class="inline-check">
-                  <input type="checkbox" checked={urlAddToQueue()} onChange={(e) => setUrlAddToQueue(e.currentTarget.checked)} />
-                  add to queue
-                </label>
-                <button class="pill-button" type="submit">import</button>
-              </form>
-            </Show>
-
-            <Show when={uploadMode() === 'subsonic'}>
-              <div class="upload-form">
-                <input
-                  type="url"
-                  placeholder="server url"
-                  value={subsonicServerUrl()}
-                  onInput={(e) => setSubsonicServerUrl(e.currentTarget.value)}
-                />
-                <input
-                  placeholder="username"
-                  value={subsonicUsername()}
-                  onInput={(e) => setSubsonicUsername(e.currentTarget.value)}
-                />
-                <input
-                  type="password"
-                  placeholder="password"
-                  value={subsonicPassword()}
-                  onInput={(e) => setSubsonicPassword(e.currentTarget.value)}
-                />
-                <hr class="subsonic-divider" />
-                <input
-                  placeholder="search songs..."
-                  value={subsonicQuery()}
-                  onInput={(e) => setSubsonicQuery(e.currentTarget.value)}
-                />
-                <label class="inline-check">
-                  <input type="checkbox" checked={subsonicAddToQueue()} onChange={(e) => setSubsonicAddToQueue(e.currentTarget.checked)} />
-                  add to queue
-                </label>
-                <Show when={subsonicSearching()}>
-                  <p class="subsonic-searching">searching...</p>
-                </Show>
-                <Show when={subsonicResults().length > 0}>
-                  <div class="subsonic-results">
-                    <ul class="song-list">
-                      <For each={subsonicResults()}>
-                        {(result) => (
-                          <li>
-                            <div class="song-copy">
-                              <span>{result.title}</span>
-                              <small>{result.artist}{result.album ? ` · ${result.album}` : ''}</small>
-                            </div>
-                            <button
-                              class="pill-button subtle"
-                              type="button"
-                              disabled={importingId() === result.id}
-                              onClick={() => void importSubsonicSong(result)}
-                            >
-                              {importingId() === result.id ? '...' : 'import'}
-                            </button>
-                          </li>
-                        )}
-                      </For>
-                    </ul>
-                  </div>
-                </Show>
-              </div>
-            </Show>
-
-            <Show when={uploadError()}>{(message) => <p class="error-copy">{message()}</p>}</Show>
-          </section>
+          <AdminUploadPanel
+            onTransport={(action) => void sendControl(action)}
+            onSongAdded={() => void refetchSongs()}
+            error={pageError()}
+            onError={setPageError}
+          />
 
           <section class="glass-card">
             <div class="section-heading">
@@ -919,7 +542,7 @@ export default function RadioPage(props: RadioPageProps) {
               )}
             </Show>
             <ul class="song-list">
-              <For each={pagedQueueControl()} fallback={<li class="list-empty">queue is empty</li>}>
+              <For each={queueControlPaging.paged()} fallback={<li class="list-empty">queue is empty</li>}>
                 {(item) => {
                   const profile = () => profileFor(item.queuedByDid)
                   return (
@@ -951,16 +574,8 @@ export default function RadioPage(props: RadioPageProps) {
                 }}
               </For>
             </ul>
-            <Show when={(snapshot()?.queue.length ?? 0) > queuePageSize}>
-              <div class="pagination-row compact">
-                <button class="pill-button subtle" type="button" disabled={queueControlPage() === 0} onClick={() => setQueueControlPage((page) => Math.max(0, page - 1))}>
-                  prev
-                </button>
-                <span>{queueControlPage() + 1} / {queuePageCount()}</span>
-                <button class="pill-button subtle" type="button" disabled={queueControlPage() >= queuePageCount() - 1} onClick={() => setQueueControlPage((page) => Math.min(queuePageCount() - 1, page + 1))}>
-                  next
-                </button>
-              </div>
+            <Show when={queueControlPaging.pageCount() > 1}>
+              <PaginationRow page={queueControlPaging.page()} pageCount={queueControlPaging.pageCount()} onPageChange={queueControlPaging.setPage} compact />
             </Show>
           </section>
         </Show>
@@ -1002,7 +617,7 @@ export default function RadioPage(props: RadioPageProps) {
             </Show>
             <Show when={!songs.loading} fallback={<p class="list-empty">loading songs...</p>}>
               <ul class="song-list">
-                <For each={pagedSongs()} fallback={<li class="list-empty">no songs added yet</li>}>
+                <For each={songsPaging.paged()} fallback={<li class="list-empty">no songs added yet</li>}>
                   {(song) => {
                     const profile = () => profileFor(song.addedByDid)
                     return (
@@ -1028,16 +643,8 @@ export default function RadioPage(props: RadioPageProps) {
                   }}
                 </For>
               </ul>
-              <Show when={(songs()?.length ?? 0) > songPageSize}>
-                <div class="pagination-row">
-                  <button class="pill-button subtle" type="button" disabled={songPage() === 0} onClick={() => setSongPage((page) => Math.max(0, page - 1))}>
-                    prev
-                  </button>
-                  <span>{songPage() + 1} / {songPageCount()}</span>
-                  <button class="pill-button subtle" type="button" disabled={songPage() >= songPageCount() - 1} onClick={() => setSongPage((page) => Math.min(songPageCount() - 1, page + 1))}>
-                    next
-                  </button>
-                </div>
+              <Show when={songsPaging.pageCount() > 1}>
+                <PaginationRow page={songsPaging.page()} pageCount={songsPaging.pageCount()} onPageChange={songsPaging.setPage} />
               </Show>
             </Show>
           </section>
@@ -1049,7 +656,7 @@ export default function RadioPage(props: RadioPageProps) {
             </div>
             <Show when={!albums.loading} fallback={<p class="list-empty">loading albums...</p>}>
               <ul class="song-list album-loop-list">
-                <For each={albums() ?? []} fallback={<li class="list-empty">no album loops yet</li>}>
+                <For each={albumsPaging.paged()} fallback={<li class="list-empty">no album loops yet</li>}>
                   {(album) => (
                     <li>
                       <div class="song-copy">
@@ -1069,30 +676,13 @@ export default function RadioPage(props: RadioPageProps) {
                   )}
                 </For>
               </ul>
+              <Show when={albumsPaging.pageCount() > 1}>
+                <PaginationRow page={albumsPaging.page()} pageCount={albumsPaging.pageCount()} onPageChange={albumsPaging.setPage} />
+              </Show>
             </Show>
           </section>
         </section>
       </Show>
     </section>
-  )
-}
-
-function SongCoverThumb(props: { songId: string; hasCover: boolean }) {
-  return (
-    <span class="song-cover-thumb" aria-hidden="true">
-      <Show when={props.hasCover} fallback={<span class="song-cover-fallback">art</span>}>
-        <img src={`${API_BASE}/api/songs/${props.songId}/cover/thumbnail`} alt="" loading="lazy" />
-      </Show>
-    </span>
-  )
-}
-
-function ProfileAvatar(props: { profile: AtprotoProfile; class?: string; title?: string }) {
-  return (
-    <span class={`profile-avatar${props.class ? ` ${props.class}` : ''}`} title={props.title}>
-      <Show when={props.profile.avatar} fallback={props.profile.handle.slice(0, 1).toUpperCase()}>
-        {(avatar) => <img src={avatar()} alt="" />}
-      </Show>
-    </span>
   )
 }

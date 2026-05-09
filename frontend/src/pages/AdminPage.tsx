@@ -1,8 +1,8 @@
 import { createMemo, createResource, createSignal, For, Show } from 'solid-js'
 import { Plus, Trash2, UploadCloud } from 'lucide-solid'
-import { addAdminDid, fetchAdminPermissions, removeAdminDid } from './auth'
-import { extractAudioMetadata, type ExtractedAudioMetadata } from './audioMetadata'
-import { API_BASE, addSongsToAlbum, createAlbum, createAlbumFromMetadata, deleteAlbum, deleteSong, fetchAlbums, fetchSongs, setAlbumEnabled, uploadSong, uploadSongCover } from './radio'
+import { addAdminDid, fetchAdminPermissions, removeAdminDid } from '../lib/auth'
+import { extractAudioMetadata, type ExtractedAudioMetadata } from '../lib/audioMetadata'
+import { API_BASE, addSongsToAlbum, createAlbum, createAlbumFromMetadata, deleteAlbum, deleteSong, fetchAlbums, fetchSongs, setAlbumEnabled, uploadSong, uploadSongCover } from '../lib/radio'
 
 interface AdminPageProps {
   accountDid: string

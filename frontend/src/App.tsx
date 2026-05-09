@@ -1,8 +1,8 @@
 import { createResource, createSignal, onCleanup, Show } from 'solid-js'
-import { setSessionToken } from './radio'
+import { setSessionToken } from './lib/radio'
 import { Monitor, Moon, MoonStar } from 'lucide-solid'
-import AdminPage from './AdminPage'
-import RadioPage from './RadioPage'
+import AdminPage from './pages/AdminPage'
+import RadioPage from './pages/RadioPage'
 import './App.css'
 import {
   fetchSession,
@@ -10,13 +10,13 @@ import {
   readAuthError,
   signOut,
   startSignIn,
-} from './auth'
+} from './lib/auth'
 import {
   applyThemePreference,
   nextThemePreference,
   readThemePreference,
   type ThemePreference,
-} from './theme'
+} from './lib/theme'
 
 function currentPath(): string {
   return window.location.pathname
