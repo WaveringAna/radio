@@ -9,10 +9,16 @@ import {
   fetchAlbums,
   fetchRadioSnapshot,
   fetchSongs,
+  importFromSubsonic,
+  loadSubsonicCreds,
   openRadioSocket,
   removeQueueItem,
+  saveSubsonicCreds,
+  searchSubsonic,
   uploadSong,
+  uploadSongFromUrl,
   type RadioEvent,
+  type SubsonicSongResult,
 } from './radio'
 
 interface RadioPageProps {
@@ -69,6 +75,21 @@ export default function RadioPage(props: RadioPageProps) {
   const [file, setFile] = createSignal<File | null>(null)
   const [coverFile, setCoverFile] = createSignal<File | null>(null)
   const [addToQueue, setAddToQueue] = createSignal(true)
+  const [uploadMode, setUploadMode] = createSignal<'file' | 'url' | 'subsonic'>('file')
+  const [urlInput, setUrlInput] = createSignal('')
+  const [urlTitle, setUrlTitle] = createSignal('')
+  const [urlArtist, setUrlArtist] = createSignal('')
+  const [urlAlbum, setUrlAlbum] = createSignal('')
+  const [urlAddToQueue, setUrlAddToQueue] = createSignal(true)
+  const savedCreds = loadSubsonicCreds()
+  const [subsonicServerUrl, setSubsonicServerUrl] = createSignal(savedCreds.serverUrl ?? '')
+  const [subsonicUsername, setSubsonicUsername] = createSignal(savedCreds.username ?? '')
+  const [subsonicPassword, setSubsonicPassword] = createSignal(savedCreds.password ?? '')
+  const [subsonicQuery, setSubsonicQuery] = createSignal('')
+  const [subsonicResults, setSubsonicResults] = createSignal<SubsonicSongResult[]>([])
+  const [subsonicSearching, setSubsonicSearching] = createSignal(false)
+  const [subsonicAddToQueue, setSubsonicAddToQueue] = createSignal(true)
+  const [importingId, setImportingId] = createSignal<string | null>(null)
   const [volume, setVolume] = createSignal(readVolumeCookie())
   const [isListening, setIsListening] = createSignal(false)
   const [clock, setClock] = createSignal(Date.now())
@@ -225,6 +246,37 @@ export default function RadioPage(props: RadioPageProps) {
     }
   })
 
+  createEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    const song = currentSong()
+    if (!song) {
+      navigator.mediaSession.metadata = null
+      return
+    }
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: song.title,
+      artist: song.artist,
+      album: song.album ?? undefined,
+      artwork: song.hasCover
+        ? [{ src: `${API_BASE}/api/songs/${song.id}/cover`, sizes: '512x512', type: 'image/jpeg' }]
+        : [],
+    })
+    navigator.mediaSession.setActionHandler('play', () => startLocalPlayback())
+    navigator.mediaSession.setActionHandler('pause', () => audioRef?.pause())
+    navigator.mediaSession.setActionHandler('stop', () => audioRef?.pause())
+  })
+
+  createEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    if (isListening()) {
+      navigator.mediaSession.playbackState = 'playing'
+    } else if (currentSong()) {
+      navigator.mediaSession.playbackState = 'paused'
+    } else {
+      navigator.mediaSession.playbackState = 'none'
+    }
+  })
+
   const selectFile = async (selectedFile: File | null) => {
     setFile(selectedFile)
     setMetadata(null)
@@ -282,6 +334,77 @@ export default function RadioPage(props: RadioPageProps) {
       await Promise.all([refetch(), refetchSongs()])
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : 'upload exploded a little.')
+    }
+  }
+
+  const isYtdlpUrl = (url: string) =>
+    url.includes('youtube.com/') || url.includes('youtu.be/') ||
+    url.includes('soundcloud.com/') || url.includes('bandcamp.com/') || url.includes('vimeo.com/')
+
+  const submitUrlUpload = async (event: SubmitEvent) => {
+    event.preventDefault()
+    const url = urlInput().trim()
+    const title = urlTitle().trim()
+    const artist = urlArtist().trim()
+
+    if (!url) { setUploadError('paste a url first.'); return }
+    if (!isYtdlpUrl(url) && !title) { setUploadError('title is required.'); return }
+    if (!isYtdlpUrl(url) && !artist) { setUploadError('artist is required.'); return }
+
+    try {
+      setUploadError(null)
+      await uploadSongFromUrl({ url, title: title || undefined, artist: artist || undefined, album: urlAlbum().trim() || undefined, addToQueue: urlAddToQueue() })
+      setUrlInput('')
+      setUrlTitle('')
+      setUrlArtist('')
+      setUrlAlbum('')
+      await Promise.all([refetch(), refetchSongs()])
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'url import exploded a little.')
+    }
+  }
+
+  createEffect(() => {
+    const url = subsonicServerUrl()
+    const user = subsonicUsername()
+    const pass = subsonicPassword()
+    saveSubsonicCreds({ serverUrl: url, username: user, password: pass })
+  })
+
+  createEffect(() => {
+    const query = subsonicQuery()
+    if (!query.trim() || uploadMode() !== 'subsonic') {
+      setSubsonicResults([])
+      return
+    }
+    const timer = setTimeout(() => {
+      setSubsonicSearching(true)
+      void searchSubsonic(
+        { serverUrl: subsonicServerUrl(), username: subsonicUsername(), password: subsonicPassword() },
+        query,
+      )
+        .then(setSubsonicResults)
+        .catch(() => setSubsonicResults([]))
+        .finally(() => setSubsonicSearching(false))
+    }, 500)
+    onCleanup(() => clearTimeout(timer))
+  })
+
+  const importSubsonicSong = async (result: SubsonicSongResult) => {
+    setImportingId(result.id)
+    try {
+      setUploadError(null)
+      await importFromSubsonic(
+        { serverUrl: subsonicServerUrl(), username: subsonicUsername(), password: subsonicPassword() },
+        result.id,
+        result.coverArtId,
+        subsonicAddToQueue(),
+      )
+      await Promise.all([refetch(), refetchSongs()])
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'import failed.')
+    } finally {
+      setImportingId(null)
     }
   }
 
@@ -448,39 +571,126 @@ export default function RadioPage(props: RadioPageProps) {
               </div>
             </div>
 
-            <form class="upload-form" onSubmit={submitUpload}>
-              <label class="drop-zone">
-                <UploadCloud size={24} />
-                <span>{file()?.name ?? 'choose an audio file'}</span>
-                <input type="file" accept="audio/*" onChange={(event) => void selectFile(event.currentTarget.files?.[0] ?? null)} />
-              </label>
+            <div class="upload-mode-tabs">
+              <button class="pill-button" classList={{ subtle: uploadMode() !== 'file' }} type="button" onClick={() => setUploadMode('file')}>file</button>
+              <button class="pill-button" classList={{ subtle: uploadMode() !== 'url' }} type="button" onClick={() => setUploadMode('url')}>url</button>
+              <button class="pill-button" classList={{ subtle: uploadMode() !== 'subsonic' }} type="button" onClick={() => setUploadMode('subsonic')}>subsonic</button>
+            </div>
 
-              <div class="upload-options-row">
-                <label class="inline-file cover-picker">
-                  <span>cover image</span>
-                  <span class="file-button">choose cover</span>
-                  <input type="file" accept="image/*" onChange={(event) => setCoverFile(event.currentTarget.files?.[0] ?? null)} />
-                  <small>{coverFile()?.name ?? 'no cover selected'}</small>
+            <Show when={uploadMode() === 'file'}>
+              <form class="upload-form" onSubmit={submitUpload}>
+                <label class="drop-zone">
+                  <UploadCloud size={24} />
+                  <span>{file()?.name ?? 'choose an audio file'}</span>
+                  <input type="file" accept="audio/*" onChange={(event) => void selectFile(event.currentTarget.files?.[0] ?? null)} />
                 </label>
 
+                <div class="upload-options-row">
+                  <label class="inline-file cover-picker">
+                    <span>cover image</span>
+                    <span class="file-button">choose cover</span>
+                    <input type="file" accept="image/*" onChange={(event) => setCoverFile(event.currentTarget.files?.[0] ?? null)} />
+                    <small>{coverFile()?.name ?? 'no cover selected'}</small>
+                  </label>
+
+                  <label class="inline-check">
+                    <input type="checkbox" checked={addToQueue()} onChange={(event) => setAddToQueue(event.currentTarget.checked)} />
+                    add to queue
+                  </label>
+                </div>
+
+                <Show when={needsMetadataPrompt()}>
+                  <div class="metadata-prompt">
+                    <p class="muted">no title/artist tags found. add the minimum so the queue is readable.</p>
+                    <input placeholder="title" value={title()} onInput={(event) => setTitle(event.currentTarget.value)} />
+                    <input placeholder="artist" value={artist()} onInput={(event) => setArtist(event.currentTarget.value)} />
+                  </div>
+                </Show>
+
+                <button class="pill-button" type="submit">upload</button>
+              </form>
+            </Show>
+
+            <Show when={uploadMode() === 'url'}>
+              <form class="upload-form" onSubmit={submitUrlUpload}>
+                <input
+                  type="url"
+                  placeholder="https://example.com/song.mp3 or youtube.com/watch?v=..."
+                  value={urlInput()}
+                  onInput={(e) => setUrlInput(e.currentTarget.value)}
+                />
+                <Show when={isYtdlpUrl(urlInput())}>
+                  <p class="subsonic-searching">youtube · title and artist auto-detected, or fill in below to override</p>
+                </Show>
+                <input placeholder={isYtdlpUrl(urlInput()) ? 'title (optional, auto-detected)' : 'title'} value={urlTitle()} onInput={(e) => setUrlTitle(e.currentTarget.value)} />
+                <input placeholder={isYtdlpUrl(urlInput()) ? 'artist (optional, auto-detected)' : 'artist'} value={urlArtist()} onInput={(e) => setUrlArtist(e.currentTarget.value)} />
+                <input placeholder="album (optional)" value={urlAlbum()} onInput={(e) => setUrlAlbum(e.currentTarget.value)} />
                 <label class="inline-check">
-                  <input type="checkbox" checked={addToQueue()} onChange={(event) => setAddToQueue(event.currentTarget.checked)} />
+                  <input type="checkbox" checked={urlAddToQueue()} onChange={(e) => setUrlAddToQueue(e.currentTarget.checked)} />
                   add to queue
                 </label>
+                <button class="pill-button" type="submit">import</button>
+              </form>
+            </Show>
+
+            <Show when={uploadMode() === 'subsonic'}>
+              <div class="upload-form">
+                <input
+                  type="url"
+                  placeholder="server url"
+                  value={subsonicServerUrl()}
+                  onInput={(e) => setSubsonicServerUrl(e.currentTarget.value)}
+                />
+                <input
+                  placeholder="username"
+                  value={subsonicUsername()}
+                  onInput={(e) => setSubsonicUsername(e.currentTarget.value)}
+                />
+                <input
+                  type="password"
+                  placeholder="password"
+                  value={subsonicPassword()}
+                  onInput={(e) => setSubsonicPassword(e.currentTarget.value)}
+                />
+                <hr class="subsonic-divider" />
+                <input
+                  placeholder="search songs..."
+                  value={subsonicQuery()}
+                  onInput={(e) => setSubsonicQuery(e.currentTarget.value)}
+                />
+                <label class="inline-check">
+                  <input type="checkbox" checked={subsonicAddToQueue()} onChange={(e) => setSubsonicAddToQueue(e.currentTarget.checked)} />
+                  add to queue
+                </label>
+                <Show when={subsonicSearching()}>
+                  <p class="subsonic-searching">searching...</p>
+                </Show>
+                <Show when={subsonicResults().length > 0}>
+                  <div class="subsonic-results">
+                    <ul class="song-list">
+                      <For each={subsonicResults()}>
+                        {(result) => (
+                          <li>
+                            <div class="song-copy">
+                              <span>{result.title}</span>
+                              <small>{result.artist}{result.album ? ` · ${result.album}` : ''}</small>
+                            </div>
+                            <button
+                              class="pill-button subtle"
+                              type="button"
+                              disabled={importingId() === result.id}
+                              onClick={() => void importSubsonicSong(result)}
+                            >
+                              {importingId() === result.id ? '...' : 'import'}
+                            </button>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </div>
+                </Show>
               </div>
-
-              <Show when={needsMetadataPrompt()}>
-                <div class="metadata-prompt">
-                  <p class="muted">no title/artist tags found. add the minimum so the queue is readable.</p>
-                  <input placeholder="title" value={title()} onInput={(event) => setTitle(event.currentTarget.value)} />
-                  <input placeholder="artist" value={artist()} onInput={(event) => setArtist(event.currentTarget.value)} />
-                </div>
-              </Show>
-
-              <button class="pill-button" type="submit">
-                upload
-              </button>
-            </form>
+            </Show>
 
             <Show when={uploadError()}>{(message) => <p class="error-copy">{message()}</p>}</Show>
           </section>

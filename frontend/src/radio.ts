@@ -1,5 +1,24 @@
 export const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 
+const SESSION_TOKEN_KEY = 'radio_session_token'
+
+export function getSessionToken(): string | null {
+  return localStorage.getItem(SESSION_TOKEN_KEY)
+}
+
+export function setSessionToken(token: string): void {
+  localStorage.setItem(SESSION_TOKEN_KEY, token)
+}
+
+export function clearSessionToken(): void {
+  localStorage.removeItem(SESSION_TOKEN_KEY)
+}
+
+export function authHeaders(): Record<string, string> {
+  const token = getSessionToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 export interface Song {
   id: string
   title: string
@@ -66,6 +85,14 @@ export interface SongUploadInput {
   addToQueue: boolean
 }
 
+export interface UrlSongInput {
+  url: string
+  title?: string
+  artist?: string
+  album?: string
+  addToQueue: boolean
+}
+
 /**
  * Loads the current public radio snapshot.
  * @returns The current radio state and queue.
@@ -96,7 +123,7 @@ export function openRadioSocket(): WebSocket {
  * @throws Error When the backend request fails.
  */
 export async function fetchAlbums(): Promise<RadioAlbum[]> {
-  const response = await fetch(`${API_BASE}/api/radio/albums`, { credentials: 'include' })
+  const response = await fetch(`${API_BASE}/api/radio/albums`, { credentials: 'include', headers: authHeaders() })
   if (!response.ok) {
     throw new Error('failed to load album loops')
   }
@@ -113,7 +140,7 @@ export async function fetchAlbums(): Promise<RadioAlbum[]> {
 export async function createAlbum(input: AlbumInput): Promise<RadioAlbum> {
   const response = await fetch(`${API_BASE}/api/radio/albums`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeaders() },
     credentials: 'include',
     body: JSON.stringify(input),
   })
@@ -133,7 +160,7 @@ export async function createAlbum(input: AlbumInput): Promise<RadioAlbum> {
 export async function createAlbumFromMetadata(album: string): Promise<RadioAlbum> {
   const response = await fetch(`${API_BASE}/api/radio/albums/from-metadata`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeaders() },
     credentials: 'include',
     body: JSON.stringify({ album }),
   })
@@ -154,6 +181,7 @@ export async function deleteAlbum(albumId: string): Promise<RadioAlbum[]> {
   const response = await fetch(`${API_BASE}/api/radio/albums/${albumId}`, {
     method: 'DELETE',
     credentials: 'include',
+    headers: authHeaders(),
   })
   if (!response.ok) {
     throw new Error('failed to delete album loop')
@@ -172,7 +200,7 @@ export async function deleteAlbum(albumId: string): Promise<RadioAlbum[]> {
 export async function setAlbumEnabled(albumId: string, enabled: boolean): Promise<RadioAlbum[]> {
   const response = await fetch(`${API_BASE}/api/radio/albums/${albumId}/enabled`, {
     method: 'PUT',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeaders() },
     credentials: 'include',
     body: JSON.stringify({ enabled }),
   })
@@ -206,7 +234,7 @@ export async function fetchSongs(): Promise<Song[]> {
 export async function enqueueSong(songId: string): Promise<QueueItem> {
   const response = await fetch(`${API_BASE}/api/radio/queue`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeaders() },
     credentials: 'include',
     body: JSON.stringify({ songId }),
   })
@@ -228,6 +256,7 @@ export async function removeQueueItem(queueId: string): Promise<RadioSnapshot> {
   const response = await fetch(`${API_BASE}/api/radio/queue/${queueId}`, {
     method: 'DELETE',
     credentials: 'include',
+    headers: authHeaders(),
   })
 
   if (!response.ok) {
@@ -258,6 +287,7 @@ export async function uploadSong(input: SongUploadInput): Promise<Song> {
     method: 'POST',
     body: formData,
     credentials: 'include',
+    headers: authHeaders(),
   })
 
   if (!response.ok) {
@@ -287,6 +317,7 @@ export async function uploadSongCover(songId: string, cover: File): Promise<Song
     method: 'PUT',
     body: formData,
     credentials: 'include',
+    headers: authHeaders(),
   })
 
   if (!response.ok) {
@@ -306,6 +337,7 @@ export async function deleteSong(songId: string): Promise<RadioSnapshot> {
   const response = await fetch(`${API_BASE}/api/songs/${songId}`, {
     method: 'DELETE',
     credentials: 'include',
+    headers: authHeaders(),
   })
 
   if (!response.ok) {
@@ -321,10 +353,86 @@ export async function deleteSong(songId: string): Promise<RadioSnapshot> {
  * @returns The updated radio snapshot.
  * @throws Error When the control request fails.
  */
+export interface SubsonicCreds {
+  serverUrl: string
+  username: string
+  password: string
+}
+
+export interface SubsonicSongResult {
+  id: string
+  title: string
+  artist: string
+  album?: string | null
+  durationSeconds?: number | null
+  coverArtId?: string | null
+}
+
+const SUBSONIC_CREDS_KEY = 'radio_subsonic_creds'
+
+export function loadSubsonicCreds(): SubsonicCreds {
+  try {
+    return JSON.parse(localStorage.getItem(SUBSONIC_CREDS_KEY) ?? '{}') as SubsonicCreds
+  } catch {
+    return { serverUrl: '', username: '', password: '' }
+  }
+}
+
+export function saveSubsonicCreds(creds: SubsonicCreds): void {
+  localStorage.setItem(SUBSONIC_CREDS_KEY, JSON.stringify(creds))
+}
+
+export async function searchSubsonic(creds: SubsonicCreds, query: string): Promise<SubsonicSongResult[]> {
+  const response = await fetch(`${API_BASE}/api/subsonic/search`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    credentials: 'include',
+    body: JSON.stringify({ ...creds, query }),
+  })
+  if (!response.ok) throw new Error('subsonic search failed')
+  return (await response.json()) as SubsonicSongResult[]
+}
+
+export async function importFromSubsonic(
+  creds: SubsonicCreds,
+  songId: string,
+  coverArtId: string | null | undefined,
+  addToQueue: boolean,
+): Promise<Song> {
+  const response = await fetch(`${API_BASE}/api/songs/from-subsonic`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    credentials: 'include',
+    body: JSON.stringify({ ...creds, songId, coverArtId, addToQueue }),
+  })
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as { error?: string }
+    throw new Error(data.error ?? 'subsonic import failed')
+  }
+  return (await response.json()) as Song
+}
+
+export async function uploadSongFromUrl(input: UrlSongInput): Promise<Song> {
+  const response = await fetch(`${API_BASE}/api/songs/from-url`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    credentials: 'include',
+    body: JSON.stringify(input),
+  })
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as { error?: string }
+    throw new Error(data.error === 'url_fetch_failed' ? 'could not fetch audio from that url.' : 'url import failed')
+  }
+
+  return (await response.json()) as Song
+}
+
 export async function controlRadio(action: 'play' | 'pause' | 'stop' | 'skip'): Promise<RadioSnapshot> {
   const response = await fetch(`${API_BASE}/api/radio/control/${action}`, {
     method: 'POST',
     credentials: 'include',
+    headers: authHeaders(),
   })
 
   if (!response.ok) {

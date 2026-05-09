@@ -2,6 +2,7 @@ mod auth;
 mod db;
 mod radio;
 mod routes;
+mod subsonic;
 
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -19,6 +20,7 @@ struct AppConfig {
     bind_addr: SocketAddr,
     database_url: String,
     app_url: String,
+    cors_origin: String,
     session_cookie_name: String,
     session_ttl_days: i64,
     admin_dids: Vec<String>,
@@ -32,7 +34,8 @@ impl AppConfig {
     /// Returns an error when an env var cannot be parsed.
     fn from_env() -> anyhow::Result<Self> {
         let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".into());
-        let app_url = std::env::var("APP_URL").unwrap_or_else(|_| "http://127.0.0.1:5173".into());
+        let app_url = std::env::var("APP_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".into());
+        let cors_origin = std::env::var("CORS_ORIGIN").unwrap_or_else(|_| "http://127.0.0.1:5173".into());
         let database_url =
             std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://radio.db".into());
         let session_cookie_name =
@@ -54,6 +57,7 @@ impl AppConfig {
                 .with_context(|| format!("parsing BIND_ADDR {bind_addr}"))?,
             database_url,
             app_url: app_url.trim_end_matches('/').to_owned(),
+            cors_origin: cors_origin.trim_end_matches('/').to_owned(),
             session_cookie_name,
             session_ttl_days,
             admin_dids,
@@ -65,6 +69,7 @@ impl AppConfig {
     fn auth_config(&self) -> AuthConfig {
         AuthConfig {
             app_url: self.app_url.clone(),
+            frontend_url: self.cors_origin.clone(),
             session_cookie_name: self.session_cookie_name.clone(),
             session_ttl_days: self.session_ttl_days,
             admin_dids: self.admin_dids.clone(),
@@ -82,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     db.prepare().await?;
     let auth = AuthService::new(config.auth_config(), db.clone())?;
     let radio = RadioService::new(db, config.audio_dir.clone());
-    let app = routes::app(routes::AppState::new(auth, radio), &config.app_url)
+    let app = routes::app(routes::AppState::new(auth, radio), &config.cors_origin)
         .layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
@@ -92,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         bind_addr = %config.bind_addr,
         app_url = %config.app_url,
+        cors_origin = %config.cors_origin,
         database_url = %config.database_url,
         "radio backend listening"
     );

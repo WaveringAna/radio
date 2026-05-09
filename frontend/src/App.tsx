@@ -1,4 +1,5 @@
 import { createResource, createSignal, onCleanup, Show } from 'solid-js'
+import { setSessionToken } from './radio'
 import { Monitor, Moon, MoonStar } from 'lucide-solid'
 import AdminPage from './AdminPage'
 import RadioPage from './RadioPage'
@@ -37,6 +38,16 @@ function ThemeIcon(props: { preference: () => ThemePreference }) {
  * @returns The routed app view.
  */
 export default function App() {
+  // Capture Bearer token delivered via ?token= after OAuth callback and store it.
+  const urlParams = new URLSearchParams(window.location.search)
+  const urlToken = urlParams.get('token')
+  if (urlToken) {
+    setSessionToken(urlToken)
+    urlParams.delete('token')
+    const remaining = urlParams.toString()
+    window.history.replaceState({}, '', remaining ? `/?${remaining}` : '/')
+  }
+
   const [input, setInput] = createSignal('')
   const [localError, setLocalError] = createSignal<string | null>(null)
   const [path, setPath] = createSignal(currentPath())

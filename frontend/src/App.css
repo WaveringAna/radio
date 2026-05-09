@@ -680,6 +680,78 @@ form input[type='text'] {
   border-top: 1px solid var(--hairline);
 }
 
+/* Upload mode tab bar */
+.upload-mode-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+}
+
+.upload-mode-tabs .pill-button {
+  flex: 1;
+  min-height: 2.35rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 0.875rem;
+  background: transparent;
+  margin-bottom: -1px;
+}
+
+.upload-mode-tabs .pill-button:not(.subtle) {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Inputs in the url / subsonic forms */
+.upload-form > input {
+  display: block;
+  width: 100%;
+  padding: 0.72rem 1rem;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text);
+  background: transparent;
+}
+
+.upload-form > input::placeholder {
+  color: var(--muted);
+}
+
+.upload-form > input:focus {
+  outline: 0;
+  border-bottom-color: var(--accent);
+}
+
+.upload-form .inline-check {
+  padding: 0 1rem;
+  min-height: 2.75rem;
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* Subsonic credential / search divider */
+.subsonic-divider {
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Subsonic search results */
+.subsonic-results {
+  max-height: 15rem;
+  overflow-y: auto;
+}
+
+.subsonic-results .song-list li {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.subsonic-searching {
+  padding: 0.65rem 1rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+  border-bottom: 1px solid var(--hairline);
+}
+
 @media (max-width: 860px) {
   main {
     width: 100%;

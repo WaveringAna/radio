@@ -7,7 +7,7 @@ use jacquard::{
     deps::fluent_uri::Uri,
     identity::JacquardResolver,
     oauth::{
-        atproto::AtprotoClientMetadata,
+        atproto::{AtprotoClientMetadata, GrantType, atproto_client_metadata},
         authstore::ClientAuthStore,
         client::OAuthClient,
         scopes::Scope,
@@ -25,8 +25,10 @@ use crate::db::Database;
 /// Auth-specific runtime configuration.
 #[derive(Clone, Debug)]
 pub(crate) struct AuthConfig {
-    /// Public app URL used for OAuth callback and redirects.
+    /// Public app URL used for OAuth callback and client metadata.
     pub(crate) app_url: String,
+    /// Frontend URL used for post-auth redirects.
+    pub(crate) frontend_url: String,
     /// Cookie name for browser app sessions.
     pub(crate) session_cookie_name: String,
     /// Lifetime of app sessions in days.
@@ -41,14 +43,14 @@ impl AuthConfig {
         format!("{}/api/oauth/callback", self.app_url)
     }
 
-    /// Returns the post-auth success redirect URL.
-    pub(crate) fn success_redirect_url(&self) -> String {
-        format!("{}/", self.app_url)
+    /// Returns the post-auth success redirect URL with the session token in the query string.
+    pub(crate) fn success_redirect_with_token(&self, token: &str) -> String {
+        format!("{}/?token={token}", self.frontend_url)
     }
 
     /// Returns the frontend error redirect URL for the given code.
     pub(crate) fn error_redirect_url(&self, code: &str) -> String {
-        format!("{}/?error={code}", self.app_url)
+        format!("{}/?error={code}", self.frontend_url)
     }
 
     /// Returns the unix timestamp at which a fresh app session should expire.
@@ -121,7 +123,11 @@ impl AuthService {
     /// # Errors
     /// Returns an error when the input is empty or Jacquard fails to create the auth request.
     pub(crate) async fn start_sign_in(&self, input: &str) -> anyhow::Result<String> {
-        let value = input.trim();
+        let value: String = input
+            .chars()
+            .filter(|c| c.is_ascii() && !c.is_ascii_control())
+            .collect();
+        let value = value.trim();
         if value.is_empty() {
             return Err(anyhow!("missing oauth input"));
         }
@@ -251,6 +257,17 @@ impl AuthService {
     /// Returns auth runtime configuration.
     pub(crate) fn config(&self) -> &AuthConfig {
         &self.config
+    }
+
+    /// Serializes the OAuth client metadata to JSON for serving at the client_id URL.
+    ///
+    /// # Errors
+    /// Returns an error when metadata conversion or serialization fails.
+    pub(crate) fn client_metadata_json(&self) -> anyhow::Result<String> {
+        let data = &self.oauth.registry.client_data;
+        let metadata = atproto_client_metadata(data.config.clone(), &data.keyset)
+            .context("converting client metadata")?;
+        serde_json::to_string(&metadata).context("serializing client metadata")
     }
 }
 
@@ -457,17 +474,46 @@ fn oauth_client_data(config: &AuthConfig) -> anyhow::Result<ClientData<'static>>
         .map_err(|error| anyhow!("invalid APP_URL callback URI: {error:?}"))?
         .to_owned();
 
-    if callback_uri.authority().map(|authority| authority.host()) == Some("localhost") {
-        return Err(anyhow!(
-            "APP_URL cannot use localhost for atproto oauth. use a loopback ip like http://127.0.0.1:5173 instead"
-        ));
-    }
     let scopes = Scope::parse_multiple("atproto")
         .map_err(|error| anyhow!("invalid OAuth scopes: {error}"))?;
 
+    let host = callback_uri.authority().map(|a| a.host()).unwrap_or("");
+    let is_loopback = host == "127.0.0.1" || host == "::1" || host == "[::1]";
+
+    if host == "localhost" {
+        return Err(anyhow!(
+            "APP_URL cannot use localhost for atproto oauth. use a loopback ip like http://127.0.0.1:3000 instead"
+        ));
+    }
+
+    if is_loopback {
+        return Ok(ClientData {
+            keyset: None,
+            config: AtprotoClientMetadata::new_localhost(Some(vec![callback_uri]), Some(scopes)),
+        });
+    }
+
+    let client_id = Uri::parse(format!("{}/client-metadata.json", config.app_url))
+        .map_err(|error| anyhow!("invalid client_id URI: {error:?}"))?
+        .to_owned();
+    let client_uri = Uri::parse(config.app_url.clone())
+        .map_err(|error| anyhow!("invalid client_uri: {error:?}"))?
+        .to_owned();
+
     Ok(ClientData {
         keyset: None,
-        config: AtprotoClientMetadata::new_localhost(Some(vec![callback_uri]), Some(scopes)),
+        config: AtprotoClientMetadata {
+            client_id,
+            client_uri: Some(client_uri),
+            redirect_uris: vec![callback_uri],
+            grant_types: vec![GrantType::AuthorizationCode, GrantType::RefreshToken],
+            scopes,
+            jwks_uri: None,
+            client_name: Some("radio".into()),
+            logo_uri: None,
+            tos_uri: None,
+            privacy_policy_uri: None,
+        },
     })
 }
 

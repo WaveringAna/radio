@@ -1,4 +1,4 @@
-import { API_BASE } from './radio'
+import { API_BASE, authHeaders, clearSessionToken } from './radio'
 
 /**
  * Auth session payload returned by the backend.
@@ -40,6 +40,7 @@ export interface AdminPermissionsResponse {
 export async function fetchSession(): Promise<SessionResponse> {
   const response = await fetch(`${API_BASE}/api/session`, {
     credentials: 'include',
+    headers: authHeaders(),
   })
 
   if (!response.ok) {
@@ -57,6 +58,7 @@ export async function fetchSession(): Promise<SessionResponse> {
 export async function fetchAdminPermissions(): Promise<AdminPermissionsResponse> {
   const response = await fetch(`${API_BASE}/api/admin/permissions`, {
     credentials: 'include',
+    headers: authHeaders(),
   })
 
   if (response.status === 401) {
@@ -83,7 +85,7 @@ export async function fetchAdminPermissions(): Promise<AdminPermissionsResponse>
 export async function addAdminDid(did: string): Promise<AdminPermissionsResponse> {
   const response = await fetch(`${API_BASE}/api/admin/dids`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeaders() },
     credentials: 'include',
     body: JSON.stringify({ did }),
   })
@@ -105,6 +107,7 @@ export async function removeAdminDid(did: string): Promise<AdminPermissionsRespo
   const response = await fetch(`${API_BASE}/api/admin/dids/${encodeURIComponent(did)}`, {
     method: 'DELETE',
     credentials: 'include',
+    headers: authHeaders(),
   })
 
   if (!response.ok) {
@@ -137,11 +140,14 @@ export async function signOut(): Promise<void> {
   const response = await fetch(`${API_BASE}/api/logout`, {
     method: 'POST',
     credentials: 'include',
+    headers: authHeaders(),
   })
 
   if (!response.ok) {
     throw new Error('logout fully faceplanted. try again?')
   }
+
+  clearSessionToken()
 }
 
 /**
