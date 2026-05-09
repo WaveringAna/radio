@@ -587,12 +587,31 @@ async fn upload_song(
     let session = admin_session(&state, session_token.0.as_deref()).await?;
     let upload = parse_song_upload(multipart).await?;
 
-    state
+    let embedded_cover = extract_embedded_cover(&upload.bytes).await;
+    let artist = upload.artist.clone();
+    let album = upload.album.clone();
+    let title = upload.title.clone();
+
+    let mut song = state
         .radio
         .add_song(upload, &session.account_did)
         .await
-        .map(Json)
-        .map_err(internal_api_error)
+        .map_err(internal_api_error)?;
+
+    let cover = if embedded_cover.is_some() {
+        embedded_cover
+    } else {
+        fetch_cover_online(&artist, album.as_deref(), &title).await
+    };
+
+    if let Some((cover_bytes, cover_mime)) = cover {
+        match state.radio.set_song_cover(&song.id, None, Some(cover_mime), cover_bytes).await {
+            Ok(updated) => song = updated,
+            Err(error) => tracing::warn!(%error, song_id = %song.id, "failed to set auto-fetched cover"),
+        }
+    }
+
+    Ok(Json(song))
 }
 
 async fn enqueue_song(
@@ -888,24 +907,40 @@ async fn upload_song_from_url(
         api_error(StatusCode::BAD_REQUEST, "url_fetch_failed")
     })?.to_vec();
 
-    state
+    let embedded_cover = extract_embedded_cover(&bytes).await;
+
+    let mut song = state
         .radio
         .add_song(
             crate::radio::NewSongUpload {
                 filename,
                 mime_type,
                 bytes,
-                title,
-                artist,
-                album: payload.album,
+                title: title.clone(),
+                artist: artist.clone(),
+                album: payload.album.clone(),
                 duration_seconds: None,
                 add_to_queue: payload.add_to_queue.unwrap_or(false),
             },
             &session.account_did,
         )
         .await
-        .map(Json)
-        .map_err(internal_api_error)
+        .map_err(internal_api_error)?;
+
+    let cover = if embedded_cover.is_some() {
+        embedded_cover
+    } else {
+        fetch_cover_online(&artist, payload.album.as_deref(), &title).await
+    };
+
+    if let Some((cover_bytes, cover_mime)) = cover {
+        match state.radio.set_song_cover(&song.id, None, Some(cover_mime), cover_bytes).await {
+            Ok(updated) => song = updated,
+            Err(error) => tracing::warn!(%error, song_id = %song.id, "failed to set auto-fetched cover"),
+        }
+    }
+
+    Ok(Json(song))
 }
 
 #[derive(Deserialize)]
@@ -1113,6 +1148,124 @@ async fn import_from_subsonic(
     }
 
     Ok(Json(song))
+}
+
+async fn extract_embedded_cover(bytes: &[u8]) -> Option<(Vec<u8>, String)> {
+    let bytes = bytes.to_vec();
+    tokio::task::spawn_blocking(move || {
+        use lofty::prelude::*;
+        use lofty::probe::Probe;
+        use std::io::{BufReader, Cursor};
+        let cursor = BufReader::new(Cursor::new(bytes));
+        let tagged = Probe::new(cursor).guess_file_type().ok()?.read().ok()?;
+        let tag = tagged.primary_tag()?;
+        let picture = tag.pictures().first()?;
+        let mime = picture
+            .mime_type()
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| "image/jpeg".to_owned());
+        Some((picture.data().to_vec(), mime))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+async fn fetch_cover_online(artist: &str, album: Option<&str>, title: &str) -> Option<(Vec<u8>, String)> {
+    let client = reqwest::Client::builder()
+        .user_agent("radio/0.1")
+        .build()
+        .ok()?;
+
+    let mbids = if let Some(album) = album {
+        musicbrainz_release_ids(&client, artist, album).await
+    } else {
+        musicbrainz_recording_release_ids(&client, artist, title).await
+    };
+
+    for mbid in &mbids {
+        if let Some(cover) = caa_front_cover(&client, mbid).await {
+            return Some(cover);
+        }
+    }
+    None
+}
+
+async fn musicbrainz_release_ids(client: &reqwest::Client, artist: &str, album: &str) -> Vec<String> {
+    let query = format!("artist:\"{artist}\" AND release:\"{album}\"");
+    let Ok(resp) = client
+        .get("https://musicbrainz.org/ws/2/release")
+        .query(&[("query", query.as_str()), ("fmt", "json"), ("limit", "5")])
+        .send()
+        .await
+    else {
+        return vec![];
+    };
+    let Ok(json) = resp.json::<serde_json::Value>().await else {
+        return vec![];
+    };
+    json["releases"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| r["id"].as_str().map(ToOwned::to_owned))
+        .collect()
+}
+
+async fn musicbrainz_recording_release_ids(client: &reqwest::Client, artist: &str, title: &str) -> Vec<String> {
+    let query = format!("artist:\"{artist}\" AND recording:\"{title}\"");
+    let Ok(resp) = client
+        .get("https://musicbrainz.org/ws/2/recording")
+        .query(&[
+            ("query", query.as_str()),
+            ("fmt", "json"),
+            ("limit", "5"),
+            ("inc", "releases"),
+        ])
+        .send()
+        .await
+    else {
+        return vec![];
+    };
+    let Ok(json) = resp.json::<serde_json::Value>().await else {
+        return vec![];
+    };
+    json["recordings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|rec| {
+            rec["releases"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|r| r["id"].as_str().map(ToOwned::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .take(5)
+        .collect()
+}
+
+async fn caa_front_cover(client: &reqwest::Client, mbid: &str) -> Option<(Vec<u8>, String)> {
+    let resp = client
+        .get(format!("https://coverartarchive.org/release/{mbid}/front"))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let mime = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/jpeg")
+        .to_owned();
+    let bytes = resp.bytes().await.ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    Some((bytes.to_vec(), mime))
 }
 
 async fn parse_song_upload(
