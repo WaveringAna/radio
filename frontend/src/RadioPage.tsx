@@ -699,7 +699,7 @@ export default function RadioPage(props: RadioPageProps) {
             <ul class="queue-list">
               <For each={pagedUpNext()} fallback={<li class="muted">queue is empty</li>}>
                 {(item, index) => {
-                  const profile = () => profileFor(item.addedByDid)
+                  const profile = () => profileFor(item.queuedByDid)
                   const hasCover = () => (songs() ?? []).some((song) => song.id === item.songId && song.hasCover)
                   return (
                     <li>
@@ -921,7 +921,7 @@ export default function RadioPage(props: RadioPageProps) {
             <ul class="song-list">
               <For each={pagedQueueControl()} fallback={<li class="list-empty">queue is empty</li>}>
                 {(item) => {
-                  const profile = () => profileFor(item.addedByDid)
+                  const profile = () => profileFor(item.queuedByDid)
                   return (
                     <li
                       draggable={true}
