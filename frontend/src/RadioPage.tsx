@@ -95,7 +95,9 @@ export default function RadioPage(props: RadioPageProps) {
   const [importingId, setImportingId] = createSignal<string | null>(null)
   const [volume, setVolume] = createSignal(readVolumeCookie())
   const [isListening, setIsListening] = createSignal(false)
+  const [clock, setClock] = createSignal(Date.now())
   const [serverSeekSeconds, setServerSeekSeconds] = createSignal(0)
+  const [seekSyncedAt, setSeekSyncedAt] = createSignal(Date.now())
   const [songPage, setSongPage] = createSignal(0)
   const [upNextPage, setUpNextPage] = createSignal(0)
   const [queueControlPage, setQueueControlPage] = createSignal(0)
@@ -105,11 +107,34 @@ export default function RadioPage(props: RadioPageProps) {
   let audioRef: HTMLAudioElement | undefined
   let lastAudioSyncKey = ''
 
+  const applyBackendSeek = (positionSeconds: number) => {
+    setServerSeekSeconds(Math.max(0, positionSeconds))
+    setSeekSyncedAt(Date.now())
+  }
+
+  const refreshSeekFromBackend = async () => {
+    try {
+      const seek = await fetchRadioSeek()
+      applyBackendSeek(seek.positionSeconds)
+    } catch {
+      // Best-effort refresh: keep the last known seek until the next success.
+    }
+  }
+
+  createEffect(() => {
+    const interval = window.setInterval(() => setClock(Date.now()), 1000)
+    onCleanup(() => window.clearInterval(interval))
+  })
+
   createEffect(() => {
     const state = snapshot()?.state
     if (state) {
-      setServerSeekSeconds(Math.max(0, state.positionSeconds))
+      applyBackendSeek(state.positionSeconds)
     }
+  })
+
+  createEffect(() => {
+    void refreshSeekFromBackend()
   })
 
   createEffect(() => {
@@ -118,24 +143,9 @@ export default function RadioPage(props: RadioPageProps) {
       return
     }
 
-    let disposed = false
-    const refreshSeek = async () => {
-      try {
-        const seek = await fetchRadioSeek()
-        if (!disposed) {
-          setServerSeekSeconds(Math.max(0, seek.positionSeconds))
-        }
-      } catch {
-        // Best-effort polling: keep prior seek until the next successful refresh.
-      }
-    }
-
-    void refreshSeek()
-    const interval = window.setInterval(() => void refreshSeek(), 1000)
-    onCleanup(() => {
-      disposed = true
-      window.clearInterval(interval)
-    })
+    void refreshSeekFromBackend()
+    const interval = window.setInterval(() => void refreshSeekFromBackend(), 1000)
+    onCleanup(() => window.clearInterval(interval))
   })
 
   createEffect(() => {
@@ -180,11 +190,21 @@ export default function RadioPage(props: RadioPageProps) {
     return queue && queue.length > 0 ? `${API_BASE}/api/songs/${queue[0].songId}/audio` : undefined
   }
   const livePositionSeconds = () => {
+    // Re-evaluate every second for queue progress labels.
+    void clock()
+
     // When we're actually listening, the audio element's currentTime is the
     // truth - this is what the listener hears.
     if (audioRef && !audioRef.paused && Number.isFinite(audioRef.currentTime)) {
       return audioRef.currentTime
     }
+
+    const state = snapshot()?.state
+    if (state?.status === 'playing') {
+      const elapsed = (clock() - seekSyncedAt()) / 1000
+      return serverSeekSeconds() + Math.max(0, elapsed)
+    }
+
     return serverSeekSeconds()
   }
   const needsMetadataPrompt = () => file() && !hasRequiredMetadata(metadata())
@@ -239,14 +259,8 @@ export default function RadioPage(props: RadioPageProps) {
     }
 
     audioRef.volume = volume()
-    let seekPosition = livePositionSeconds()
-    try {
-      const seek = await fetchRadioSeek()
-      seekPosition = seek.positionSeconds
-      setServerSeekSeconds(Math.max(0, seek.positionSeconds))
-    } catch {
-      // Keep the last known seek if a one-off refresh fails.
-    }
+    await refreshSeekFromBackend()
+    const seekPosition = livePositionSeconds()
 
     audioRef.currentTime = clampSeekPosition(seekPosition, currentSong()?.durationSeconds)
     void audioRef.play().catch(() => undefined)
@@ -271,7 +285,7 @@ export default function RadioPage(props: RadioPageProps) {
       audioRef.volume = volume()
       audioRef.load()
       // Cap at duration - 2s so seeking never triggers a spurious onEnded.
-      audioRef.currentTime = clampSeekPosition(state.positionSeconds, song.durationSeconds)
+      audioRef.currentTime = clampSeekPosition(livePositionSeconds(), song.durationSeconds)
     }
 
     if (state.status === 'playing') {

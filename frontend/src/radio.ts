@@ -105,7 +105,7 @@ export interface UrlSongInput {
  * @throws Error When the backend request fails.
  */
 export async function fetchRadioSnapshot(): Promise<RadioSnapshot> {
-  const response = await fetch(`${API_BASE}/api/radio/state`)
+  const response = await fetch(`${API_BASE}/api/radio/state`, { cache: 'no-store' })
   if (!response.ok) {
     throw new Error('failed to load radio state')
   }
@@ -119,7 +119,7 @@ export async function fetchRadioSnapshot(): Promise<RadioSnapshot> {
  * @throws Error When the backend request fails.
  */
 export async function fetchRadioSeek(): Promise<RadioSeek> {
-  const response = await fetch(`${API_BASE}/api/radio/seek`)
+  const response = await fetch(`${API_BASE}/api/radio/seek`, { cache: 'no-store' })
   if (!response.ok) {
     throw new Error('failed to load radio seek')
   }
