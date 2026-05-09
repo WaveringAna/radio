@@ -1,0 +1,10 @@
+node_modules
+.research
+/target
+/.env
+/radio.db
+/radio.db-shm
+/radio.db-wal
+/frontend/dist
+/frontend/node_modules
+/data

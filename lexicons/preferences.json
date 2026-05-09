@@ -1,0 +1,32 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.preferences",
+  "description": "Per-user nkp radio UI preferences.",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A singleton preference record for radio UI settings. Volume intentionally stays browser-local.",
+      "key": "literal:self",
+      "record": {
+        "type": "object",
+        "properties": {
+          "accentColor": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Preferred accent color token or CSS color value."
+          },
+          "theme": {
+            "type": "string",
+            "knownValues": ["light", "dark", "system"],
+            "description": "Preferred theme mode."
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Client-declared timestamp when preferences were last updated."
+          }
+        }
+      }
+    }
+  }
+}
