@@ -3,6 +3,9 @@ import solid from 'vite-plugin-solid'
 
 export default defineConfig({
   plugins: [solid()],
+  build: {
+    sourcemap: true,
+  },
   server: {
     host: '127.0.0.1',
     proxy: {

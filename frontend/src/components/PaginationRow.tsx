@@ -1,3 +1,5 @@
+import { ChevronLeft, ChevronRight } from 'lucide-solid'
+
 interface PaginationRowProps {
   page: number
   pageCount: number
@@ -13,8 +15,9 @@ export function PaginationRow(props: PaginationRowProps) {
         type="button"
         disabled={props.page === 0}
         onClick={() => props.onPageChange(Math.max(0, props.page - 1))}
+        aria-label="previous page"
       >
-        prev
+        <ChevronLeft size={18} />
       </button>
       <span>{props.page + 1} / {props.pageCount}</span>
       <button
@@ -22,8 +25,9 @@ export function PaginationRow(props: PaginationRowProps) {
         type="button"
         disabled={props.page >= props.pageCount - 1}
         onClick={() => props.onPageChange(Math.min(props.pageCount - 1, props.page + 1))}
+        aria-label="next page"
       >
-        next
+        <ChevronRight size={18} />
       </button>
     </div>
   )

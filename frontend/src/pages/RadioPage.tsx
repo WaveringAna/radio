@@ -22,10 +22,27 @@ import { AdminUploadPanel } from '../components/AdminUploadPanel'
 import { PaginationRow } from '../components/PaginationRow'
 import { ProfileAvatar } from '../components/ProfileAvatar'
 import { SongCoverThumb } from '../components/SongCoverThumb'
+import { EqualizerPanel, createEqualizerController } from '../components/EqualizerPanel'
 import { createPagedList } from '../primitives/createPagedList'
 
 interface RadioPageProps {
   isAdmin: boolean
+}
+
+interface AlbumAccent {
+  primary: string
+  secondary: string
+  primaryWash: string
+  secondaryWash: string
+  topWash: string
+}
+
+const DEFAULT_ALBUM_ACCENT: AlbumAccent = {
+  primary: '255 55 95',
+  secondary: '255 149 0',
+  primaryWash: 'rgb(255 55 95 / 0%)',
+  secondaryWash: 'rgb(255 149 0 / 0%)',
+  topWash: 'rgb(255 55 95 / 0%)',
 }
 
 function fallbackProfile(did: string): AtprotoProfile {
@@ -57,6 +74,114 @@ function formatTime(seconds: number | null | undefined): string {
   return `${minutes}:${remainingSeconds}`
 }
 
+function rgbToHsl(red: number, green: number, blue: number): { hue: number; saturation: number; lightness: number } {
+  const r = red / 255
+  const g = green / 255
+  const b = blue / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const lightness = (max + min) / 2
+
+  if (max === min) {
+    return { hue: 0, saturation: 0, lightness }
+  }
+
+  const delta = max - min
+  const saturation = lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min)
+  const hue = (() => {
+    if (max === r) return (g - b) / delta + (g < b ? 6 : 0)
+    if (max === g) return (b - r) / delta + 2
+    return (r - g) / delta + 4
+  })() / 6
+
+  return { hue, saturation, lightness }
+}
+
+function accentFromRgb(primary: { red: number; green: number; blue: number }, secondary: { red: number; green: number; blue: number }): AlbumAccent {
+  return {
+    primary: `${primary.red} ${primary.green} ${primary.blue}`,
+    secondary: `${secondary.red} ${secondary.green} ${secondary.blue}`,
+    primaryWash: `rgb(${primary.red} ${primary.green} ${primary.blue} / 18%)`,
+    secondaryWash: `rgb(${secondary.red} ${secondary.green} ${secondary.blue} / 14%)`,
+    topWash: `rgb(${primary.red} ${primary.green} ${primary.blue} / 8%)`,
+  }
+}
+
+function extractAlbumAccent(image: HTMLImageElement): AlbumAccent {
+  const canvas = document.createElement('canvas')
+  const width = 28
+  const height = 28
+  canvas.width = width
+  canvas.height = height
+
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  if (!context) return DEFAULT_ALBUM_ACCENT
+  context.drawImage(image, 0, 0, width, height)
+
+  const pixels = context.getImageData(0, 0, width, height).data
+  const buckets = new Map<string, { red: number; green: number; blue: number; count: number; score: number }>()
+  let neutralRed = 0
+  let neutralGreen = 0
+  let neutralBlue = 0
+  let neutralCount = 0
+
+  for (let index = 0; index < pixels.length; index += 4) {
+    const alpha = pixels[index + 3]
+    if (alpha < 180) continue
+
+    const red = pixels[index]
+    const green = pixels[index + 1]
+    const blue = pixels[index + 2]
+    const { saturation, lightness } = rgbToHsl(red, green, blue)
+    if (lightness >= 0.12 && lightness <= 0.88) {
+      neutralRed += red
+      neutralGreen += green
+      neutralBlue += blue
+      neutralCount += 1
+    }
+    if (saturation < 0.22 || lightness < 0.12 || lightness > 0.88) continue
+
+    const key = `${Math.round(red / 24)}:${Math.round(green / 24)}:${Math.round(blue / 24)}`
+    const existing = buckets.get(key) ?? { red: 0, green: 0, blue: 0, count: 0, score: 0 }
+    existing.red += red
+    existing.green += green
+    existing.blue += blue
+    existing.count += 1
+    existing.score += saturation * (1 - Math.abs(lightness - 0.52))
+    buckets.set(key, existing)
+  }
+
+  const ranked = [...buckets.values()]
+    .map((bucket) => ({
+      red: Math.round(bucket.red / bucket.count),
+      green: Math.round(bucket.green / bucket.count),
+      blue: Math.round(bucket.blue / bucket.count),
+      score: bucket.score * Math.log2(bucket.count + 1),
+    }))
+    .sort((left, right) => right.score - left.score)
+
+  if (ranked.length === 0 && neutralCount > 0) {
+    const neutral = {
+      red: Math.round(neutralRed / neutralCount),
+      green: Math.round(neutralGreen / neutralCount),
+      blue: Math.round(neutralBlue / neutralCount),
+    }
+    const lift = 24
+    return accentFromRgb(neutral, {
+      red: Math.min(255, neutral.red + lift),
+      green: Math.min(255, neutral.green + lift),
+      blue: Math.min(255, neutral.blue + lift),
+    })
+  }
+
+  const primary = ranked[0] ?? { red: 255, green: 55, blue: 95 }
+  const secondary = ranked.find((candidate) => Math.abs(candidate.red - primary.red) + Math.abs(candidate.green - primary.green) + Math.abs(candidate.blue - primary.blue) > 80)
+    ?? ranked[1]
+    ?? { red: 255, green: 149, blue: 0 }
+
+  return accentFromRgb(primary, secondary)
+}
+
 /**
  * Renders the public radio view with admin-only upload and playback controls.
  * @param props Current viewer permissions.
@@ -78,6 +203,7 @@ export default function RadioPage(props: RadioPageProps) {
   const [songFilterDid, setSongFilterDid] = createSignal('')
   const [selectedSongIds, setSelectedSongIds] = createSignal<string[]>([])
   const [draggingQueueId, setDraggingQueueId] = createSignal<string | null>(null)
+  const [albumAccent, setAlbumAccent] = createSignal<AlbumAccent>(DEFAULT_ALBUM_ACCENT)
 
   // Local playback state. Frontend self-advances through localQueue; backend
   // resyncs only on admin actions (detected via playbackKey diff).
@@ -86,6 +212,7 @@ export default function RadioPage(props: RadioPageProps) {
   let consumedQueueIds = new Set<string>()
   let lastPlaybackKey: string | null = null
   let audioRef: HTMLAudioElement | undefined
+  const equalizer = createEqualizerController(() => audioRef)
 
   const playbackKey = (state: RadioState | undefined) =>
     state ? `${state.currentSongId ?? ''}|${state.status}|${state.startedAt ?? ''}|${state.pausedAt ?? ''}` : ''
@@ -261,8 +388,10 @@ export default function RadioPage(props: RadioPageProps) {
   })
 
   createEffect(() => {
+    const currentSongDid = snapshot()?.currentSong?.addedByDid
     const dids = [
       ...(songs() ?? []).map((song) => song.addedByDid),
+      ...(currentSongDid ? [currentSongDid] : []),
       ...(snapshot()?.queue ?? []).flatMap((item) => [item.addedByDid, item.queuedByDid]),
     ].filter((did, index, values) => values.indexOf(did) === index && !profiles()[did] && !inFlightDids.has(did))
 
@@ -275,6 +404,52 @@ export default function RadioPage(props: RadioPageProps) {
   })
 
   const currentSong = () => localCurrentSong()
+
+  createEffect(() => {
+    const song = currentSong()
+    if (!song?.hasCover) {
+      setAlbumAccent(DEFAULT_ALBUM_ACCENT)
+      return
+    }
+
+    let cancelled = false
+    const image = new Image()
+    image.src = `${API_BASE}/api/songs/${song.id}/cover`
+    image.onload = () => {
+      if (cancelled) return
+      try {
+        setAlbumAccent(extractAlbumAccent(image))
+      } catch {
+        setAlbumAccent(DEFAULT_ALBUM_ACCENT)
+      }
+    }
+    image.onerror = () => {
+      if (!cancelled) setAlbumAccent(DEFAULT_ALBUM_ACCENT)
+    }
+
+    onCleanup(() => {
+      cancelled = true
+      image.onload = null
+      image.onerror = null
+    })
+  })
+
+  createEffect(() => {
+    const accent = albumAccent()
+    document.body.style.setProperty('--album-accent-a', accent.primary)
+    document.body.style.setProperty('--album-accent-b', accent.secondary)
+    document.body.style.setProperty('--album-accent-a-wash', accent.primaryWash)
+    document.body.style.setProperty('--album-accent-b-wash', accent.secondaryWash)
+    document.body.style.setProperty('--album-accent-top-wash', accent.topWash)
+    onCleanup(() => {
+      document.body.style.removeProperty('--album-accent-a')
+      document.body.style.removeProperty('--album-accent-b')
+      document.body.style.removeProperty('--album-accent-a-wash')
+      document.body.style.removeProperty('--album-accent-b-wash')
+      document.body.style.removeProperty('--album-accent-top-wash')
+    })
+  })
+
   const currentAudioUrl = () => {
     const songId = localCurrentSong()?.id
     return songId ? `${API_BASE}/api/songs/${songId}/audio` : undefined
@@ -315,6 +490,7 @@ export default function RadioPage(props: RadioPageProps) {
   const startListening = async () => {
     if (!audioRef) return
     setHasStarted(true)
+    await equalizer.ensureGraph()
     audioRef.volume = volume()
     const snap = snapshot()
     if (snap?.state) {
@@ -364,6 +540,7 @@ export default function RadioPage(props: RadioPageProps) {
       audioRef.volume = volume()
     }
   })
+
 
   createEffect(() => {
     if (!('mediaSession' in navigator)) return
@@ -507,11 +684,26 @@ export default function RadioPage(props: RadioPageProps) {
           {(url) => <audio src={url()} preload="auto" aria-hidden="true" style="display:none" />}
         </Show>
         <div class="listener-controls">
-          <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
-            <button class="listen-button" type="button" onClick={() => void startListening()}>
-              {isAudioPlaying() ? 'listening live' : 'click to listen live'}
-            </button>
-          </Show>
+          <div class="listen-attribution-row">
+            <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
+              <button class="listen-button" type="button" onClick={() => void startListening()}>
+                {isAudioPlaying() ? 'listening live' : 'tap to listen'}
+              </button>
+            </Show>
+            <Show when={currentSong()}>
+              {(song) => {
+                const profile = () => profileFor(song().addedByDid)
+                return (
+                  <a class="track-attribution" href={`https://bsky.app/profile/${profile().handle}`} target="_blank" rel="noreferrer">
+                    <ProfileAvatar profile={profile()} class="track-attribution-avatar" title={`@${profile().handle}`} />
+                    <span>
+                      uploaded by <strong>{profile().displayName || `@${profile().handle}`}</strong>
+                    </span>
+                  </a>
+                )
+              }}
+            </Show>
+          </div>
           <label class="volume-control local-volume">
             <Volume2 size={17} />
             <input
@@ -520,6 +712,7 @@ export default function RadioPage(props: RadioPageProps) {
               max="1"
               step="0.01"
               value={volume()}
+              style={`--volume-progress: ${volume() * 100}%`}
               onInput={(event) => {
                 setVolume(event.currentTarget.valueAsNumber)
                 if (audioRef) {
@@ -537,7 +730,7 @@ export default function RadioPage(props: RadioPageProps) {
           <p class="muted">coming later</p>
         </section>
 
-        <section class="glass-card">
+        <section class="glass-card up-next-card">
           <div class="section-heading">
             <p class="eyebrow">up next</p>
             <span>{snapshot()?.state.status ?? 'loading'}</span>
@@ -566,6 +759,10 @@ export default function RadioPage(props: RadioPageProps) {
               <PaginationRow page={upNextPaging.page()} pageCount={upNextPaging.pageCount()} onPageChange={upNextPaging.setPage} compact />
             </Show>
           </Show>
+        </section>
+
+        <section class="glass-card equalizer-card">
+          <EqualizerPanel controller={equalizer} />
         </section>
 
         <Show when={props.isAdmin}>
