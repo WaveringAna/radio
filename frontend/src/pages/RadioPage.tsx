@@ -1,5 +1,5 @@
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show, untrack } from 'solid-js'
-import { ListPlus, Trash2, Volume2 } from 'lucide-solid'
+import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, Show, untrack } from 'solid-js'
+import { Eye, EyeOff, ListPlus, Trash2, Volume2 } from 'lucide-solid'
 import { resolveAtprotoProfile, type AtprotoProfile } from '../lib/atproto'
 import {
   API_BASE,
@@ -38,11 +38,11 @@ interface AlbumAccent {
 }
 
 const DEFAULT_ALBUM_ACCENT: AlbumAccent = {
-  primary: '255 55 95',
-  secondary: '255 149 0',
-  primaryWash: 'rgb(255 55 95 / 0%)',
-  secondaryWash: 'rgb(255 149 0 / 0%)',
-  topWash: 'rgb(255 55 95 / 0%)',
+  primary: '190 124 143',
+  secondary: '125 104 119',
+  primaryWash: 'rgb(190 124 143 / 0%)',
+  secondaryWash: 'rgb(125 104 119 / 0%)',
+  topWash: 'rgb(190 124 143 / 0%)',
 }
 
 function fallbackProfile(did: string): AtprotoProfile {
@@ -188,9 +188,10 @@ function extractAlbumAccent(image: HTMLImageElement): AlbumAccent {
  * @returns The radio page view.
  */
 export default function RadioPage(props: RadioPageProps) {
+  const [showAdminTools, setShowAdminTools] = createSignal(true)
   const [snapshot, { mutate, refetch }] = createResource(fetchRadioSnapshot)
   const [songs, { refetch: refetchSongs }] = createResource(fetchSongs)
-  const [albums, { refetch: refetchAlbums }] = createResource(() => props.isAdmin, (enabled) => (enabled ? fetchAlbums() : []))
+  const [albums, { refetch: refetchAlbums }] = createResource(() => props.isAdmin && showAdminTools(), (enabled) => (enabled ? fetchAlbums() : []))
   const [pageError, setPageError] = createSignal<string | null>(null)
   const [profiles, setProfiles] = createSignal<Record<string, AtprotoProfile>>({})
   const inFlightDids = new Set<string>()
@@ -204,6 +205,9 @@ export default function RadioPage(props: RadioPageProps) {
   const [selectedSongIds, setSelectedSongIds] = createSignal<string[]>([])
   const [draggingQueueId, setDraggingQueueId] = createSignal<string | null>(null)
   const [albumAccent, setAlbumAccent] = createSignal<AlbumAccent>(DEFAULT_ALBUM_ACCENT)
+  const [ambientLayers, setAmbientLayers] = createSignal<[AlbumAccent, AlbumAccent]>([DEFAULT_ALBUM_ACCENT, DEFAULT_ALBUM_ACCENT])
+  const [activeAmbientLayer, setActiveAmbientLayer] = createSignal<0 | 1>(0)
+  let lastAmbientKey = ''
 
   // Local playback state. Frontend self-advances through localQueue; backend
   // resyncs only on admin actions (detected via playbackKey diff).
@@ -436,19 +440,17 @@ export default function RadioPage(props: RadioPageProps) {
 
   createEffect(() => {
     const accent = albumAccent()
-    document.body.style.setProperty('--album-accent-a', accent.primary)
-    document.body.style.setProperty('--album-accent-b', accent.secondary)
-    document.body.style.setProperty('--album-accent-a-wash', accent.primaryWash)
-    document.body.style.setProperty('--album-accent-b-wash', accent.secondaryWash)
-    document.body.style.setProperty('--album-accent-top-wash', accent.topWash)
-    onCleanup(() => {
-      document.body.style.removeProperty('--album-accent-a')
-      document.body.style.removeProperty('--album-accent-b')
-      document.body.style.removeProperty('--album-accent-a-wash')
-      document.body.style.removeProperty('--album-accent-b-wash')
-      document.body.style.removeProperty('--album-accent-top-wash')
-    })
+    const key = `${accent.primary}|${accent.secondary}|${accent.topWash}`
+    if (key === lastAmbientKey) return
+    lastAmbientKey = key
+
+    const nextLayer = untrack(activeAmbientLayer) === 0 ? 1 : 0
+    setAmbientLayers(([first, second]) => (nextLayer === 0 ? [accent, second] : [first, accent]))
+    window.requestAnimationFrame(() => setActiveAmbientLayer(nextLayer))
   })
+
+  const ambientLayerStyle = (accent: AlbumAccent) =>
+    `--ambient-a-wash: ${accent.primaryWash}; --ambient-b-wash: ${accent.secondaryWash}; --ambient-top-wash: ${accent.topWash};`
 
   const currentAudioUrl = () => {
     const songId = localCurrentSong()?.id
@@ -490,12 +492,15 @@ export default function RadioPage(props: RadioPageProps) {
   const startListening = async () => {
     if (!audioRef) return
     setHasStarted(true)
-    await equalizer.ensureGraph()
     audioRef.volume = volume()
     const snap = snapshot()
     if (snap?.state) {
       await seekAudioTo(Math.max(0, snap.state.positionSeconds))
     }
+    // play() must happen synchronously inside the user-gesture call stack on
+    // iOS, so do not await Web Audio setup before it. The equalizer graph is
+    // attached lazily by EqualizerPanel — routing through MediaElementSource
+    // upfront would make iOS suspend the audio when the tab backgrounds.
     void audioRef.play().catch(() => undefined)
   }
 
@@ -571,6 +576,21 @@ export default function RadioPage(props: RadioPageProps) {
     } else {
       navigator.mediaSession.playbackState = 'none'
     }
+  })
+
+  // iOS Safari can pause a backgrounded <audio> on tab switch / lock screen.
+  // When the page becomes visible again, resume if the user previously chose
+  // to listen and we still have audio loaded.
+  createEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      if (!audioRef || !hasStarted()) return
+      if (audioRef.paused && snapshot()?.state.status === 'playing') {
+        void audioRef.play().catch(() => undefined)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    onCleanup(() => document.removeEventListener('visibilitychange', onVisible))
   })
 
   const sendControl = async (action: 'play' | 'pause' | 'stop' | 'skip') => {
@@ -655,25 +675,36 @@ export default function RadioPage(props: RadioPageProps) {
   }
 
   return (
-    <section class="radio-page">
-      <div class="now-playing-card">
-        <Show
-          when={currentSong()?.hasCover}
-          fallback={
-            <div class="art-shell">
-              <div class="art-glow" />
-            </div>
-          }
-        >
-          <img class="art-shell album-cover" src={`${API_BASE}/api/songs/${currentSong()?.id}/cover`} alt="" />
-        </Show>
-        <p class="eyebrow">live radio</p>
+    <>
+      <div class="album-ambient" aria-hidden="true">
+        <div class="album-ambient-layer" classList={{ active: activeAmbientLayer() === 0 }} style={ambientLayerStyle(ambientLayers()[0])} />
+        <div class="album-ambient-layer" classList={{ active: activeAmbientLayer() === 1 }} style={ambientLayerStyle(ambientLayers()[1])} />
+      </div>
+      <section class="radio-page">
+        <div class="now-playing-card">
+        <div class="art-shell">
+          <Show when={currentSong()?.hasCover} fallback={<div class="art-glow" />}>
+            <img class="album-cover" src={`${API_BASE}/api/songs/${currentSong()?.id}/cover`} alt="" />
+          </Show>
+          <div class="station-id-card" aria-hidden="true">
+            <span>goetic relay</span>
+            <strong>nkp-ritual band</strong>
+            <small>sigil id: {currentSong()?.id.slice(0, 8) ?? 'awaiting'}</small>
+          </div>
+        </div>
+        <div class="nowplaying-waveform" aria-hidden="true">
+          <Index each={equalizer.visualizerBars()}>
+            {(bar) => <span style={`--wave: ${bar()}`} />}
+          </Index>
+        </div>
+        <p class="eyebrow">now playing // live rite</p>
         <h1>{currentSong()?.title ?? 'nothing playing yet'}</h1>
         <p class="subtitle">{currentSong()?.artist ?? 'queue something lovely'}</p>
         <Show when={currentSong()?.album}>{(album) => <p class="muted">{album()}</p>}</Show>
         <audio
           ref={audioRef}
           class="radio-audio"
+          crossOrigin="anonymous"
           src={currentAudioUrl() ?? ''}
           preload="auto"
           onPlay={() => setIsAudioPlaying(true)}
@@ -681,7 +712,7 @@ export default function RadioPage(props: RadioPageProps) {
           onEnded={handleAudioEnded}
         />
         <Show when={nextAudioUrl()}>
-          {(url) => <audio src={url()} preload="auto" aria-hidden="true" style="display:none" />}
+          {(url) => <audio src={url()} preload="auto" crossOrigin="anonymous" aria-hidden="true" style="display:none" />}
         </Show>
         <div class="listener-controls">
           <div class="listen-attribution-row">
@@ -766,6 +797,20 @@ export default function RadioPage(props: RadioPageProps) {
         </section>
 
         <Show when={props.isAdmin}>
+          <button
+            class="admin-visibility-toggle"
+            type="button"
+            aria-pressed={!showAdminTools()}
+            onClick={() => setShowAdminTools((visible) => !visible)}
+          >
+            <span>{showAdminTools() ? 'hide admin' : 'show admin'}</span>
+            <Show when={showAdminTools()} fallback={<Eye size={17} />}>
+              <EyeOff size={17} />
+            </Show>
+          </button>
+        </Show>
+
+        <Show when={props.isAdmin && showAdminTools()}>
           <AdminUploadPanel
             onTransport={(action) => void sendControl(action)}
             onSongAdded={() => void refetchSongs()}
@@ -835,7 +880,7 @@ export default function RadioPage(props: RadioPageProps) {
         </Show>
       </aside>
 
-      <Show when={props.isAdmin}>
+      <Show when={props.isAdmin && showAdminTools()}>
         <section class="bottom-radio-tools">
           <section class="glass-card">
             <div class="section-heading">
@@ -936,7 +981,8 @@ export default function RadioPage(props: RadioPageProps) {
             </Show>
           </section>
         </section>
-      </Show>
-    </section>
+        </Show>
+      </section>
+    </>
   )
 }

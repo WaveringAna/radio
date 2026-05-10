@@ -7,6 +7,7 @@ const LEGACY_EQ_STORAGE_KEY = 'radio_eq_gains'
 const EQ_MIN_FREQUENCY = 20
 const EQ_MAX_FREQUENCY = 20000
 const EQ_GRAPH_POINTS = 80
+const VISUALIZER_BAR_COUNT = 48
 const EQ_FILTER_TYPES = ['peaking', 'lowshelf', 'highshelf'] as const
 const EQ_GRAPH_FREQUENCIES = Array.from({ length: EQ_GRAPH_POINTS }, (_, index) => {
   const progress = index / (EQ_GRAPH_POINTS - 1)
@@ -33,6 +34,8 @@ export interface EqualizerController {
   customPresets: Accessor<EqualizerPreset[]>
   enabled: Accessor<boolean>
   graphPath: Accessor<string>
+  /** Normalized waveform bars sampled from the live audio output. */
+  visualizerBars: Accessor<number[]>
   applyPreset: (preset: EqualizerPreset) => void
   ensureGraph: () => Promise<void>
   reset: () => void
@@ -144,10 +147,13 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
   const [equalizerBands, setEqualizerBands] = createSignal(readEqualizerBands())
   const [customPresets, setCustomPresets] = createSignal(readCustomPresets())
   const [enabled, setEnabledSignal] = createSignal(true)
+  const [visualizerBars, setVisualizerBars] = createSignal(Array.from({ length: VISUALIZER_BAR_COUNT }, () => 0.08))
   let audioContext: AudioContext | null = null
   let audioSource: MediaElementAudioSourceNode | null = null
+  let analyser: AnalyserNode | null = null
   let equalizerFilters: BiquadFilterNode[] = []
   let persistenceTimer: number | null = null
+  let visualizerFrame: number | null = null
 
   const scheduleEqualizerPersistence = (bands: EqualizerBand[]) => {
     if (persistenceTimer !== null) window.clearTimeout(persistenceTimer)
@@ -179,12 +185,38 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
     }).join(' ')
   })
 
+  const updateVisualizer = () => {
+    if (!analyser) return
+    const samples = new Uint8Array(analyser.fftSize)
+    analyser.getByteTimeDomainData(samples)
+    const bucketSize = Math.floor(samples.length / VISUALIZER_BAR_COUNT)
+    setVisualizerBars((current) => current.map((previous, bucketIndex) => {
+      const start = bucketIndex * bucketSize
+      const end = Math.min(samples.length, start + bucketSize)
+      let peak = 0
+      for (let index = start; index < end; index += 1) {
+        peak = Math.max(peak, Math.abs(samples[index] - 128) / 128)
+      }
+      return previous * 0.32 + Math.max(0.025, Math.min(1, peak * 4.2)) * 0.68
+    }))
+    visualizerFrame = window.requestAnimationFrame(updateVisualizer)
+  }
+
+  const startVisualizer = () => {
+    if (visualizerFrame === null) {
+      visualizerFrame = window.requestAnimationFrame(updateVisualizer)
+    }
+  }
+
   const ensureGraph = async (): Promise<void> => {
     const audioElement = getAudioElement()
     if (!audioElement) return
     audioContext ??= new AudioContext()
     if (!audioSource) {
       audioSource = audioContext.createMediaElementSource(audioElement)
+      analyser = audioContext.createAnalyser()
+      analyser.fftSize = 1024
+      analyser.smoothingTimeConstant = 0.42
       equalizerFilters = equalizerBands().map((band) => {
         const filter = audioContext!.createBiquadFilter()
         filter.type = band.type
@@ -193,12 +225,13 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
         filter.gain.value = effectiveGain(band.gain)
         return filter
       })
-      const chain = [audioSource, ...equalizerFilters, audioContext.destination]
+      const chain = [audioSource, ...equalizerFilters, analyser, audioContext.destination]
       chain.slice(0, -1).forEach((node, index) => node.connect(chain[index + 1]))
     }
     if (audioContext.state === 'suspended') {
       await audioContext.resume().catch(() => undefined)
     }
+    startVisualizer()
   }
 
   const updateBand = (index: number, patch: Partial<EqualizerBand>) => {
@@ -253,13 +286,15 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
 
   onCleanup(() => {
     if (persistenceTimer !== null) window.clearTimeout(persistenceTimer)
+    if (visualizerFrame !== null) window.cancelAnimationFrame(visualizerFrame)
     writeEqualizerBands(equalizerBands())
     equalizerFilters.forEach((filter) => filter.disconnect())
+    analyser?.disconnect()
     audioSource?.disconnect()
     void audioContext?.close().catch(() => undefined)
   })
 
-  return { bands: equalizerBands, customPresets, enabled, graphPath, applyPreset, ensureGraph, reset, savePreset, setEnabled, updateBand }
+  return { bands: equalizerBands, customPresets, enabled, graphPath, visualizerBars, applyPreset, ensureGraph, reset, savePreset, setEnabled, updateBand }
 }
 
 /**
@@ -272,9 +307,24 @@ export function EqualizerPanel(props: EqualizerPanelProps) {
   const [presetName, setPresetName] = createSignal('')
   const presets = createMemo(() => [...EQ_PRESETS, ...props.controller.customPresets()])
 
+  // Attach the Web Audio graph the first time the user actually interacts with
+  // the EQ. Doing it earlier breaks iOS background playback, since routing the
+  // <audio> through MediaElementSource makes Safari treat it as Web Audio and
+  // suspend it on lock screen / app switch.
+  const ensureGraph = () => void props.controller.ensureGraph()
+
+  const togglePanel = () => {
+    const next = !open()
+    setOpen(next)
+    if (next) ensureGraph()
+  }
+
   const applyPresetById = (id: string) => {
     const preset = presets().find((candidate) => candidate.id === id)
-    if (preset) props.controller.applyPreset(preset)
+    if (preset) {
+      ensureGraph()
+      props.controller.applyPreset(preset)
+    }
   }
 
   const saveCurrentPreset = () => {
@@ -291,13 +341,16 @@ export function EqualizerPanel(props: EqualizerPanelProps) {
           type="button"
           aria-pressed={props.controller.enabled()}
           aria-label={props.controller.enabled() ? 'disable equalizer' : 'enable equalizer'}
-          onClick={() => props.controller.setEnabled(!props.controller.enabled())}
+          onClick={() => {
+            ensureGraph()
+            props.controller.setEnabled(!props.controller.enabled())
+          }}
         >
           <Show when={props.controller.enabled()} fallback={<RadioOff size={20} />}>
             <Radio size={20} />
           </Show>
         </button>
-        <button class="equalizer-toggle" type="button" aria-expanded={open()} aria-label="toggle equalizer controls" onClick={() => setOpen((isOpen) => !isOpen)}>
+        <button class="equalizer-toggle" type="button" aria-expanded={open()} aria-label="toggle equalizer controls" onClick={togglePanel}>
           <ChevronDown size={19} />
         </button>
       </div>
@@ -344,7 +397,10 @@ export function EqualizerPanel(props: EqualizerPanelProps) {
                   max="12"
                   step="0.5"
                   value={band().gain}
-                  onInput={(event) => props.controller.updateBand(index, { gain: event.currentTarget.valueAsNumber })}
+                  onInput={(event) => {
+                    ensureGraph()
+                    props.controller.updateBand(index, { gain: event.currentTarget.valueAsNumber })
+                  }}
                 />
                 <small>{band().gain.toFixed(1)} db</small>
                 <input
