@@ -91,6 +91,14 @@ export interface SongUploadInput {
   addToQueue: boolean
 }
 
+export interface SongMetadataInput {
+  title: string
+  artist: string
+  album?: string | null
+  genre?: string | null
+  durationSeconds?: number | null
+}
+
 export interface UrlSongInput {
   url: string
   title?: string
@@ -421,6 +429,28 @@ export async function uploadSongCover(songId: string, cover: File): Promise<Song
 
   if (!response.ok) {
     throw new Error('cover upload failed')
+  }
+
+  return (await response.json()) as Song
+}
+
+/**
+ * Updates editable song metadata.
+ * @param songId Song id to update.
+ * @param input Updated song metadata.
+ * @returns Updated song metadata.
+ * @throws Error When update fails.
+ */
+export async function updateSongMetadata(songId: string, input: SongMetadataInput): Promise<Song> {
+  const response = await fetch(`${API_BASE}/api/songs/${songId}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    credentials: 'include',
+    body: JSON.stringify(input),
+  })
+
+  if (!response.ok) {
+    throw new Error('failed to update song metadata')
   }
 
   return (await response.json()) as Song

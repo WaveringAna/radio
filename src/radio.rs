@@ -167,6 +167,20 @@ pub(crate) struct NewSongUpload {
     pub(crate) add_to_queue: bool,
 }
 
+/// Editable song metadata.
+pub(crate) struct SongMetadataUpdate {
+    /// Song title.
+    pub(crate) title: String,
+    /// Song artist.
+    pub(crate) artist: String,
+    /// Optional album title.
+    pub(crate) album: Option<String>,
+    /// Optional genre.
+    pub(crate) genre: Option<String>,
+    /// Optional duration in seconds.
+    pub(crate) duration_seconds: Option<i64>,
+}
+
 /// Service for radio state, queue, song storage, and realtime broadcasts.
 #[derive(Clone)]
 pub(crate) struct RadioService {
@@ -448,12 +462,13 @@ impl RadioService {
                 .await
                 .context("loading existing tracks")?;
 
-        let max_pos: i64 =
-            sqlx::query_scalar("select coalesce(max(position), 0) from radio_album_tracks where album_id = ?")
-                .bind(album_id)
-                .fetch_one(self.db.pool())
-                .await
-                .context("loading max track position")?;
+        let max_pos: i64 = sqlx::query_scalar(
+            "select coalesce(max(position), 0) from radio_album_tracks where album_id = ?",
+        )
+        .bind(album_id)
+        .fetch_one(self.db.pool())
+        .await
+        .context("loading max track position")?;
 
         let new_ids: Vec<String> = song_ids
             .into_iter()
@@ -526,10 +541,7 @@ impl RadioService {
     ///
     /// # Errors
     /// Returns an error when sqlite lookup, disk I/O, or image decoding fails.
-    pub(crate) async fn cover_thumbnail(
-        &self,
-        song_id: &str,
-    ) -> anyhow::Result<Option<PathBuf>> {
+    pub(crate) async fn cover_thumbnail(&self, song_id: &str) -> anyhow::Result<Option<PathBuf>> {
         let cover = self.cover_file(song_id).await?;
         let Some(cover) = cover else {
             return Ok(None);
@@ -562,6 +574,60 @@ impl RadioService {
         Ok(Some(thumb_path))
     }
 
+    /// Updates editable metadata for an existing song.
+    ///
+    /// # Errors
+    /// Returns an error when sqlite persistence fails or the song does not exist.
+    pub(crate) async fn update_song_metadata(
+        &self,
+        song_id: &str,
+        update: SongMetadataUpdate,
+    ) -> anyhow::Result<Song> {
+        let title = update.title.trim();
+        let artist = update.artist.trim();
+        if title.is_empty() || artist.is_empty() {
+            return Err(anyhow!("song title and artist are required"));
+        }
+
+        let album = update
+            .album
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let genre = update
+            .genre
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+
+        let result = sqlx::query(
+            r#"
+            update songs
+            set title = ?, artist = ?, album = ?, genre = ?, duration_seconds = ?
+            where id = ?
+            "#,
+        )
+        .bind(title)
+        .bind(artist)
+        .bind(album)
+        .bind(genre)
+        .bind(update.duration_seconds)
+        .bind(song_id)
+        .execute(self.db.pool())
+        .await
+        .context("updating song metadata")?;
+
+        if result.rows_affected() == 0 {
+            return Err(anyhow!("song not found"));
+        }
+
+        let song = find_song(&self.db, song_id)
+            .await?
+            .ok_or_else(|| anyhow!("song not found"))?;
+        self.broadcast_snapshot().await;
+        Ok(song)
+    }
+
     /// Stores an uploaded cover for a song.
     ///
     /// # Errors
@@ -592,6 +658,9 @@ impl RadioService {
             .execute(self.db.pool())
             .await
             .context("updating song cover")?;
+
+        let thumb_path = self.thumb_dir.join(format!("{song_id}.jpg"));
+        let _ = tokio::fs::remove_file(thumb_path).await;
 
         let song = find_song(&self.db, song_id)
             .await?
@@ -1027,11 +1096,7 @@ async fn auto_advance(db: &Database) -> anyhow::Result<()> {
         }
 
         let overflow = elapsed - duration;
-        let admin = raw
-            .updated_by_did
-            .as_deref()
-            .unwrap_or("system")
-            .to_owned();
+        let admin = raw.updated_by_did.as_deref().unwrap_or("system").to_owned();
         skip_to_next(db, &admin).await?;
 
         sqlx::query(

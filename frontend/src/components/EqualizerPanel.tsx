@@ -3,6 +3,7 @@ import { createMemo, createSignal, For, Index, onCleanup, Show, type Accessor } 
 
 const EQ_STORAGE_KEY = 'radio_eq_bands'
 const EQ_PRESETS_STORAGE_KEY = 'radio_eq_named_presets'
+const NORMALIZATION_STORAGE_KEY = 'radio_playback_normalization'
 const LEGACY_EQ_STORAGE_KEY = 'radio_eq_gains'
 const EQ_MIN_FREQUENCY = 20
 const EQ_MAX_FREQUENCY = 20000
@@ -34,6 +35,7 @@ export interface EqualizerController {
   customPresets: Accessor<EqualizerPreset[]>
   enabled: Accessor<boolean>
   graphPath: Accessor<string>
+  normalizationEnabled: Accessor<boolean>
   /** Normalized waveform bars sampled from the live audio output. */
   visualizerBars: Accessor<number[]>
   applyPreset: (preset: EqualizerPreset) => void
@@ -41,6 +43,7 @@ export interface EqualizerController {
   reset: () => void
   savePreset: (name: string) => void
   setEnabled: (enabled: boolean) => void
+  setNormalizationEnabled: (enabled: boolean) => void
   updateBand: (index: number, patch: Partial<EqualizerBand>) => void
 }
 
@@ -131,6 +134,14 @@ function writeCustomPresets(presets: EqualizerPreset[]): void {
   localStorage.setItem(EQ_PRESETS_STORAGE_KEY, JSON.stringify(presets))
 }
 
+function readNormalizationEnabled(): boolean {
+  return localStorage.getItem(NORMALIZATION_STORAGE_KEY) !== 'off'
+}
+
+function writeNormalizationEnabled(enabled: boolean): void {
+  localStorage.setItem(NORMALIZATION_STORAGE_KEY, enabled ? 'on' : 'off')
+}
+
 function equalizerBandGainAt(band: EqualizerBand, frequency: number): number {
   const distance = Math.log2(frequency / band.frequency)
   if (band.type === 'lowshelf') return band.gain / (1 + Math.exp(distance * 5))
@@ -147,10 +158,13 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
   const [equalizerBands, setEqualizerBands] = createSignal(readEqualizerBands())
   const [customPresets, setCustomPresets] = createSignal(readCustomPresets())
   const [enabled, setEnabledSignal] = createSignal(true)
+  const [normalizationEnabled, setNormalizationEnabledSignal] = createSignal(readNormalizationEnabled())
   const [visualizerBars, setVisualizerBars] = createSignal(Array.from({ length: VISUALIZER_BAR_COUNT }, () => 0.08))
   let audioContext: AudioContext | null = null
   let audioSource: MediaElementAudioSourceNode | null = null
   let analyser: AnalyserNode | null = null
+  let compressor: DynamicsCompressorNode | null = null
+  let normalizationGain: GainNode | null = null
   let equalizerFilters: BiquadFilterNode[] = []
   let persistenceTimer: number | null = null
   let visualizerFrame: number | null = null
@@ -164,6 +178,25 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
   }
 
   const effectiveGain = (gain: number) => (enabled() ? gain : 0)
+
+  const applyNormalization = () => {
+    if (!audioContext || !compressor || !normalizationGain) return
+    const now = audioContext.currentTime
+    if (normalizationEnabled()) {
+      compressor.threshold.setTargetAtTime(-24, now, 0.02)
+      compressor.knee.setTargetAtTime(24, now, 0.02)
+      compressor.ratio.setTargetAtTime(8, now, 0.02)
+      compressor.attack.setTargetAtTime(0.003, now, 0.02)
+      compressor.release.setTargetAtTime(0.25, now, 0.02)
+      normalizationGain.gain.setTargetAtTime(1.16, now, 0.02)
+      return
+    }
+
+    compressor.threshold.setTargetAtTime(0, now, 0.02)
+    compressor.knee.setTargetAtTime(0, now, 0.02)
+    compressor.ratio.setTargetAtTime(1, now, 0.02)
+    normalizationGain.gain.setTargetAtTime(1, now, 0.02)
+  }
 
   const applyFilters = (bands: EqualizerBand[]) => {
     equalizerFilters.forEach((filter, index) => {
@@ -217,6 +250,9 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
       analyser = audioContext.createAnalyser()
       analyser.fftSize = 1024
       analyser.smoothingTimeConstant = 0.42
+      compressor = audioContext.createDynamicsCompressor()
+      normalizationGain = audioContext.createGain()
+      applyNormalization()
       equalizerFilters = equalizerBands().map((band) => {
         const filter = audioContext!.createBiquadFilter()
         filter.type = band.type
@@ -225,7 +261,7 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
         filter.gain.value = effectiveGain(band.gain)
         return filter
       })
-      const chain = [audioSource, ...equalizerFilters, analyser, audioContext.destination]
+      const chain = [audioSource, ...equalizerFilters, compressor, normalizationGain, analyser, audioContext.destination]
       chain.slice(0, -1).forEach((node, index) => node.connect(chain[index + 1]))
     }
     if (audioContext.state === 'suspended') {
@@ -284,17 +320,39 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
     applyFilters(equalizerBands())
   }
 
+  const setNormalizationEnabled = (isEnabled: boolean) => {
+    setNormalizationEnabledSignal(isEnabled)
+    writeNormalizationEnabled(isEnabled)
+    applyNormalization()
+  }
+
   onCleanup(() => {
     if (persistenceTimer !== null) window.clearTimeout(persistenceTimer)
     if (visualizerFrame !== null) window.cancelAnimationFrame(visualizerFrame)
     writeEqualizerBands(equalizerBands())
     equalizerFilters.forEach((filter) => filter.disconnect())
+    normalizationGain?.disconnect()
+    compressor?.disconnect()
     analyser?.disconnect()
     audioSource?.disconnect()
     void audioContext?.close().catch(() => undefined)
   })
 
-  return { bands: equalizerBands, customPresets, enabled, graphPath, visualizerBars, applyPreset, ensureGraph, reset, savePreset, setEnabled, updateBand }
+  return {
+    bands: equalizerBands,
+    customPresets,
+    enabled,
+    graphPath,
+    normalizationEnabled,
+    visualizerBars,
+    applyPreset,
+    ensureGraph,
+    reset,
+    savePreset,
+    setEnabled,
+    setNormalizationEnabled,
+    updateBand,
+  }
 }
 
 /**
@@ -336,6 +394,18 @@ export function EqualizerPanel(props: EqualizerPanelProps) {
     <section class="equalizer-panel" classList={{ open: open() }}>
       <div class="equalizer-header">
         <span class="equalizer-title">equalizer</span>
+        <button
+          class="normalization-toggle"
+          type="button"
+          aria-pressed={props.controller.normalizationEnabled()}
+          aria-label={props.controller.normalizationEnabled() ? 'disable playback normalization' : 'enable playback normalization'}
+          onClick={() => {
+            ensureGraph()
+            props.controller.setNormalizationEnabled(!props.controller.normalizationEnabled())
+          }}
+        >
+          normalize
+        </button>
         <button
           class="equalizer-power"
           type="button"

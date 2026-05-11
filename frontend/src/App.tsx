@@ -2,6 +2,7 @@ import { createResource, createSignal, onCleanup, Show } from 'solid-js'
 import { setSessionToken } from './lib/radio'
 import { Monitor, Moon, MoonStar } from 'lucide-solid'
 import AdminPage from './pages/AdminPage'
+import QueueControlPage from './pages/QueueControlPage'
 import RadioPage from './pages/RadioPage'
 import './App.css'
 import {
@@ -125,6 +126,11 @@ export default function App() {
         <a href="/" onClick={navigate('/')} aria-current={path() === '/' ? 'page' : undefined}>
           radio
         </a>
+        <Show when={session()?.isAdmin}>
+          <a href="/queue-control" onClick={navigate('/queue-control')} aria-current={path() === '/queue-control' ? 'page' : undefined}>
+            queue control
+          </a>
+        </Show>
         <a href="/auth" onClick={navigate('/auth')} aria-current={path() === '/auth' || path() === '/admin' ? 'page' : undefined}>
           auth
         </a>
@@ -134,8 +140,12 @@ export default function App() {
       </nav>
 
       <Show when={!session.loading} fallback={<p>checking session...</p>}>
-        <section hidden={path() === '/auth' || path() === '/admin'}>
-          <RadioPage isAdmin={session()?.isAdmin ?? false} />
+        <section hidden={path() !== '/'}>
+          <RadioPage />
+        </section>
+
+        <section hidden={path() !== '/queue-control'}>
+          <QueueControlPage isAdmin={session()?.isAdmin ?? false} />
         </section>
 
         <section hidden={path() !== '/auth' && path() !== '/admin'}>

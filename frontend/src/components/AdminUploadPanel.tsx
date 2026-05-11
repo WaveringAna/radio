@@ -1,5 +1,4 @@
 import { createSignal, Show } from 'solid-js'
-import { Pause, Play, SkipForward } from 'lucide-solid'
 import { FileUploadForm } from './FileUploadForm'
 import { UrlUploadForm } from './UrlUploadForm'
 import { SubsonicPane } from './SubsonicPane'
@@ -7,30 +6,24 @@ import { SubsonicPane } from './SubsonicPane'
 type UploadMode = 'file' | 'url' | 'subsonic'
 
 interface AdminUploadPanelProps {
-  onTransport: (action: 'play' | 'pause' | 'stop' | 'skip') => void
   onSongAdded: () => void
   error: string | null
   onError: (message: string | null) => void
 }
 
+/**
+ * Renders consolidated admin upload tools for files, urls, and subsonic imports.
+ * @param props Upload callbacks and current error text.
+ * @returns The upload panel view.
+ */
 export function AdminUploadPanel(props: AdminUploadPanelProps) {
   const [mode, setMode] = createSignal<UploadMode>('file')
 
   return (
     <section class="glass-card admin-controls">
       <div class="section-heading">
-        <p class="eyebrow">admin control</p>
-        <div class="transport-controls">
-          <button class="icon-button primary" type="button" aria-label="play" onClick={() => props.onTransport('play')}>
-            <Play size={20} fill="currentColor" />
-          </button>
-          <button class="icon-button" type="button" aria-label="pause" onClick={() => props.onTransport('pause')}>
-            <Pause size={18} />
-          </button>
-          <button class="icon-button" type="button" aria-label="skip" onClick={() => props.onTransport('skip')}>
-            <SkipForward size={18} />
-          </button>
-        </div>
+        <p class="eyebrow">upload flow</p>
+        <span>library intake</span>
       </div>
 
       <div class="upload-mode-tabs">

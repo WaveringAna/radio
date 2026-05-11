@@ -1,33 +1,21 @@
-import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, Show, untrack } from 'solid-js'
-import { Eye, EyeOff, ListPlus, Trash2, Volume2 } from 'lucide-solid'
+import { createEffect, createResource, createSignal, For, Index, onCleanup, Show, untrack } from 'solid-js'
+import { Volume2 } from 'lucide-solid'
 import { resolveAtprotoProfile, type AtprotoProfile } from '../lib/atproto'
 import {
   API_BASE,
-  clearQueue,
-  controlRadio,
-  enqueueAlbum,
-  enqueueSong,
-  fetchAlbums,
   fetchRadioSnapshot,
   fetchSongs,
   openRadioSocket,
-  removeQueueItem,
-  reorderQueue,
   type QueueItem,
   type RadioEvent,
   type RadioState,
   type Song,
 } from '../lib/radio'
-import { AdminUploadPanel } from '../components/AdminUploadPanel'
 import { PaginationRow } from '../components/PaginationRow'
 import { ProfileAvatar } from '../components/ProfileAvatar'
 import { SongCoverThumb } from '../components/SongCoverThumb'
 import { EqualizerPanel, createEqualizerController } from '../components/EqualizerPanel'
 import { createPagedList } from '../primitives/createPagedList'
-
-interface RadioPageProps {
-  isAdmin: boolean
-}
 
 interface AlbumAccent {
   primary: string
@@ -62,16 +50,16 @@ function writeVolumeCookie(volume: number): void {
   document.cookie = `radio_volume=${volume}; Max-Age=31536000; Path=/; SameSite=Lax`
 }
 
-function formatTime(seconds: number | null | undefined): string {
-  if (!seconds || seconds < 0) {
-    return '0:00'
-  }
-
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = Math.floor(seconds % 60)
-    .toString()
-    .padStart(2, '0')
-  return `${minutes}:${remainingSeconds}`
+// Mobile browsers suspend <audio> in the background once it's routed through a
+// Web Audio graph (MediaElementSource). iOS Safari is strict about it; Android
+// is inconsistent but vulnerable on lock screen / battery saver. On mobile we
+// defer attaching the equalizer graph until the user opts in. Desktop keeps
+// visualizer + EQ from the start.
+function isMobileDevice(): boolean {
+  if (typeof navigator === 'undefined') return false
+  if (/Android|iPad|iPhone|iPod|Mobi/i.test(navigator.userAgent)) return true
+  // iPadOS reports as Macintosh; touch points disambiguate it from real Macs.
+  return /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1
 }
 
 function rgbToHsl(red: number, green: number, blue: number): { hue: number; saturation: number; lightness: number } {
@@ -183,27 +171,17 @@ function extractAlbumAccent(image: HTMLImageElement): AlbumAccent {
 }
 
 /**
- * Renders the public radio view with admin-only upload and playback controls.
- * @param props Current viewer permissions.
+ * Renders the public listener radio view.
  * @returns The radio page view.
  */
-export default function RadioPage(props: RadioPageProps) {
-  const [showAdminTools, setShowAdminTools] = createSignal(true)
+export default function RadioPage() {
   const [snapshot, { mutate, refetch }] = createResource(fetchRadioSnapshot)
   const [songs, { refetch: refetchSongs }] = createResource(fetchSongs)
-  const [albums, { refetch: refetchAlbums }] = createResource(() => props.isAdmin && showAdminTools(), (enabled) => (enabled ? fetchAlbums() : []))
-  const [pageError, setPageError] = createSignal<string | null>(null)
   const [profiles, setProfiles] = createSignal<Record<string, AtprotoProfile>>({})
   const inFlightDids = new Set<string>()
   const [volume, setVolume] = createSignal(readVolumeCookie())
   const [hasStarted, setHasStarted] = createSignal(false)
   const [isAudioPlaying, setIsAudioPlaying] = createSignal(false)
-  const [clock, setClock] = createSignal(Date.now())
-  const [songFilterArtist, setSongFilterArtist] = createSignal('')
-  const [songFilterGenre, setSongFilterGenre] = createSignal('')
-  const [songFilterDid, setSongFilterDid] = createSignal('')
-  const [selectedSongIds, setSelectedSongIds] = createSignal<string[]>([])
-  const [draggingQueueId, setDraggingQueueId] = createSignal<string | null>(null)
   const [albumAccent, setAlbumAccent] = createSignal<AlbumAccent>(DEFAULT_ALBUM_ACCENT)
   const [ambientLayers, setAmbientLayers] = createSignal<[AlbumAccent, AlbumAccent]>([DEFAULT_ALBUM_ACCENT, DEFAULT_ALBUM_ACCENT])
   const [activeAmbientLayer, setActiveAmbientLayer] = createSignal<0 | 1>(0)
@@ -274,11 +252,6 @@ export default function RadioPage(props: RadioPageProps) {
       audioRef.pause()
     }
   }
-
-  createEffect(() => {
-    const interval = window.setInterval(() => setClock(Date.now()), 1000)
-    onCleanup(() => window.clearInterval(interval))
-  })
 
   // Merges incoming queue items with the current localQueue, reusing the
   // existing object reference whenever an id is unchanged. Snapshots arrive
@@ -369,7 +342,6 @@ export default function RadioPage(props: RadioPageProps) {
         // Refetch on every drop so state stays fresh while we wait to reopen.
         void refetch()
         void refetchSongs()
-        void refetchAlbums()
         const delay = Math.min(30000, 500 * 2 ** Math.min(reconnectAttempt, 6))
         reconnectAttempt += 1
         reconnectTimer = window.setTimeout(() => {
@@ -408,6 +380,8 @@ export default function RadioPage(props: RadioPageProps) {
   })
 
   const currentSong = () => localCurrentSong()
+  const currentSongTitle = () => currentSong()?.title ?? 'nothing playing yet'
+  const shouldMarqueeTitle = () => currentSongTitle().length > 25
 
   createEffect(() => {
     const song = currentSong()
@@ -418,6 +392,7 @@ export default function RadioPage(props: RadioPageProps) {
 
     let cancelled = false
     const image = new Image()
+    image.crossOrigin = 'anonymous'
     image.src = `${API_BASE}/api/songs/${song.id}/cover`
     image.onload = () => {
       if (cancelled) return
@@ -460,34 +435,9 @@ export default function RadioPage(props: RadioPageProps) {
     const next = localQueue()[0]
     return next ? `${API_BASE}/api/songs/${next.songId}/audio` : undefined
   }
-  const livePositionSeconds = () => {
-    // Re-evaluate every second for queue progress labels.
-    void clock()
-    if (audioRef && Number.isFinite(audioRef.currentTime)) {
-      return audioRef.currentTime
-    }
-    return Math.max(0, snapshot()?.state.positionSeconds ?? 0)
-  }
   const profileFor = (did: string) => profiles()[did] ?? fallbackProfile(did)
   const queuePageSize = 6
-  const filteredSongs = createMemo(() => {
-    const filterArtist = songFilterArtist().trim().toLowerCase()
-    const filterGenre = songFilterGenre().trim().toLowerCase()
-    const filterDid = songFilterDid().trim().toLowerCase()
-    return (songs() ?? []).filter((song) => {
-      if (filterArtist && !song.artist.toLowerCase().includes(filterArtist)) return false
-      if (filterGenre && !song.genre?.toLowerCase().includes(filterGenre)) return false
-      if (filterDid) {
-        const profile = profileFor(song.addedByDid)
-        if (!song.addedByDid.toLowerCase().includes(filterDid) && !profile.handle.toLowerCase().includes(filterDid)) return false
-      }
-      return true
-    })
-  })
-  const songsPaging = createPagedList(filteredSongs, 6)
   const upNextPaging = createPagedList(localQueue, queuePageSize)
-  const queueControlPaging = createPagedList(() => snapshot()?.queue ?? [], queuePageSize)
-  const albumsPaging = createPagedList(() => albums() ?? [], 6)
 
   const startListening = async () => {
     if (!audioRef) return
@@ -498,10 +448,15 @@ export default function RadioPage(props: RadioPageProps) {
       await seekAudioTo(Math.max(0, snap.state.positionSeconds))
     }
     // play() must happen synchronously inside the user-gesture call stack on
-    // iOS, so do not await Web Audio setup before it. The equalizer graph is
-    // attached lazily by EqualizerPanel — routing through MediaElementSource
-    // upfront would make iOS suspend the audio when the tab backgrounds.
+    // mobile, so do not await Web Audio setup before it.
     void audioRef.play().catch(() => undefined)
+    // On desktop, attach the equalizer graph upfront so visualizer + EQ work
+    // immediately. On mobile we defer until the user opens the EQ panel —
+    // routing through MediaElementSource makes the OS suspend audio when the
+    // tab backgrounds / screen locks.
+    if (!isMobileDevice()) {
+      void equalizer.ensureGraph()
+    }
   }
 
   const advanceLocally = () => {
@@ -533,13 +488,6 @@ export default function RadioPage(props: RadioPageProps) {
   })
 
   createEffect(() => {
-    void songFilterArtist()
-    void songFilterGenre()
-    void songFilterDid()
-    songsPaging.setPage(0)
-  })
-
-  createEffect(() => {
     writeVolumeCookie(volume())
     if (audioRef) {
       audioRef.volume = volume()
@@ -548,8 +496,10 @@ export default function RadioPage(props: RadioPageProps) {
 
 
   createEffect(() => {
-    if (!('mediaSession' in navigator)) return
     const song = currentSong()
+    document.title = song ? `${song.title} - ${song.artist}` : 'radio'
+
+    if (!('mediaSession' in navigator)) return
     if (!song) {
       navigator.mediaSession.metadata = null
       return
@@ -593,87 +543,6 @@ export default function RadioPage(props: RadioPageProps) {
     onCleanup(() => document.removeEventListener('visibilitychange', onVisible))
   })
 
-  const sendControl = async (action: 'play' | 'pause' | 'stop' | 'skip') => {
-    try {
-      setPageError(null)
-      mutate(await controlRadio(action, 'explicit_admin_action'))
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'radio control faceplanted.')
-    }
-  }
-
-  const addSongToQueue = async (songId: string) => {
-    try {
-      setPageError(null)
-      mutate(await enqueueSong(songId))
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'queue add faceplanted.')
-    }
-  }
-
-  const addAlbumToQueue = async (songIds: string[]) => {
-    try {
-      setPageError(null)
-      mutate(await enqueueAlbum(songIds))
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'album queue add faceplanted.')
-    }
-  }
-
-  const removeFromQueue = async (queueId: string) => {
-    try {
-      setPageError(null)
-      mutate(await removeQueueItem(queueId))
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'queue remove faceplanted.')
-    }
-  }
-
-  const clearTheQueue = async () => {
-    try {
-      setPageError(null)
-      mutate(await clearQueue())
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'clear queue faceplanted.')
-    }
-  }
-
-  const toggleSongSelection = (songId: string, checked: boolean) => {
-    setSelectedSongIds((current) => (checked ? [...current, songId] : current.filter((id) => id !== songId)))
-  }
-
-  const addSelectedToQueue = async () => {
-    const ids = selectedSongIds()
-    if (ids.length === 0) return
-    try {
-      setPageError(null)
-      mutate(await enqueueAlbum(ids))
-      setSelectedSongIds([])
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'multi add faceplanted.')
-    }
-  }
-
-  const handleQueueDrop = async (targetQueueId: string) => {
-    const sourceId = draggingQueueId()
-    setDraggingQueueId(null)
-    if (!sourceId || sourceId === targetQueueId) return
-    const queue = snapshot()?.queue ?? []
-    const ids = queue.map((item) => item.id)
-    const sourceIndex = ids.indexOf(sourceId)
-    const targetIndex = ids.indexOf(targetQueueId)
-    if (sourceIndex < 0 || targetIndex < 0) return
-    const reordered = [...ids]
-    reordered.splice(sourceIndex, 1)
-    reordered.splice(targetIndex, 0, sourceId)
-    try {
-      setPageError(null)
-      mutate(await reorderQueue(reordered))
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'reorder faceplanted.')
-    }
-  }
-
   return (
     <>
       <div class="album-ambient" aria-hidden="true">
@@ -687,8 +556,6 @@ export default function RadioPage(props: RadioPageProps) {
             <img class="album-cover" src={`${API_BASE}/api/songs/${currentSong()?.id}/cover`} alt="" />
           </Show>
           <div class="station-id-card" aria-hidden="true">
-            <span>goetic relay</span>
-            <strong>nkp-ritual band</strong>
             <small>sigil id: {currentSong()?.id.slice(0, 8) ?? 'awaiting'}</small>
           </div>
         </div>
@@ -698,7 +565,17 @@ export default function RadioPage(props: RadioPageProps) {
           </Index>
         </div>
         <p class="eyebrow">now playing // live rite</p>
-        <h1>{currentSong()?.title ?? 'nothing playing yet'}</h1>
+        <h1 classList={{ marquee: shouldMarqueeTitle() }} title={currentSongTitle()}>
+          <Show
+            when={shouldMarqueeTitle()}
+            fallback={currentSongTitle()}
+          >
+            <span class="marquee-track">
+              <span>{currentSongTitle()}</span>
+              <span aria-hidden="true">{currentSongTitle()}</span>
+            </span>
+          </Show>
+        </h1>
         <p class="subtitle">{currentSong()?.artist ?? 'queue something lovely'}</p>
         <Show when={currentSong()?.album}>{(album) => <p class="muted">{album()}</p>}</Show>
         <audio
@@ -795,193 +672,7 @@ export default function RadioPage(props: RadioPageProps) {
         <section class="glass-card equalizer-card">
           <EqualizerPanel controller={equalizer} />
         </section>
-
-        <Show when={props.isAdmin}>
-          <button
-            class="admin-visibility-toggle"
-            type="button"
-            aria-pressed={!showAdminTools()}
-            onClick={() => setShowAdminTools((visible) => !visible)}
-          >
-            <span>{showAdminTools() ? 'hide admin' : 'show admin'}</span>
-            <Show when={showAdminTools()} fallback={<Eye size={17} />}>
-              <EyeOff size={17} />
-            </Show>
-          </button>
-        </Show>
-
-        <Show when={props.isAdmin && showAdminTools()}>
-          <AdminUploadPanel
-            onTransport={(action) => void sendControl(action)}
-            onSongAdded={() => void refetchSongs()}
-            error={pageError()}
-            onError={setPageError}
-          />
-
-          <section class="glass-card">
-            <div class="section-heading">
-              <p class="eyebrow">queue control</p>
-              <Show
-                when={(snapshot()?.queue.length ?? 0) > 0}
-                fallback={<span>0</span>}
-              >
-                <button class="pill-button subtle clear-queue-pill" type="button" onClick={() => void clearTheQueue()}>
-                  clear ({snapshot()?.queue.length})
-                </button>
-              </Show>
-            </div>
-            <Show when={currentSong()}>
-              {(song) => (
-                <div class="queue-progress">
-                  <span>{song().title}</span>
-                  <small>
-                    {formatTime(Math.min(livePositionSeconds(), song().durationSeconds ?? Infinity))} / {formatTime(song().durationSeconds)}
-                  </small>
-                </div>
-              )}
-            </Show>
-            <ul class="song-list">
-              <For each={queueControlPaging.paged()} fallback={<li class="list-empty">queue is empty</li>}>
-                {(item) => {
-                  const profile = () => profileFor(item.queuedByDid)
-                  return (
-                    <li
-                      draggable={true}
-                      classList={{ 'queue-drag-source': draggingQueueId() === item.id }}
-                      onDragStart={(e) => {
-                        setDraggingQueueId(item.id)
-                        e.dataTransfer?.setData('text/plain', item.id)
-                      }}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => {
-                        e.preventDefault()
-                        void handleQueueDrop(item.id)
-                      }}
-                      onDragEnd={() => setDraggingQueueId(null)}
-                    >
-                      <ProfileAvatar profile={profile()} />
-                      <div class="song-copy">
-                        <span>{item.title}</span>
-                        <small>{item.artist}</small>
-                      </div>
-                      <small class="profile-handle">@{profile().handle}</small>
-                      <button class="icon-button" type="button" aria-label="remove from queue" onClick={() => void removeFromQueue(item.id)}>
-                        <Trash2 size={17} />
-                      </button>
-                    </li>
-                  )
-                }}
-              </For>
-            </ul>
-            <Show when={queueControlPaging.pageCount() > 1}>
-              <PaginationRow page={queueControlPaging.page()} pageCount={queueControlPaging.pageCount()} onPageChange={queueControlPaging.setPage} compact />
-            </Show>
-          </section>
-        </Show>
       </aside>
-
-      <Show when={props.isAdmin && showAdminTools()}>
-        <section class="bottom-radio-tools">
-          <section class="glass-card">
-            <div class="section-heading">
-              <p class="eyebrow">songs added</p>
-              <span>{filteredSongs().length}{filteredSongs().length !== (songs()?.length ?? 0) ? ` / ${songs()?.length ?? 0}` : ''}</span>
-            </div>
-            <div class="song-filters">
-              <input
-                placeholder="artist"
-                value={songFilterArtist()}
-                onInput={(e) => setSongFilterArtist(e.currentTarget.value)}
-              />
-              <input
-                placeholder="genre"
-                value={songFilterGenre()}
-                onInput={(e) => setSongFilterGenre(e.currentTarget.value)}
-              />
-              <input
-                placeholder="@handle or did"
-                value={songFilterDid()}
-                onInput={(e) => setSongFilterDid(e.currentTarget.value)}
-              />
-            </div>
-            <Show when={selectedSongIds().length > 0}>
-              <div class="multi-add-row">
-                <button class="pill-button" type="button" onClick={() => void addSelectedToQueue()}>
-                  add {selectedSongIds().length} to queue
-                </button>
-                <button class="pill-button subtle" type="button" onClick={() => setSelectedSongIds([])}>
-                  clear selection
-                </button>
-              </div>
-            </Show>
-            <Show when={!songs.loading} fallback={<p class="list-empty">loading songs...</p>}>
-              <ul class="song-list">
-                <For each={songsPaging.paged()} fallback={<li class="list-empty">no songs added yet</li>}>
-                  {(song) => {
-                    const profile = () => profileFor(song.addedByDid)
-                    return (
-                      <li>
-                        <label class="multi-add-cell">
-                          <input
-                            type="checkbox"
-                            checked={selectedSongIds().includes(song.id)}
-                            onChange={(event) => toggleSongSelection(song.id, event.currentTarget.checked)}
-                          />
-                          <ProfileAvatar profile={profile()} />
-                        </label>
-                        <div class="song-copy">
-                          <span>{song.title}</span>
-                          <small>{song.artist}{song.genre ? ` · ${song.genre}` : ''}</small>
-                        </div>
-                        <small class="profile-handle">@{profile().handle}</small>
-                        <button class="icon-button" type="button" aria-label="add to queue" onClick={() => void addSongToQueue(song.id)}>
-                          <ListPlus size={18} />
-                        </button>
-                      </li>
-                    )
-                  }}
-                </For>
-              </ul>
-              <Show when={songsPaging.pageCount() > 1}>
-                <PaginationRow page={songsPaging.page()} pageCount={songsPaging.pageCount()} onPageChange={songsPaging.setPage} />
-              </Show>
-            </Show>
-          </section>
-
-          <section class="glass-card">
-            <div class="section-heading">
-              <p class="eyebrow">queue albums</p>
-              <span>{albums()?.length ?? 0}</span>
-            </div>
-            <Show when={!albums.loading} fallback={<p class="list-empty">loading albums...</p>}>
-              <ul class="song-list album-loop-list">
-                <For each={albumsPaging.paged()} fallback={<li class="list-empty">no album loops yet</li>}>
-                  {(album) => (
-                    <li>
-                      <div class="song-copy">
-                        <span>{album.title}</span>
-                        <small>{album.tracks.length} tracks · {album.tracks.map((track) => track.title).join(' → ')}</small>
-                      </div>
-                      <button
-                        class="icon-button"
-                        type="button"
-                        aria-label="queue album"
-                        disabled={album.tracks.length === 0}
-                        onClick={() => void addAlbumToQueue(album.tracks.map((track) => track.id))}
-                      >
-                        <ListPlus size={18} />
-                      </button>
-                    </li>
-                  )}
-                </For>
-              </ul>
-              <Show when={albumsPaging.pageCount() > 1}>
-                <PaginationRow page={albumsPaging.page()} pageCount={albumsPaging.pageCount()} onPageChange={albumsPaging.setPage} />
-              </Show>
-            </Show>
-          </section>
-        </section>
-        </Show>
       </section>
     </>
   )

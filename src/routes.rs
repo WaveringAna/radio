@@ -21,7 +21,8 @@ use crate::{
     auth::{AppSession, AuthService},
     metadata::fetch_online_metadata,
     radio::{
-        NewRadioAlbum, NewSongUpload, RadioControlAction, RadioSeek, RadioService, event_message,
+        NewRadioAlbum, NewSongUpload, RadioControlAction, RadioSeek, RadioService,
+        SongMetadataUpdate, event_message,
     },
 };
 
@@ -94,13 +95,16 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .route("/api/songs/from-url", post(upload_song_from_url))
         .route("/api/songs/from-subsonic", post(import_from_subsonic))
         .route("/api/subsonic/search", post(subsonic_search))
-        .route("/api/songs/{song_id}", delete(delete_song))
+        .route("/api/songs/{song_id}", put(update_song).delete(delete_song))
         .route("/api/songs/{song_id}/audio", get(song_audio))
         .route(
             "/api/songs/{song_id}/cover",
             get(song_cover).put(upload_song_cover),
         )
-        .route("/api/songs/{song_id}/cover/thumbnail", get(song_cover_thumbnail))
+        .route(
+            "/api/songs/{song_id}/cover/thumbnail",
+            get(song_cover_thumbnail),
+        )
         .route("/api/logout", post(logout))
         .layer(cors);
 
@@ -205,6 +209,16 @@ struct ErrorResponse {
 #[serde(rename_all = "camelCase")]
 struct EnqueueSongRequest {
     song_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SongMetadataRequest {
+    title: String,
+    artist: String,
+    album: Option<String>,
+    genre: Option<String>,
+    duration_seconds: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -666,9 +680,10 @@ async fn song_cover(
     };
 
     let mut response = read_song_file_response(song_file, "cover_not_found", None).await?;
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=31536000, immutable"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
     Ok(response)
 }
 
@@ -735,6 +750,30 @@ async fn upload_song_cover(
             filename,
             mime_type,
             bytes.ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "missing_cover_file"))?,
+        )
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
+async fn update_song(
+    State(state): State<AppState>,
+    session_token: SessionToken,
+    Path(song_id): Path<String>,
+    Json(input): Json<SongMetadataRequest>,
+) -> Result<Json<crate::radio::Song>, (StatusCode, Json<ErrorResponse>)> {
+    let _session = admin_session(&state, session_token.0.as_deref()).await?;
+    state
+        .radio
+        .update_song_metadata(
+            &song_id,
+            SongMetadataUpdate {
+                title: input.title,
+                artist: input.artist,
+                album: input.album,
+                genre: input.genre,
+                duration_seconds: input.duration_seconds,
+            },
         )
         .await
         .map(Json)

@@ -255,42 +255,28 @@ main {
   right: 0.75rem;
   bottom: 0.75rem;
   z-index: 3;
-  display: grid;
-  gap: 0.15rem;
-  min-width: 11rem;
-  padding: 0.55rem 0.65rem;
-  border-left: 1px solid var(--accent-line);
-  color: var(--accent);
+  padding: 0.35rem 0.55rem;
   font-family: var(--mono);
-  text-shadow: 0 1px 1rem var(--bg), 0 0 0.65rem var(--bg);
+  color: var(--accent);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
   text-transform: lowercase;
+  text-shadow: 0 0 0.45rem rgb(var(--accent-rgb) / 60%), 0 1px 1rem var(--bg);
+  animation: crt-flicker 4s ease-in-out infinite;
 }
 
 .station-id-card::before {
-  content: "☉";
-  position: absolute;
-  right: 0.55rem;
-  top: 0.45rem;
-  color: var(--muted);
-  font-size: 0.7rem;
+  content: '';
 }
 
-.station-id-card span,
 .station-id-card small {
-  color: var(--muted);
-  font-size: 0.66rem;
-  letter-spacing: 0.08em;
+  color: var(--accent);
 }
 
-.station-id-card strong {
-  max-width: 12rem;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 0.74rem;
-  font-weight: 400;
-  letter-spacing: 0.03em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+@keyframes crt-flicker {
+  0%, 88%, 92%, 96%, 100% { opacity: 0.88; }
+  90% { opacity: 0.72; }
+  94% { opacity: 0.78; }
 }
 
 .nowplaying-waveform {
@@ -340,6 +326,32 @@ main {
   text-shadow: 0 0 40px rgba(var(--accent-rgb), 0.22);
 }
 
+.now-playing-card h1.marquee {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.marquee-track {
+  display: inline-flex;
+  width: max-content;
+  gap: 2.5rem;
+  will-change: transform;
+  animation: title-marquee 14s linear infinite;
+}
+
+.marquee-track span {
+  flex: 0 0 auto;
+}
+
+@keyframes title-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-50% - 1.25rem));
+  }
+}
+
 .subtitle {
   margin: 0.35rem 0 0;
   color: var(--muted);
@@ -352,6 +364,9 @@ main {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  /* Reserve the button row's height so showing/hiding the listen button as
+     backend playback state changes doesn't shift the layout below. */
+  min-height: 2.1rem;
 }
 
 .track-attribution {
@@ -458,8 +473,9 @@ main {
   border-radius: 0;
   color: var(--accent);
   background: rgb(var(--accent-rgb) / 12%);
-  padding: 0.55rem 0.8rem;
+  padding: 0.3rem 0.65rem;
   font-family: var(--mono);
+  font-size: 0.82rem;
   letter-spacing: 0.04em;
   text-transform: lowercase;
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 4%);
@@ -518,8 +534,19 @@ main {
   padding: 0;
 }
 
-.equalizer-power[aria-pressed='true'] {
+.normalization-toggle {
+  min-height: 1.8rem;
+  border: 1px solid var(--line);
+  padding: 0 0.55rem;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.76rem;
+}
+
+.equalizer-power[aria-pressed='true'],
+.normalization-toggle[aria-pressed='true'] {
   color: var(--accent);
+  border-color: var(--accent-line);
 }
 
 .equalizer-controls {
@@ -1076,10 +1103,9 @@ main {
 }
 
 .admin-visibility-toggle {
-  position: fixed;
-  top: 0.65rem;
-  right: max(1rem, calc((100vw - 1360px) / 2));
-  z-index: 10;
+  justify-self: end;
+  align-self: end;
+  margin-top: 0.5rem;
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
@@ -1312,6 +1338,359 @@ form input[type='text'] {
   border-color: var(--accent-line);
 }
 
+.queue-control-page {
+  width: min(86rem, 100%);
+  margin: 0 auto;
+  padding: 0 0 4rem;
+}
+
+.queue-hero {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.4rem 0 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.queue-hero h1 {
+  margin: 0.1rem 0 0;
+  font-size: clamp(2.4rem, 8vw, 6rem);
+  line-height: 0.86;
+  letter-spacing: -0.075em;
+  font-weight: 650;
+}
+
+.queue-transport-panel {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+}
+
+.queue-control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.queue-now-card,
+.library-control-card,
+.queue-control-page .admin-controls {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.queue-now-card,
+.library-control-card {
+  display: grid;
+  grid-template-columns: 13rem minmax(0, 1fr);
+  align-items: start;
+}
+
+.queue-control-page .admin-controls {
+  display: grid;
+  grid-template-columns: 13rem minmax(0, 1fr);
+  align-items: start;
+}
+
+.queue-now-card > .section-heading,
+.library-control-card > .section-heading,
+.queue-control-page .admin-controls > .section-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: block;
+  min-height: 0;
+  padding: 1rem 1rem 1rem 0;
+  border: 0;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.queue-now-card > :not(.section-heading),
+.library-control-card > :not(.section-heading),
+.queue-control-page .admin-controls > :not(.section-heading) {
+  grid-column: 2;
+}
+
+.queue-now-card {
+  padding-bottom: 0.7rem;
+}
+
+.queue-now-card > .section-heading .eyebrow {
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.queue-progress.featured {
+  margin: 1rem 0 0;
+  padding: 0.8rem 0;
+  border-block: 1px solid var(--accent-line);
+  background: transparent;
+}
+
+.library-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  padding-top: 1rem;
+}
+
+.library-toolbar .upload-mode-tabs {
+  border: 1px solid var(--line);
+}
+
+.library-toolbar .pill-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.queue-control-list li {
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+}
+
+.queue-selection-row {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--hairline);
+  background: transparent;
+}
+
+.song-filters-wide {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.queue-control-page .song-filters {
+  padding-inline: 0;
+  background: transparent;
+}
+
+.queue-control-page .song-list li {
+  padding-inline: 0;
+}
+
+.library-edit-list li {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.library-edit-list li.editing {
+  align-items: start;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.song-edit-form {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.song-edit-form input {
+  min-width: 0;
+  height: 2.3rem;
+  padding: 0 0.72rem;
+  border: 1px solid var(--line);
+  color: var(--text);
+  background: var(--surface);
+}
+
+.song-edit-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.inline-cover-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.danger-button {
+  color: var(--danger);
+}
+
+.queue-control-page .upload-mode-tabs,
+.queue-control-page .upload-kind-tabs {
+  border-top: 0;
+}
+
+.queue-control-page .upload-form > .pill-button {
+  border-bottom: 0;
+}
+
+.album-search-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* queue control: rustic ledger / radio log; no dashboard cards */
+.queue-control-page .section-heading {
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+}
+
+.queue-control-page .section-heading .eyebrow {
+  position: relative;
+  color: var(--muted);
+}
+
+.queue-control-page .section-heading .eyebrow::after {
+  content: '';
+  display: block;
+  width: 2.4rem;
+  height: 1px;
+  margin-top: 0.55rem;
+  background: var(--accent-line);
+}
+
+.queue-control-page .upload-mode-tabs,
+.queue-control-page .upload-kind-tabs,
+.library-toolbar .upload-mode-tabs {
+  gap: 0.25rem;
+  border: 0;
+  background: transparent;
+}
+
+.queue-control-page .upload-mode-tabs .pill-button,
+.queue-control-page .upload-kind-tabs .pill-button {
+  min-height: 2rem;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  color: var(--muted);
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+
+.queue-control-page .upload-mode-tabs .pill-button:not(.subtle),
+.queue-control-page .upload-kind-tabs .pill-button:not(.subtle) {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.queue-control-page .song-filters input,
+.queue-control-page .upload-form > input,
+.queue-control-page .metadata-prompt input,
+.queue-control-page .song-edit-form input {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.queue-control-page .song-filters input:focus,
+.queue-control-page .upload-form > input:focus,
+.queue-control-page .metadata-prompt input:focus,
+.queue-control-page .song-edit-form input:focus {
+  outline: 0;
+  border-bottom-color: var(--accent);
+  background: rgb(var(--accent-rgb) / 4%);
+}
+
+.queue-control-page .song-list li,
+.queue-control-page .queue-list li {
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 72%, transparent);
+}
+
+.queue-control-page .song-list li:hover,
+.queue-control-page .queue-list li:hover {
+  background: linear-gradient(90deg, rgb(var(--accent-rgb) / 7%), transparent 60%);
+}
+
+.queue-control-page .pill-button.subtle,
+.queue-control-page .pill-button,
+.queue-control-page .icon-button {
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  min-height: 2rem;
+  color: var(--accent);
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  letter-spacing: 0.03em;
+}
+
+.queue-control-page .pill-button:hover,
+.queue-control-page .icon-button:hover {
+  opacity: 1;
+  border-bottom-color: var(--accent-line);
+}
+
+.queue-control-page .queue-transport-panel {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.queue-control-page .drop-zone {
+  margin-inline: 0;
+  border: 1px dashed color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 0.35rem;
+  background:
+    linear-gradient(135deg, rgb(var(--accent-rgb) / 5%), transparent 42%),
+    transparent;
+  transform: none;
+}
+
+.queue-control-page .drop-zone:hover,
+.queue-control-page .drop-zone.drop-zone-active {
+  transform: none;
+  padding: 1rem;
+  border-color: var(--accent-line);
+  background: rgb(var(--accent-rgb) / 7%);
+}
+
+.queue-control-page .queue-progress.featured {
+  border-block: 1px solid var(--accent-line);
+  color: var(--text);
+}
+
+.queue-control-page .queue-progress.featured small {
+  color: var(--muted);
+}
+
+.upload-kind-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line);
+}
+
+.upload-kind-tabs .pill-button {
+  min-height: 2.35rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 0.875rem;
+  background: transparent;
+  margin-bottom: -1px;
+}
+
+.upload-kind-tabs .pill-button:not(.subtle) {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.album-upload-flow {
+  border-top: 1px solid var(--hairline);
+}
+
+.queue-control-error,
+.queue-control-empty {
+  border: 1px solid var(--hairline);
+  border-radius: 0.75rem;
+  background: var(--surface);
+}
+
 @media (max-width: 860px) {
   main {
     width: 100%;
@@ -1324,7 +1703,8 @@ form input[type='text'] {
 
   .radio-page,
   .bottom-radio-tools,
-  .admin-page {
+  .admin-page,
+  .queue-control-grid {
     grid-template-columns: 1fr;
     gap: 1rem;
   }
@@ -1348,9 +1728,45 @@ form input[type='text'] {
     display: none;
   }
 
-  .song-filters {
+  .song-filters,
+  .song-filters-wide {
     grid-template-columns: 1fr;
     gap: 0.45rem;
+  }
+
+  .queue-hero {
+    align-items: stretch;
+    flex-direction: column;
+    padding-inline: 1rem;
+  }
+
+  .queue-control-page {
+    width: 100%;
+  }
+
+  .queue-now-card,
+  .library-control-card,
+  .queue-control-page .admin-controls {
+    grid-template-columns: 1fr;
+    padding-inline: 1rem;
+  }
+
+  .queue-now-card > .section-heading,
+  .library-control-card > .section-heading,
+  .queue-control-page .admin-controls > .section-heading {
+    position: static;
+    padding-right: 0;
+  }
+
+  .queue-now-card > :not(.section-heading),
+  .library-control-card > :not(.section-heading),
+  .queue-control-page .admin-controls > :not(.section-heading) {
+    grid-column: auto;
+  }
+
+  .library-toolbar,
+  .song-edit-form {
+    grid-template-columns: 1fr;
   }
 
   .equalizer-controls {
