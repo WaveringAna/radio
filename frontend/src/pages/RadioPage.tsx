@@ -55,7 +55,7 @@ function writeVolumeCookie(volume: number): void {
 // is inconsistent but vulnerable on lock screen / battery saver. On mobile we
 // defer attaching the equalizer graph until the user opts in. Desktop keeps
 // visualizer + EQ from the start.
-function isMobileDevice(): boolean {
+export function isMobileDevice(): boolean {
   if (typeof navigator === 'undefined') return false
   if (/Android|iPad|iPhone|iPod|Mobi/i.test(navigator.userAgent)) return true
   // iPadOS reports as Macintosh; touch points disambiguate it from real Macs.
@@ -194,6 +194,7 @@ export default function RadioPage() {
   let consumedQueueIds = new Set<string>()
   let lastPlaybackKey: string | null = null
   let audioRef: HTMLAudioElement | undefined
+  const onMobile = isMobileDevice()
   const equalizer = createEqualizerController(() => audioRef)
 
   const playbackKey = (state: RadioState | undefined) =>
@@ -382,6 +383,14 @@ export default function RadioPage() {
   const currentSong = () => localCurrentSong()
   const currentSongTitle = () => currentSong()?.title ?? 'nothing playing yet'
   const shouldMarqueeTitle = () => currentSongTitle().length > 25
+
+  createEffect(() => {
+    const song = currentSong()
+    equalizer.setLoudness({
+      lufs: song?.loudnessLufs ?? null,
+      peak: song?.loudnessPeak ?? null,
+    })
+  })
 
   createEffect(() => {
     const song = currentSong()
@@ -669,9 +678,11 @@ export default function RadioPage() {
           </Show>
         </section>
 
-        <section class="glass-card equalizer-card">
-          <EqualizerPanel controller={equalizer} />
-        </section>
+        <Show when={!onMobile}>
+          <section class="glass-card equalizer-card">
+            <EqualizerPanel controller={equalizer} />
+          </section>
+        </Show>
       </aside>
       </section>
       <footer class="radio-footer">

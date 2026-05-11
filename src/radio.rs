@@ -8,7 +8,7 @@ use time::OffsetDateTime;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::{db::Database, metadata};
+use crate::{db::Database, loudness, metadata};
 
 /// Radio playback status persisted by the backend.
 #[derive(Clone, Debug, Serialize, FromRow)]
@@ -52,6 +52,10 @@ pub(crate) struct Song {
     pub(crate) added_by_did: String,
     /// Unix timestamp when the song was uploaded.
     pub(crate) created_at: i64,
+    /// Integrated loudness in LUFS (ITU-R BS.1770 / EBU R128).
+    pub(crate) loudness_lufs: Option<f64>,
+    /// True peak in dBFS.
+    pub(crate) loudness_peak: Option<f64>,
 }
 
 #[derive(Clone, Debug, FromRow)]
@@ -271,7 +275,8 @@ impl RadioService {
         sqlx::query_as::<_, Song>(
             r#"
             select id, title, artist, album, genre, duration_seconds, mime_type,
-                cover_path is not null as has_cover, added_by_did, created_at
+                cover_path is not null as has_cover, added_by_did, created_at,
+                loudness_lufs, loudness_peak
             from songs
             order by created_at desc
             "#,
@@ -324,6 +329,49 @@ impl RadioService {
             updated += result.rows_affected() as usize;
         }
 
+        Ok(updated)
+    }
+
+    /// Measures and stores loudness for every song missing a `loudness_lufs`
+    /// value. Designed to run as a background task at boot so existing songs
+    /// catch up without blocking the listener.
+    ///
+    /// # Errors
+    /// Returns an error when sqlite queries fail.
+    pub(crate) async fn backfill_missing_loudness_on_boot(&self) -> anyhow::Result<usize> {
+        #[derive(FromRow)]
+        struct MissingLoudness {
+            id: String,
+            file_path: String,
+        }
+
+        let missing = sqlx::query_as::<_, MissingLoudness>(
+            r#"
+            select id, file_path
+            from songs
+            where loudness_lufs is null
+            "#,
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .context("listing songs missing loudness")?;
+
+        let total = missing.len();
+        if total > 0 {
+            tracing::info!(total, "measuring loudness for songs missing values");
+        }
+
+        let mut updated = 0usize;
+        for (index, song) in missing.into_iter().enumerate() {
+            if store_loudness(&self.db, &song.id, PathBuf::from(song.file_path)).await {
+                updated += 1;
+                tracing::debug!(
+                    song_id = %song.id,
+                    progress = format_args!("{}/{}", index + 1, total),
+                    "loudness measured"
+                );
+            }
+        }
         Ok(updated)
     }
 
@@ -388,6 +436,7 @@ impl RadioService {
             .context("adding album track")?;
         }
         tx.commit().await.context("committing album")?;
+        tracing::info!(album_id = %id, title, song_count = song_ids.len(), "album created");
         self.albums()
             .await?
             .into_iter()
@@ -406,7 +455,8 @@ impl RadioService {
         let songs = sqlx::query_as::<_, Song>(
             r#"
             select id, title, artist, album, genre, duration_seconds, mime_type,
-                cover_path is not null as has_cover, added_by_did, created_at
+                cover_path is not null as has_cover, added_by_did, created_at,
+                loudness_lufs, loudness_peak
             from songs
             where album = ?
             order by created_at asc, title asc
@@ -434,6 +484,7 @@ impl RadioService {
             .execute(self.db.pool())
             .await
             .context("deleting album")?;
+        tracing::info!(album_id, "album deleted");
         self.albums().await
     }
 
@@ -679,6 +730,7 @@ impl RadioService {
             .execute(self.db.pool())
             .await
             .context("deleting song")?;
+        tracing::info!(song_id, "song deleted");
         let snapshot = self.snapshot().await?;
         let _ = self.events.send(RadioEvent::SnapshotChanged {
             snapshot: snapshot.clone(),
@@ -714,7 +766,8 @@ impl RadioService {
         let existing = sqlx::query_as::<_, Song>(
             r#"
             select id, title, artist, album, genre, duration_seconds, mime_type,
-                cover_path is not null as has_cover, added_by_did, created_at
+                cover_path is not null as has_cover, added_by_did, created_at,
+                loudness_lufs, loudness_peak
             from songs
             where lower(title) = lower(?)
               and lower(artist) = lower(?)
@@ -785,7 +838,25 @@ impl RadioService {
         let song = find_song(&self.db, &id)
             .await?
             .ok_or_else(|| anyhow!("inserted song disappeared"))?;
+        tracing::info!(
+            song_id = %song.id,
+            title = %song.title,
+            artist = %song.artist,
+            album = song.album.as_deref(),
+            admin_did,
+            added_to_queue = upload.add_to_queue,
+            "song uploaded"
+        );
         self.broadcast_snapshot().await;
+
+        // Measure loudness in the background so uploads stay snappy; first
+        // listeners may get unity gain until this lands.
+        tokio::spawn(measure_and_store_loudness(
+            self.db.clone(),
+            id,
+            PathBuf::from(file_path_string),
+        ));
+
         Ok(song)
     }
 
@@ -804,6 +875,7 @@ impl RadioService {
 
         append_queue_item(&self.db, song_id, admin_did).await?;
         play_next_if_idle(&self.db, admin_did).await?;
+        tracing::info!(song_id, admin_did, "queued song");
         self.broadcast_snapshot().await;
         self.snapshot().await
     }
@@ -846,6 +918,7 @@ impl RadioService {
         }
 
         play_next_if_idle(&self.db, admin_did).await?;
+        tracing::info!(count = song_ids.len(), admin_did, "queued songs in bulk");
         self.broadcast_snapshot().await;
         self.snapshot().await
     }
@@ -860,6 +933,7 @@ impl RadioService {
             .execute(self.db.pool())
             .await
             .context("removing queue item")?;
+        tracing::info!(queue_id, "queue item removed");
 
         let snapshot = self.snapshot().await?;
         let _ = self.events.send(RadioEvent::SnapshotChanged {
@@ -873,10 +947,12 @@ impl RadioService {
     /// # Errors
     /// Returns an error when sqlite deletion fails.
     pub(crate) async fn clear_queue(&self) -> anyhow::Result<RadioSnapshot> {
-        sqlx::query("delete from radio_queue")
+        let removed = sqlx::query("delete from radio_queue")
             .execute(self.db.pool())
             .await
-            .context("clearing queue")?;
+            .context("clearing queue")?
+            .rows_affected();
+        tracing::info!(removed, "queue cleared");
 
         let snapshot = self.snapshot().await?;
         let _ = self.events.send(RadioEvent::SnapshotChanged {
@@ -930,6 +1006,13 @@ impl RadioService {
         admin_did: &str,
     ) -> anyhow::Result<RadioSnapshot> {
         auto_advance(&self.db).await?;
+        let action_name = match action {
+            RadioControlAction::Play => "play",
+            RadioControlAction::Pause => "pause",
+            RadioControlAction::Stop => "stop",
+            RadioControlAction::Skip => "skip",
+            RadioControlAction::Previous => "previous",
+        };
         match action {
             RadioControlAction::Play => play_or_resume(&self.db, admin_did).await?,
             RadioControlAction::Pause => set_status(&self.db, "paused", admin_did).await?,
@@ -937,6 +1020,7 @@ impl RadioService {
             RadioControlAction::Skip => skip_to_next(&self.db, admin_did).await?,
             RadioControlAction::Previous => reset_current(&self.db, admin_did).await?,
         }
+        tracing::info!(action = action_name, admin_did, "playback control");
 
         let snapshot = self.snapshot().await?;
         let _ = self.events.send(RadioEvent::SnapshotChanged {
@@ -1097,6 +1181,12 @@ async fn auto_advance(db: &Database) -> anyhow::Result<()> {
 
         let overflow = elapsed - duration;
         let admin = raw.updated_by_did.as_deref().unwrap_or("system").to_owned();
+        tracing::info!(
+            from_song_id = current_id,
+            elapsed,
+            duration,
+            "auto-advance: track ended"
+        );
         skip_to_next(db, &admin).await?;
 
         sqlx::query(
@@ -1113,11 +1203,59 @@ async fn auto_advance(db: &Database) -> anyhow::Result<()> {
     }
 }
 
+/// Spawned per-upload entry point — drops errors after logging.
+async fn measure_and_store_loudness(db: Database, song_id: String, file_path: PathBuf) {
+    store_loudness(&db, &song_id, file_path).await;
+}
+
+/// Runs ffmpeg, writes `loudness_lufs` + `loudness_peak`. Returns true on
+/// success. Errors are logged, not propagated, since the caller treats this
+/// as best-effort.
+async fn store_loudness(db: &Database, song_id: &str, file_path: PathBuf) -> bool {
+    let started = std::time::Instant::now();
+    let measurement = match loudness::measure(&file_path).await {
+        Ok(measurement) => measurement,
+        Err(error) => {
+            tracing::warn!(%error, song_id, "failed to measure loudness");
+            return false;
+        }
+    };
+    let result = sqlx::query(
+        r#"
+        update songs
+        set loudness_lufs = ?, loudness_peak = ?
+        where id = ?
+        "#,
+    )
+    .bind(measurement.integrated_lufs)
+    .bind(measurement.true_peak_dbfs)
+    .bind(song_id)
+    .execute(db.pool())
+    .await;
+    match result {
+        Ok(_) => {
+            tracing::info!(
+                song_id,
+                lufs = measurement.integrated_lufs,
+                peak_dbfs = measurement.true_peak_dbfs,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "measured loudness"
+            );
+            true
+        }
+        Err(error) => {
+            tracing::warn!(%error, song_id, "failed to persist loudness");
+            false
+        }
+    }
+}
+
 async fn find_song(db: &Database, song_id: &str) -> anyhow::Result<Option<Song>> {
     sqlx::query_as::<_, Song>(
         r#"
         select id, title, artist, album, genre, duration_seconds, mime_type,
-            cover_path is not null as has_cover, added_by_did, created_at
+            cover_path is not null as has_cover, added_by_did, created_at,
+                loudness_lufs, loudness_peak
         from songs
         where id = ?
         "#,
@@ -1161,7 +1299,8 @@ async fn album_loops(db: &Database) -> anyhow::Result<Vec<RadioAlbum>> {
             select songs.id, songs.title, songs.artist, songs.album, songs.genre,
                 songs.duration_seconds, songs.mime_type,
                 songs.cover_path is not null as has_cover,
-                songs.added_by_did, songs.created_at
+                songs.added_by_did, songs.created_at,
+                songs.loudness_lufs, songs.loudness_peak
             from radio_album_tracks
             join songs on songs.id = radio_album_tracks.song_id
             where radio_album_tracks.album_id = ?
@@ -1345,7 +1484,7 @@ async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
     match next {
         Some(item) => {
             sqlx::query("delete from radio_queue where id = ?")
-                .bind(item.id)
+                .bind(&item.id)
                 .execute(db.pool())
                 .await
                 .context("removing skipped queue item")?;
@@ -1357,13 +1496,19 @@ async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
                 where id = 1
                 "#,
             )
-            .bind(item.song_id)
+            .bind(&item.song_id)
             .bind(timestamp)
             .bind(admin_did)
             .bind(timestamp)
             .execute(db.pool())
             .await
             .context("advancing radio state")?;
+            tracing::info!(
+                song_id = %item.song_id,
+                title = %item.title,
+                artist = %item.artist,
+                "now playing from queue"
+            );
         }
         None => match next_album_loop_track(db).await? {
             Some(track) => {
@@ -1387,13 +1532,19 @@ async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
                     where id = 1
                     "#,
                 )
-                .bind(track.song_id)
+                .bind(&track.song_id)
                 .bind(timestamp)
                 .bind(admin_did)
                 .bind(timestamp)
                 .execute(db.pool())
                 .await
                 .context("advancing radio state from album loop")?;
+                tracing::info!(
+                    song_id = %track.song_id,
+                    album_id = %track.album_id,
+                    track_position = track.track_position,
+                    "now playing from album loop"
+                );
             }
             None => {
                 sqlx::query(
@@ -1409,6 +1560,7 @@ async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
                 .execute(db.pool())
                 .await
                 .context("stopping empty radio")?;
+                tracing::info!("queue + album loop empty, radio stopped");
             }
         },
     }

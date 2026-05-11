@@ -1,5 +1,6 @@
 mod auth;
 mod db;
+mod loudness;
 mod metadata;
 mod radio;
 mod routes;
@@ -94,6 +95,20 @@ async fn main() -> anyhow::Result<()> {
         Ok(updated) => tracing::info!(updated, "backfilled missing song genres on boot"),
         Err(error) => tracing::warn!(%error, "failed to backfill missing song genres on boot"),
     }
+
+    // Loudness backfill can take seconds-per-track via ffmpeg; run it in the
+    // background so the HTTP listener comes up immediately.
+    let loudness_radio = radio.clone();
+    tokio::spawn(async move {
+        tracing::info!("starting loudness backfill in background");
+        match loudness_radio.backfill_missing_loudness_on_boot().await {
+            Ok(0) => tracing::info!("loudness backfill: nothing to do"),
+            Ok(updated) => tracing::info!(updated, "loudness backfill complete"),
+            Err(error) => {
+                tracing::warn!(%error, "loudness backfill failed")
+            }
+        }
+    });
     let app = routes::app(routes::AppState::new(auth, radio), &config.cors_origin)
         .layer(TraceLayer::new_for_http());
 

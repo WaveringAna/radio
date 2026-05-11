@@ -30,6 +30,8 @@ export interface Song {
   hasCover: boolean
   addedByDid: string
   createdAt: number
+  loudnessLufs?: number | null
+  loudnessPeak?: number | null
 }
 
 export interface RadioAlbum {

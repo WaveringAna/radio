@@ -3,7 +3,7 @@ import { createMemo, createSignal, For, Index, onCleanup, Show, type Accessor } 
 
 const EQ_STORAGE_KEY = 'radio_eq_bands'
 const EQ_PRESETS_STORAGE_KEY = 'radio_eq_named_presets'
-const NORMALIZATION_STORAGE_KEY = 'radio_playback_normalization'
+const NORMALIZATION_STORAGE_KEY = 'radio_playback_normalization_v2'
 const LEGACY_EQ_STORAGE_KEY = 'radio_eq_gains'
 const EQ_MIN_FREQUENCY = 20
 const EQ_MAX_FREQUENCY = 20000
@@ -44,6 +44,8 @@ export interface EqualizerController {
   savePreset: (name: string) => void
   setEnabled: (enabled: boolean) => void
   setNormalizationEnabled: (enabled: boolean) => void
+  /** Per-song integrated LUFS + true-peak measurements from the backend. */
+  setLoudness: (loudness: { lufs: number | null | undefined; peak: number | null | undefined }) => void
   updateBand: (index: number, patch: Partial<EqualizerBand>) => void
 }
 
@@ -134,8 +136,20 @@ function writeCustomPresets(presets: EqualizerPreset[]): void {
   localStorage.setItem(EQ_PRESETS_STORAGE_KEY, JSON.stringify(presets))
 }
 
+function isMobileUserAgent(): boolean {
+  if (typeof navigator === 'undefined') return false
+  if (/Android|iPad|iPhone|iPod|Mobi/i.test(navigator.userAgent)) return true
+  return /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1
+}
+
 function readNormalizationEnabled(): boolean {
-  return localStorage.getItem(NORMALIZATION_STORAGE_KEY) !== 'off'
+  const stored = localStorage.getItem(NORMALIZATION_STORAGE_KEY)
+  if (stored === 'on') return true
+  if (stored === 'off') return false
+  // Default: on for desktop, off for mobile. Mobile audio routing through Web
+  // Audio is fragile (background suspension, EQ-on-EQ artifacts in some
+  // OS-level pipelines); leave it untouched unless the user opts in.
+  return !isMobileUserAgent()
 }
 
 function writeNormalizationEnabled(enabled: boolean): void {
@@ -154,6 +168,15 @@ function equalizerBandGainAt(band: EqualizerBand, frequency: number): number {
  * @param getAudioElement Accessor returning the managed HTML audio element.
  * @returns Equalizer state and imperative graph controls.
  */
+// Target integrated loudness in LUFS. -14 matches Spotify / YouTube / Apple
+// Music streaming references; tracks louder than this get attenuated, quieter
+// ones get boosted (bounded by true-peak headroom so we never clip).
+const NORMALIZATION_TARGET_LUFS = -14
+// Keep at least this much headroom below 0 dBFS after gain is applied.
+const NORMALIZATION_PEAK_HEADROOM_DB = 1
+// Hard cap on positive gain to avoid blowing up tracks with bogus measurements.
+const NORMALIZATION_MAX_BOOST_DB = 12
+
 export function createEqualizerController(getAudioElement: () => HTMLAudioElement | undefined): EqualizerController {
   const [equalizerBands, setEqualizerBands] = createSignal(readEqualizerBands())
   const [customPresets, setCustomPresets] = createSignal(readCustomPresets())
@@ -163,9 +186,9 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
   let audioContext: AudioContext | null = null
   let audioSource: MediaElementAudioSourceNode | null = null
   let analyser: AnalyserNode | null = null
-  let compressor: DynamicsCompressorNode | null = null
   let normalizationGain: GainNode | null = null
   let equalizerFilters: BiquadFilterNode[] = []
+  let currentLoudness: { lufs: number | null; peak: number | null } = { lufs: null, peak: null }
   let persistenceTimer: number | null = null
   let visualizerFrame: number | null = null
 
@@ -179,23 +202,24 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
 
   const effectiveGain = (gain: number) => (enabled() ? gain : 0)
 
-  const applyNormalization = () => {
-    if (!audioContext || !compressor || !normalizationGain) return
-    const now = audioContext.currentTime
-    if (normalizationEnabled()) {
-      compressor.threshold.setTargetAtTime(-24, now, 0.02)
-      compressor.knee.setTargetAtTime(24, now, 0.02)
-      compressor.ratio.setTargetAtTime(8, now, 0.02)
-      compressor.attack.setTargetAtTime(0.003, now, 0.02)
-      compressor.release.setTargetAtTime(0.25, now, 0.02)
-      normalizationGain.gain.setTargetAtTime(1.16, now, 0.02)
-      return
+  const computeNormalizationGainLinear = (): number => {
+    if (!normalizationEnabled()) return 1
+    const { lufs, peak } = currentLoudness
+    if (lufs === null || !Number.isFinite(lufs)) return 1
+    let gainDb = NORMALIZATION_TARGET_LUFS - lufs
+    if (peak !== null && Number.isFinite(peak)) {
+      // Cap so peak + gainDb stays below -headroom dBFS, preventing clipping.
+      const peakCeilingDb = -NORMALIZATION_PEAK_HEADROOM_DB - peak
+      gainDb = Math.min(gainDb, peakCeilingDb)
     }
+    gainDb = Math.min(gainDb, NORMALIZATION_MAX_BOOST_DB)
+    return 10 ** (gainDb / 20)
+  }
 
-    compressor.threshold.setTargetAtTime(0, now, 0.02)
-    compressor.knee.setTargetAtTime(0, now, 0.02)
-    compressor.ratio.setTargetAtTime(1, now, 0.02)
-    normalizationGain.gain.setTargetAtTime(1, now, 0.02)
+  const applyNormalization = () => {
+    if (!audioContext || !normalizationGain) return
+    const now = audioContext.currentTime
+    normalizationGain.gain.setTargetAtTime(computeNormalizationGainLinear(), now, 0.05)
   }
 
   const applyFilters = (bands: EqualizerBand[]) => {
@@ -250,9 +274,8 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
       analyser = audioContext.createAnalyser()
       analyser.fftSize = 1024
       analyser.smoothingTimeConstant = 0.42
-      compressor = audioContext.createDynamicsCompressor()
       normalizationGain = audioContext.createGain()
-      applyNormalization()
+      normalizationGain.gain.value = computeNormalizationGainLinear()
       equalizerFilters = equalizerBands().map((band) => {
         const filter = audioContext!.createBiquadFilter()
         filter.type = band.type
@@ -261,7 +284,7 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
         filter.gain.value = effectiveGain(band.gain)
         return filter
       })
-      const chain = [audioSource, ...equalizerFilters, compressor, normalizationGain, analyser, audioContext.destination]
+      const chain = [audioSource, ...equalizerFilters, normalizationGain, analyser, audioContext.destination]
       chain.slice(0, -1).forEach((node, index) => node.connect(chain[index + 1]))
     }
     if (audioContext.state === 'suspended') {
@@ -326,13 +349,20 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
     applyNormalization()
   }
 
+  const setLoudness = (loudness: { lufs: number | null | undefined; peak: number | null | undefined }) => {
+    currentLoudness = {
+      lufs: loudness.lufs ?? null,
+      peak: loudness.peak ?? null,
+    }
+    applyNormalization()
+  }
+
   onCleanup(() => {
     if (persistenceTimer !== null) window.clearTimeout(persistenceTimer)
     if (visualizerFrame !== null) window.cancelAnimationFrame(visualizerFrame)
     writeEqualizerBands(equalizerBands())
     equalizerFilters.forEach((filter) => filter.disconnect())
     normalizationGain?.disconnect()
-    compressor?.disconnect()
     analyser?.disconnect()
     audioSource?.disconnect()
     void audioContext?.close().catch(() => undefined)
@@ -350,6 +380,7 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
     reset,
     savePreset,
     setEnabled,
+    setLoudness,
     setNormalizationEnabled,
     updateBand,
   }
