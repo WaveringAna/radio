@@ -674,6 +674,9 @@ export default function RadioPage() {
         </section>
       </aside>
       </section>
+      <footer class="radio-footer">
+        made by <a href="https://bsky.app/profile/null.namespaces.me" target="_blank" rel="noreferrer">@null.namespaces.me</a> source: <a href="https://tangled.org/null.namespaces.me/sister-radio" target="_blank" rel="noreferrer">sister-radio</a>, and font: <a href="https://gleeson.itch.io/analog-mono" target="_blank" rel="noreferrer">analog mono</a>
+      </footer>
     </>
   )
 }
