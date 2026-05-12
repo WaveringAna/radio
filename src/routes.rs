@@ -1029,7 +1029,14 @@ async fn download_with_ytdlp(url: &str) -> anyhow::Result<YtdlpResult> {
     use tokio::process::Command;
 
     let meta_out = Command::new("yt-dlp")
-        .args(["--dump-json", "--no-playlist", url])
+        .args([
+            "--no-update",
+            "--extractor-args",
+            "youtube:player_client=android_vr",
+            "--dump-json",
+            "--no-playlist",
+            url,
+        ])
         .output()
         .await
         .map_err(|e| anyhow::anyhow!("yt-dlp not found (is it installed?): {e}"))?;
@@ -1057,6 +1064,9 @@ async fn download_with_ytdlp(url: &str) -> anyhow::Result<YtdlpResult> {
 
     let dl = Command::new("yt-dlp")
         .args([
+            "--no-update",
+            "--extractor-args",
+            "youtube:player_client=android_vr",
             "-x",
             "--audio-format",
             "mp3",
