@@ -15,7 +15,10 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use jacquard::oauth::types::CallbackParams;
 use serde::{Deserialize, Serialize};
-use tower_http::cors::CorsLayer;
+use tower_http::{
+    cors::CorsLayer,
+    services::{ServeDir, ServeFile},
+};
 
 use crate::{
     auth::{AppSession, AuthService},
@@ -108,10 +111,13 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .route("/api/logout", post(logout))
         .layer(cors);
 
+    let frontend = ServeDir::new("static").fallback(ServeFile::new("static/index.html"));
+
     Router::new()
         .route("/client-metadata.json", get(client_metadata))
         .nest("/rest", crate::subsonic::router())
         .merge(api)
+        .fallback_service(frontend)
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
         .with_state(state)
 }
