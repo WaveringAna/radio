@@ -1406,93 +1406,167 @@ form input[type='text'] {
 }
 
 .queue-control-page {
-  width: min(86rem, 100%);
+  width: min(74rem, 100%);
   margin: 0 auto;
   padding: 0 0 4rem;
-}
-
-.queue-hero {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.4rem 0 1rem;
-  border-bottom: 1px solid var(--line);
-}
-
-.queue-hero h1 {
-  margin: 0.1rem 0 0;
-  font-size: clamp(2.4rem, 8vw, 6rem);
-  line-height: 0.86;
-  letter-spacing: -0.075em;
-  font-weight: 650;
 }
 
 .queue-transport-panel {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.25rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  gap: 0.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   background: transparent;
 }
 
-.queue-control-grid {
+.qc-split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 3.5rem;
+  align-items: start;
+  padding: 0.5rem 0 0;
 }
 
-.queue-now-card,
-.library-control-card,
-.queue-control-page .admin-controls {
+.qc-left,
+.qc-right {
+  min-width: 0;
+}
+
+.qc-now {
+  display: block;
+  margin-bottom: 1.75rem;
+}
+
+.qc-art {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  max-height: 24rem;
+  margin-bottom: 1.1rem;
+  overflow: hidden;
+  border-radius: 0.35rem;
+  background:
+    radial-gradient(circle at 40% 35%, rgb(var(--accent-rgb) / 28%), transparent 55%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 28%, var(--art-bg-a)), color-mix(in srgb, var(--accent) 8%, var(--art-bg-b)));
+  box-shadow: 0 0 0 1px var(--accent-line), inset 0 0 6rem rgb(0 0 0 / 22%);
+}
+
+.qc-art-cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(0.88) contrast(1.05);
+}
+
+.qc-art-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 50%, rgb(var(--accent-rgb) / 22%), transparent 60%);
+}
+
+.qc-eyebrow {
+  margin: 0 0 0.4rem;
+  letter-spacing: 0.18em;
+  font-size: 0.72rem;
+}
+
+.qc-title {
+  margin: 0 0 0.15rem;
+  font-family: var(--mono);
+  font-size: clamp(1.4rem, 2.6vw, 2rem);
+  font-weight: 500;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qc-title-empty {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.qc-artist {
+  margin: 0;
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.qc-album {
+  margin: 0.1rem 0 0;
+  color: var(--muted);
+  opacity: 0.75;
+  font-size: 0.82rem;
+}
+
+.qc-transport-strip {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1.1rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.qc-time {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+.qc-clear,
+.qc-clear-spacer {
+  justify-self: end;
+}
+
+.qc-queue .section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 0 0.55rem;
+}
+
+.qc-hint {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+}
+
+.qc-right > .admin-controls,
+.qc-right > .library-control-card {
   border: 0;
-  border-bottom: 1px solid var(--line);
   border-radius: 0;
   background: transparent;
   overflow: visible;
+  padding: 0;
+  margin-bottom: 2rem;
 }
 
-.queue-now-card,
-.library-control-card {
-  display: grid;
-  grid-template-columns: 13rem minmax(0, 1fr);
-  align-items: start;
+.qc-right > .library-control-card {
+  margin-bottom: 0;
 }
 
-.queue-control-page .admin-controls {
-  display: grid;
-  grid-template-columns: 13rem minmax(0, 1fr);
-  align-items: start;
-}
-
-.queue-now-card > .section-heading,
-.library-control-card > .section-heading,
-.queue-control-page .admin-controls > .section-heading {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: block;
-  min-height: 0;
-  padding: 1rem 1rem 1rem 0;
-  border: 0;
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(12px);
-}
-
-.queue-now-card > :not(.section-heading),
-.library-control-card > :not(.section-heading),
-.queue-control-page .admin-controls > :not(.section-heading) {
-  grid-column: 2;
-}
-
-.queue-now-card {
-  padding-bottom: 0.7rem;
-}
-
-.queue-now-card > .section-heading .eyebrow {
-  color: var(--text);
-  font-size: 0.84rem;
+.qc-right > .admin-controls > .section-heading,
+.qc-right > .library-control-card > .section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  position: static;
+  padding: 0 0 0.6rem;
+  background: transparent;
+  backdrop-filter: none;
 }
 
 .queue-progress.featured {
@@ -1502,18 +1576,12 @@ form input[type='text'] {
   background: transparent;
 }
 
-.library-toolbar {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.library-tabs {
+  display: flex;
   gap: 1rem;
-  padding-top: 1rem;
 }
 
-.library-toolbar .upload-mode-tabs {
-  border: 1px solid var(--line);
-}
-
-.library-toolbar .pill-button:disabled {
+.library-tabs .pill-button:disabled {
   cursor: not-allowed;
   opacity: 0.35;
 }
@@ -1771,9 +1839,9 @@ form input[type='text'] {
   .radio-page,
   .bottom-radio-tools,
   .admin-page,
-  .queue-control-grid {
+  .qc-split {
     grid-template-columns: 1fr;
-    gap: 1rem;
+    gap: 1.5rem;
   }
 
   .radio-page {
@@ -1801,37 +1869,11 @@ form input[type='text'] {
     gap: 0.45rem;
   }
 
-  .queue-hero {
-    align-items: stretch;
-    flex-direction: column;
-    padding-inline: 1rem;
-  }
-
   .queue-control-page {
     width: 100%;
-  }
-
-  .queue-now-card,
-  .library-control-card,
-  .queue-control-page .admin-controls {
-    grid-template-columns: 1fr;
     padding-inline: 1rem;
   }
 
-  .queue-now-card > .section-heading,
-  .library-control-card > .section-heading,
-  .queue-control-page .admin-controls > .section-heading {
-    position: static;
-    padding-right: 0;
-  }
-
-  .queue-now-card > :not(.section-heading),
-  .library-control-card > :not(.section-heading),
-  .queue-control-page .admin-controls > :not(.section-heading) {
-    grid-column: auto;
-  }
-
-  .library-toolbar,
   .song-edit-form {
     grid-template-columns: 1fr;
   }

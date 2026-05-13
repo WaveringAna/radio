@@ -365,225 +365,249 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   return (
     <section class="queue-control-page">
       <Show when={props.isAdmin} fallback={<p class="glass-card queue-control-empty">queue control is admin-only.</p>}>
-        <header class="queue-hero">
-          <div>
-            <p class="eyebrow">radio admin</p>
-            <h1>queue control</h1>
-          </div>
-          <div class="queue-transport-panel" aria-label="radio transport controls">
-            <button class="icon-button primary" type="button" aria-label="play" onClick={() => void sendControl('play')}>
-              <Play size={20} fill="currentColor" />
-            </button>
-            <button class="icon-button" type="button" aria-label="pause" onClick={() => void sendControl('pause')}>
-              <Pause size={18} />
-            </button>
-            <button class="icon-button" type="button" aria-label="skip" onClick={() => void sendControl('skip')}>
-              <SkipForward size={18} />
-            </button>
-          </div>
-        </header>
-
         <Show when={pageError()}>{(message) => <p class="error-copy queue-control-error">{message()}</p>}</Show>
 
-        <div class="queue-control-grid">
-          <section class="queue-now-card">
-            <div class="section-heading">
-              <p class="eyebrow">live queue</p>
-              <Show when={(snapshot()?.queue.length ?? 0) > 0} fallback={<span>0</span>}>
-                <button class="pill-button subtle clear-queue-pill" type="button" onClick={() => void clearTheQueue()}>
-                  clear ({snapshot()?.queue.length})
-                </button>
-              </Show>
-            </div>
-            <Show when={snapshot()?.currentSong} fallback={<p class="list-empty">nothing playing yet</p>}>
-              {(song) => (
-                <div class="queue-progress featured">
-                  <span>{song().title}</span>
-                  <small>
-                    {song().artist} · {formatTime(Math.min(livePositionSeconds(), song().durationSeconds ?? Infinity))} / {formatTime(song().durationSeconds)}
-                  </small>
-                </div>
-              )}
-            </Show>
-            <Show when={!snapshot.loading} fallback={<p class="list-empty">loading queue...</p>}>
-              <ul class="song-list queue-control-list">
-                <For each={queuePaging.paged()} fallback={<li class="list-empty">queue is empty</li>}>
-                  {renderQueueItem}
-                </For>
-              </ul>
-              <Show when={queuePaging.pageCount() > 1}>
-                <PaginationRow page={queuePaging.page()} pageCount={queuePaging.pageCount()} onPageChange={queuePaging.setPage} compact />
-              </Show>
-            </Show>
-          </section>
-
-          <AdminUploadPanel onSongAdded={() => void refreshLibrary()} error={pageError()} onError={setPageError} />
-
-          <section class="library-control-card">
-            <div class="section-heading">
-              <p class="eyebrow">library</p>
-              <span>{searchMode() === 'songs' ? filteredSongs().length : filteredAlbums().length}</span>
-            </div>
-
-            <div class="library-toolbar">
-              <div class="upload-mode-tabs library-tabs" role="tablist" aria-label="library action">
-                <button class="pill-button" classList={{ subtle: libraryAction() !== 'queue' }} type="button" role="tab" aria-selected={libraryAction() === 'queue'} onClick={() => setLibraryAction('queue')}>
-                  queue
-                </button>
-                <button
-                  class="pill-button"
-                  classList={{ subtle: libraryAction() !== 'edit' }}
-                  type="button"
-                  role="tab"
-                  aria-selected={libraryAction() === 'edit'}
-                  onClick={() => { setLibraryAction('edit'); setSearchMode('songs') }}
+        <div class="qc-split">
+          <div class="qc-left">
+            <section class="qc-now">
+              <div class="qc-art">
+                <Show
+                  when={snapshot()?.currentSong?.hasCover}
+                  fallback={<div class="qc-art-glow" aria-hidden="true" />}
                 >
-                  edit songs
-                </button>
+                  <img class="qc-art-cover" src={`${API_BASE}/api/songs/${snapshot()?.currentSong?.id}/cover`} alt="" />
+                </Show>
               </div>
-              <div class="upload-mode-tabs library-tabs" role="tablist" aria-label="library search mode">
-                <button class="pill-button" classList={{ subtle: searchMode() !== 'songs' }} type="button" role="tab" aria-selected={searchMode() === 'songs'} onClick={() => setSearchMode('songs')}>
-                  songs
-                </button>
-                <button
-                  class="pill-button"
-                  classList={{ subtle: searchMode() !== 'albums' }}
-                  type="button"
-                  role="tab"
-                  aria-selected={searchMode() === 'albums'}
-                  disabled={libraryAction() === 'edit'}
-                  onClick={() => setSearchMode('albums')}
-                >
-                  albums
-                </button>
-              </div>
-            </div>
 
-            <Show when={searchMode() === 'songs'}>
-              <div class="song-filters song-filters-wide">
-                <input placeholder="title" value={songFilterTitle()} onInput={(event) => setSongFilterTitle(event.currentTarget.value)} />
-                <input placeholder="artist" value={songFilterArtist()} onInput={(event) => setSongFilterArtist(event.currentTarget.value)} />
-                <input placeholder="genre" value={songFilterGenre()} onInput={(event) => setSongFilterGenre(event.currentTarget.value)} />
-                <input placeholder="@handle or did" value={songFilterDid()} onInput={(event) => setSongFilterDid(event.currentTarget.value)} />
-              </div>
-              <Show when={libraryAction() === 'queue' && selectedSongIds().length > 0}>
-                <div class="multi-add-row queue-selection-row">
-                  <button class="pill-button" type="button" onClick={() => void addSelectedToQueue()}>
-                    add {selectedSongIds().length} to queue
+              <p class="eyebrow qc-eyebrow">now playing // live rite</p>
+              <Show
+                when={snapshot()?.currentSong}
+                fallback={<h2 class="qc-title qc-title-empty">nothing playing yet</h2>}
+              >
+                {(song) => (
+                  <>
+                    <h2 class="qc-title" title={song().title}>{song().title}</h2>
+                    <p class="qc-artist">{song().artist}</p>
+                    <Show when={song().album}>{(album) => <p class="qc-album">{album()}</p>}</Show>
+                  </>
+                )}
+              </Show>
+
+              <div class="qc-transport-strip">
+                <div class="queue-transport-panel" aria-label="radio transport controls">
+                  <button class="icon-button primary" type="button" aria-label="play" onClick={() => void sendControl('play')}>
+                    <Play size={18} fill="currentColor" />
                   </button>
-                  <button class="pill-button subtle" type="button" onClick={() => setSelectedSongIds([])}>
-                    clear selection
+                  <button class="icon-button" type="button" aria-label="pause" onClick={() => void sendControl('pause')}>
+                    <Pause size={16} />
+                  </button>
+                  <button class="icon-button" type="button" aria-label="skip" onClick={() => void sendControl('skip')}>
+                    <SkipForward size={16} />
                   </button>
                 </div>
+                <Show
+                  when={snapshot()?.currentSong}
+                  fallback={<small class="qc-time">—:— / —:—</small>}
+                >
+                  {(song) => (
+                    <small class="qc-time">
+                      {formatTime(Math.min(livePositionSeconds(), song().durationSeconds ?? Infinity))} / {formatTime(song().durationSeconds)}
+                    </small>
+                  )}
+                </Show>
+                <Show
+                  when={(snapshot()?.queue.length ?? 0) > 0}
+                  fallback={<span class="qc-clear-spacer" aria-hidden="true" />}
+                >
+                  <button class="pill-button subtle qc-clear" type="button" onClick={() => void clearTheQueue()}>
+                    clear ({snapshot()?.queue.length})
+                  </button>
+                </Show>
+              </div>
+            </section>
+
+            <section class="qc-queue">
+              <div class="section-heading">
+                <p class="eyebrow">up next</p>
+                <span class="qc-hint">drag to reorder</span>
+              </div>
+              <Show when={!snapshot.loading} fallback={<p class="list-empty">loading queue...</p>}>
+                <ul class="song-list queue-control-list">
+                  <For each={queuePaging.paged()} fallback={<li class="list-empty">queue is empty</li>}>
+                    {renderQueueItem}
+                  </For>
+                </ul>
+                <Show when={queuePaging.pageCount() > 1}>
+                  <PaginationRow page={queuePaging.page()} pageCount={queuePaging.pageCount()} onPageChange={queuePaging.setPage} compact />
+                </Show>
               </Show>
-              <Show when={!songs.loading} fallback={<p class="list-empty">loading songs...</p>}>
-                <ul class="song-list" classList={{ 'library-edit-list': libraryAction() === 'edit' }}>
-                  <For each={songsPaging.paged()} fallback={<li class="list-empty">no songs match</li>}>
-                    {(song) => {
-                      const profile = () => profileFor(song.addedByDid)
-                      return (
-                        <li classList={{ editing: editingSongId() === song.id }}>
-                          <Show
-                            when={libraryAction() === 'edit'}
-                            fallback={
-                              <>
-                                <label class="multi-add-cell">
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedSongIds().includes(song.id)}
-                                    onChange={(event) => toggleSongSelection(song.id, event.currentTarget.checked)}
-                                  />
-                                  <ProfileAvatar profile={profile()} />
-                                </label>
-                                <div class="song-copy">
-                                  <span>{song.title}</span>
-                                  <small>{song.artist}{song.genre ? ` · ${song.genre}` : ''}</small>
-                                </div>
-                                <small class="profile-handle">@{profile().handle}</small>
-                                <button class="icon-button" type="button" aria-label="add to queue" onClick={() => void addSongToQueue(song.id)}>
-                                  <ListPlus size={18} />
-                                </button>
-                              </>
-                            }
-                          >
-                            <Show when={song.hasCover} fallback={<span class="cover-thumb" />}>
-                              <img class="cover-thumb" src={coverUrl(song)} alt="" loading="lazy" />
-                            </Show>
+            </section>
+          </div>
+
+          <div class="qc-right">
+            <AdminUploadPanel onSongAdded={() => void refreshLibrary()} error={pageError()} onError={setPageError} />
+
+            <section class="library-control-card">
+              <div class="section-heading">
+                <p class="eyebrow">library · {searchMode() === 'songs' ? filteredSongs().length : filteredAlbums().length}</p>
+                <div class="upload-mode-tabs library-tabs" role="tablist" aria-label="library search mode">
+                  <button class="pill-button" classList={{ subtle: searchMode() !== 'songs' }} type="button" role="tab" aria-selected={searchMode() === 'songs'} onClick={() => setSearchMode('songs')}>
+                    songs
+                  </button>
+                  <button
+                    class="pill-button"
+                    classList={{ subtle: searchMode() !== 'albums' }}
+                    type="button"
+                    role="tab"
+                    aria-selected={searchMode() === 'albums'}
+                    disabled={libraryAction() === 'edit'}
+                    onClick={() => setSearchMode('albums')}
+                  >
+                    albums
+                  </button>
+                  <button
+                    class="pill-button"
+                    classList={{ subtle: libraryAction() !== 'edit' }}
+                    type="button"
+                    role="tab"
+                    aria-selected={libraryAction() === 'edit'}
+                    onClick={() => {
+                      const next: LibraryAction = libraryAction() === 'edit' ? 'queue' : 'edit'
+                      setLibraryAction(next)
+                      if (next === 'edit') setSearchMode('songs')
+                    }}
+                  >
+                    edit
+                  </button>
+                </div>
+              </div>
+
+              <Show when={searchMode() === 'songs'}>
+                <div class="song-filters song-filters-wide">
+                  <input placeholder="title" value={songFilterTitle()} onInput={(event) => setSongFilterTitle(event.currentTarget.value)} />
+                  <input placeholder="artist" value={songFilterArtist()} onInput={(event) => setSongFilterArtist(event.currentTarget.value)} />
+                  <input placeholder="genre" value={songFilterGenre()} onInput={(event) => setSongFilterGenre(event.currentTarget.value)} />
+                  <input placeholder="@handle or did" value={songFilterDid()} onInput={(event) => setSongFilterDid(event.currentTarget.value)} />
+                </div>
+                <Show when={libraryAction() === 'queue' && selectedSongIds().length > 0}>
+                  <div class="multi-add-row queue-selection-row">
+                    <button class="pill-button" type="button" onClick={() => void addSelectedToQueue()}>
+                      add {selectedSongIds().length} to queue
+                    </button>
+                    <button class="pill-button subtle" type="button" onClick={() => setSelectedSongIds([])}>
+                      clear selection
+                    </button>
+                  </div>
+                </Show>
+                <Show when={!songs.loading} fallback={<p class="list-empty">loading songs...</p>}>
+                  <ul class="song-list" classList={{ 'library-edit-list': libraryAction() === 'edit' }}>
+                    <For each={songsPaging.paged()} fallback={<li class="list-empty">no songs match</li>}>
+                      {(song) => {
+                        const profile = () => profileFor(song.addedByDid)
+                        return (
+                          <li classList={{ editing: editingSongId() === song.id }}>
                             <Show
-                              when={editingSongId() === song.id}
+                              when={libraryAction() === 'edit'}
                               fallback={
                                 <>
+                                  <label class="multi-add-cell">
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedSongIds().includes(song.id)}
+                                      onChange={(event) => toggleSongSelection(song.id, event.currentTarget.checked)}
+                                    />
+                                    <ProfileAvatar profile={profile()} />
+                                  </label>
                                   <div class="song-copy">
                                     <span>{song.title}</span>
-                                    <small>{song.artist}{song.album ? ` · ${song.album}` : ''}{song.genre ? ` · ${song.genre}` : ''}</small>
+                                    <small>{song.artist}{song.genre ? ` · ${song.genre}` : ''}</small>
                                   </div>
-                                  <button class="pill-button subtle" type="button" onClick={() => beginSongEdit(song)}>
-                                    edit
+                                  <small class="profile-handle">@{profile().handle}</small>
+                                  <button class="icon-button" type="button" aria-label="add to queue" onClick={() => void addSongToQueue(song.id)}>
+                                    <ListPlus size={18} />
                                   </button>
                                 </>
                               }
                             >
-                              <form class="song-edit-form" onSubmit={(event) => { event.preventDefault(); void saveSongEdit(song.id) }}>
-                                <input aria-label="song title" placeholder="title" value={editTitle()} onInput={(event) => setEditTitle(event.currentTarget.value)} />
-                                <input aria-label="song artist" placeholder="artist" value={editArtist()} onInput={(event) => setEditArtist(event.currentTarget.value)} />
-                                <input aria-label="song album" placeholder="album" value={editAlbum()} onInput={(event) => setEditAlbum(event.currentTarget.value)} />
-                                <input aria-label="song genre" placeholder="genre" value={editGenre()} onInput={(event) => setEditGenre(event.currentTarget.value)} />
-                                <div class="song-edit-actions">
-                                  <label class="pill-button subtle cover-upload inline-cover-upload">
-                                    <UploadCloud size={16} />
-                                    cover
-                                    <input type="file" accept="image/*" onChange={(event) => void replaceCover(song.id, event.currentTarget.files?.[0] ?? null)} />
-                                  </label>
-                                  <button class="pill-button" type="submit">save</button>
-                                  <button class="pill-button subtle" type="button" onClick={cancelSongEdit}>cancel</button>
-                                  <button class="pill-button subtle danger-button" type="button" onClick={() => void removeSong(song.id)}>delete</button>
-                                </div>
-                              </form>
+                              <Show when={song.hasCover} fallback={<span class="cover-thumb" />}>
+                                <img class="cover-thumb" src={coverUrl(song)} alt="" loading="lazy" />
+                              </Show>
+                              <Show
+                                when={editingSongId() === song.id}
+                                fallback={
+                                  <>
+                                    <div class="song-copy">
+                                      <span>{song.title}</span>
+                                      <small>{song.artist}{song.album ? ` · ${song.album}` : ''}{song.genre ? ` · ${song.genre}` : ''}</small>
+                                    </div>
+                                    <button class="pill-button subtle" type="button" onClick={() => beginSongEdit(song)}>
+                                      edit
+                                    </button>
+                                  </>
+                                }
+                              >
+                                <form class="song-edit-form" onSubmit={(event) => { event.preventDefault(); void saveSongEdit(song.id) }}>
+                                  <input aria-label="song title" placeholder="title" value={editTitle()} onInput={(event) => setEditTitle(event.currentTarget.value)} />
+                                  <input aria-label="song artist" placeholder="artist" value={editArtist()} onInput={(event) => setEditArtist(event.currentTarget.value)} />
+                                  <input aria-label="song album" placeholder="album" value={editAlbum()} onInput={(event) => setEditAlbum(event.currentTarget.value)} />
+                                  <input aria-label="song genre" placeholder="genre" value={editGenre()} onInput={(event) => setEditGenre(event.currentTarget.value)} />
+                                  <div class="song-edit-actions">
+                                    <label class="pill-button subtle cover-upload inline-cover-upload">
+                                      <UploadCloud size={16} />
+                                      cover
+                                      <input type="file" accept="image/*" onChange={(event) => void replaceCover(song.id, event.currentTarget.files?.[0] ?? null)} />
+                                    </label>
+                                    <button class="pill-button" type="submit">save</button>
+                                    <button class="pill-button subtle" type="button" onClick={cancelSongEdit}>cancel</button>
+                                    <button class="pill-button subtle danger-button" type="button" onClick={() => void removeSong(song.id)}>delete</button>
+                                  </div>
+                                </form>
+                              </Show>
                             </Show>
-                          </Show>
-                        </li>
-                      )
-                    }}
-                  </For>
-                </ul>
-                <Show when={songsPaging.pageCount() > 1}>
-                  <PaginationRow page={songsPaging.page()} pageCount={songsPaging.pageCount()} onPageChange={songsPaging.setPage} />
+                          </li>
+                        )
+                      }}
+                    </For>
+                  </ul>
+                  <Show when={songsPaging.pageCount() > 1}>
+                    <PaginationRow page={songsPaging.page()} pageCount={songsPaging.pageCount()} onPageChange={songsPaging.setPage} />
+                  </Show>
                 </Show>
               </Show>
-            </Show>
 
-            <Show when={searchMode() === 'albums'}>
-              <div class="song-filters album-search-row">
-                <input placeholder="album, track, or artist" value={albumFilter()} onInput={(event) => setAlbumFilter(event.currentTarget.value)} />
-              </div>
-              <Show when={!albums.loading} fallback={<p class="list-empty">loading albums...</p>}>
-                <ul class="song-list album-loop-list">
-                  <For each={albumsPaging.paged()} fallback={<li class="list-empty">no albums match</li>}>
-                    {(album) => (
-                      <li>
-                        <div class="song-copy">
-                          <span>{album.title}</span>
-                          <small>{album.tracks.length} tracks · {album.tracks.map((track) => track.title).join(' → ')}</small>
-                        </div>
-                        <button
-                          class="icon-button"
-                          type="button"
-                          aria-label="queue album"
-                          disabled={album.tracks.length === 0}
-                          onClick={() => void addAlbumToQueue(album.tracks.map((track) => track.id))}
-                        >
-                          <ListPlus size={18} />
-                        </button>
-                      </li>
-                    )}
-                  </For>
-                </ul>
-                <Show when={albumsPaging.pageCount() > 1}>
-                  <PaginationRow page={albumsPaging.page()} pageCount={albumsPaging.pageCount()} onPageChange={albumsPaging.setPage} />
+              <Show when={searchMode() === 'albums'}>
+                <div class="song-filters album-search-row">
+                  <input placeholder="album, track, or artist" value={albumFilter()} onInput={(event) => setAlbumFilter(event.currentTarget.value)} />
+                </div>
+                <Show when={!albums.loading} fallback={<p class="list-empty">loading albums...</p>}>
+                  <ul class="song-list album-loop-list">
+                    <For each={albumsPaging.paged()} fallback={<li class="list-empty">no albums match</li>}>
+                      {(album) => (
+                        <li>
+                          <div class="song-copy">
+                            <span>{album.title}</span>
+                            <small>{album.tracks.length} tracks · {album.tracks.map((track) => track.title).join(' → ')}</small>
+                          </div>
+                          <button
+                            class="icon-button"
+                            type="button"
+                            aria-label="queue album"
+                            disabled={album.tracks.length === 0}
+                            onClick={() => void addAlbumToQueue(album.tracks.map((track) => track.id))}
+                          >
+                            <ListPlus size={18} />
+                          </button>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                  <Show when={albumsPaging.pageCount() > 1}>
+                    <PaginationRow page={albumsPaging.page()} pageCount={albumsPaging.pageCount()} onPageChange={albumsPaging.setPage} />
+                  </Show>
                 </Show>
               </Show>
-            </Show>
-          </section>
+            </section>
+          </div>
         </div>
       </Show>
     </section>
