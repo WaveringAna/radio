@@ -97,6 +97,10 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .route("/api/songs", get(get_songs).post(upload_song))
         .route("/api/songs/from-url", post(upload_song_from_url))
         .route("/api/songs/from-subsonic", post(import_from_subsonic))
+        .route(
+            "/api/songs/from-subsonic-share",
+            post(import_from_subsonic_share),
+        )
         .route("/api/subsonic/search", post(subsonic_search))
         .route("/api/songs/{song_id}", put(update_song).delete(delete_song))
         .route("/api/songs/{song_id}/audio", get(song_audio))
@@ -1481,6 +1485,210 @@ async fn import_from_subsonic(
     }
 
     Ok(Json(song))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubsonicShareImportRequest {
+    share_url: String,
+    add_to_queue: Option<bool>,
+}
+
+async fn import_from_subsonic_share(
+    State(state): State<AppState>,
+    session_token: SessionToken,
+    Json(payload): Json<SubsonicShareImportRequest>,
+) -> Result<Json<crate::radio::Song>, (StatusCode, Json<ErrorResponse>)> {
+    let session = admin_session(&state, session_token.0.as_deref()).await?;
+
+    let (base, share_id) = parse_share_url(&payload.share_url)
+        .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "share_url_invalid"))?;
+
+    let client = reqwest::Client::new();
+
+    let html = client
+        .get(format!("{base}/share/{share_id}"))
+        .send()
+        .await
+        .map_err(|_| api_error(StatusCode::BAD_GATEWAY, "subsonic_unreachable"))?
+        .text()
+        .await
+        .map_err(|_| api_error(StatusCode::BAD_GATEWAY, "subsonic_parse_error"))?;
+
+    let share_info_raw = extract_share_info(&html)
+        .ok_or_else(|| api_error(StatusCode::BAD_GATEWAY, "share_info_missing"))?;
+    let share_info: serde_json::Value = serde_json::from_str(&share_info_raw)
+        .map_err(|_| api_error(StatusCode::BAD_GATEWAY, "share_info_invalid"))?;
+
+    let track = share_info["tracks"]
+        .as_array()
+        .and_then(|a| a.first())
+        .ok_or_else(|| api_error(StatusCode::BAD_GATEWAY, "share_has_no_tracks"))?;
+
+    let track_id = track["id"]
+        .as_str()
+        .ok_or_else(|| api_error(StatusCode::BAD_GATEWAY, "share_track_id_missing"))?
+        .to_owned();
+    let title = track["title"].as_str().unwrap_or("Unknown").to_owned();
+    let artist = track["artist"].as_str().unwrap_or("Unknown").to_owned();
+    let album = track["album"].as_str().map(ToOwned::to_owned);
+    let duration_seconds = track["duration"]
+        .as_f64()
+        .map(|d| d.round() as i64)
+        .or_else(|| track["duration"].as_i64());
+
+    let stream_resp = client
+        .get(format!("{base}/share/s/{track_id}"))
+        .send()
+        .await
+        .map_err(|_| api_error(StatusCode::BAD_GATEWAY, "subsonic_unreachable"))?;
+
+    if !stream_resp.status().is_success() {
+        return Err(api_error(StatusCode::BAD_GATEWAY, "subsonic_stream_failed"));
+    }
+
+    let mime_type = stream_resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or(s).trim().to_owned());
+
+    let audio_bytes = stream_resp
+        .bytes()
+        .await
+        .map_err(|_| api_error(StatusCode::BAD_GATEWAY, "subsonic_stream_failed"))?
+        .to_vec();
+
+    let mut song = state
+        .radio
+        .add_song(
+            crate::radio::NewSongUpload {
+                filename: None,
+                mime_type,
+                bytes: audio_bytes,
+                title,
+                artist,
+                album,
+                genre: None,
+                duration_seconds,
+                add_to_queue: payload.add_to_queue.unwrap_or(false),
+            },
+            &session.account_did,
+        )
+        .await
+        .map_err(internal_api_error)?;
+
+    if let Ok(cover_resp) = client
+        .get(format!("{base}/share/img/{track_id}"))
+        .query(&[("size", "600")])
+        .send()
+        .await
+    {
+        if cover_resp.status().is_success() {
+            let cover_mime = cover_resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(ToOwned::to_owned);
+            if let Ok(cover_bytes) = cover_resp.bytes().await {
+                if !cover_bytes.is_empty() {
+                    if let Ok(updated) = state
+                        .radio
+                        .set_song_cover(&song.id, None, cover_mime, cover_bytes.to_vec())
+                        .await
+                    {
+                        song = updated;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(Json(song))
+}
+
+fn parse_share_url(input: &str) -> Option<(String, String)> {
+    let trimmed = input.trim();
+    let without_fragment = trimmed.split('#').next().unwrap_or(trimmed);
+    let without_query = without_fragment.split('?').next().unwrap_or(without_fragment);
+    let url = reqwest::Url::parse(without_query).ok()?;
+    let scheme = url.scheme();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let host = url.host_str()?;
+    let port = url
+        .port()
+        .map(|p| format!(":{p}"))
+        .unwrap_or_default();
+    let base = format!("{scheme}://{host}{port}");
+
+    let segments: Vec<&str> = url
+        .path_segments()?
+        .filter(|s| !s.is_empty())
+        .collect();
+    let share_idx = segments.iter().rposition(|s| *s == "share")?;
+    let id = segments.get(share_idx + 1)?.to_string();
+    if id.is_empty() {
+        return None;
+    }
+    Some((base, id))
+}
+
+fn extract_share_info(html: &str) -> Option<String> {
+    let needle = "window.SHARE_INFO";
+    let start = html.find(needle)? + needle.len();
+    let after = &html[start..];
+    let eq = after.find('=')?;
+    let after_eq = after[eq + 1..].trim_start();
+    if !after_eq.starts_with('"') {
+        return None;
+    }
+    let body = &after_eq[1..];
+    let line_end = body.find('\n').unwrap_or(body.len());
+    let line = body[..line_end].trim_end();
+    let line = line.trim_end_matches(';');
+    let line = line.trim_end();
+    let inner = line.strip_suffix('"')?;
+    Some(html_decode(inner))
+}
+
+fn html_decode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let tail = &rest[amp..];
+        if let Some(semi) = tail.find(';') {
+            let entity = &tail[1..semi];
+            let replacement = match entity {
+                "quot" => Some('"'),
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "apos" => Some('\''),
+                _ if entity.starts_with("#x") || entity.starts_with("#X") => {
+                    u32::from_str_radix(&entity[2..], 16)
+                        .ok()
+                        .and_then(char::from_u32)
+                }
+                _ if entity.starts_with('#') => entity[1..]
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(char::from_u32),
+                _ => None,
+            };
+            if let Some(c) = replacement {
+                out.push(c);
+                rest = &tail[semi + 1..];
+                continue;
+            }
+        }
+        out.push('&');
+        rest = &tail[1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 struct EmbeddedMetadata {

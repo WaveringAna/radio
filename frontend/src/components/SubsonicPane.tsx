@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js'
 import { createStore } from 'solid-js/store'
 import {
   importFromSubsonic,
+  importFromSubsonicShare,
   loadSubsonicCreds,
   saveSubsonicCreds,
   searchSubsonic,
@@ -25,6 +26,24 @@ export function SubsonicPane(props: SubsonicPaneProps) {
   const [searching, setSearching] = createSignal(false)
   const [addToQueue, setAddToQueue] = createSignal(true)
   const [importingId, setImportingId] = createSignal<string | null>(null)
+  const [shareUrl, setShareUrl] = createSignal('')
+  const [importingShare, setImportingShare] = createSignal(false)
+
+  const importShare = async () => {
+    const url = shareUrl().trim()
+    if (!url) return
+    setImportingShare(true)
+    try {
+      props.onError(null)
+      await importFromSubsonicShare(url, addToQueue())
+      setShareUrl('')
+      props.onSongAdded()
+    } catch (error) {
+      props.onError(error instanceof Error ? error.message : 'share import failed.')
+    } finally {
+      setImportingShare(false)
+    }
+  }
 
   createEffect(() => {
     saveSubsonicCreds({ serverUrl: creds.serverUrl, username: creds.username, password: creds.password })
@@ -66,6 +85,22 @@ export function SubsonicPane(props: SubsonicPaneProps) {
 
   return (
     <div class="upload-form">
+      <input
+        type="url"
+        placeholder="paste share link (e.g. https://server/share/abc123)"
+        value={shareUrl()}
+        onInput={(e) => setShareUrl(e.currentTarget.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void importShare() } }}
+      />
+      <button
+        class="pill-button"
+        type="button"
+        disabled={importingShare() || !shareUrl().trim()}
+        onClick={() => void importShare()}
+      >
+        {importingShare() ? 'importing...' : 'import from share link'}
+      </button>
+      <hr class="subsonic-divider" />
       <input
         type="url"
         placeholder="server url"

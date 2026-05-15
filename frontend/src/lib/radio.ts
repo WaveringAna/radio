@@ -543,6 +543,23 @@ export async function importFromSubsonic(
   return (await response.json()) as Song
 }
 
+export async function importFromSubsonicShare(
+  shareUrl: string,
+  addToQueue: boolean,
+): Promise<Song> {
+  const response = await fetch(`${API_BASE}/api/songs/from-subsonic-share`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    credentials: 'include',
+    body: JSON.stringify({ shareUrl, addToQueue }),
+  })
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as { error?: string }
+    throw new Error(data.error ?? 'subsonic share import failed')
+  }
+  return (await response.json()) as Song
+}
+
 export async function uploadSongFromUrl(input: UrlSongInput): Promise<Song> {
   const response = await fetch(`${API_BASE}/api/songs/from-url`, {
     method: 'POST',
