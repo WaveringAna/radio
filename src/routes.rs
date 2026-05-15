@@ -1,4 +1,8 @@
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::Error;
 use axum::{
@@ -6,7 +10,7 @@ use axum::{
     body::Body,
     extract::{
         DefaultBodyLimit, FromRequestParts, Multipart, Path, Query, State, WebSocketUpgrade,
-        ws::WebSocket,
+        ws::{Message, WebSocket},
     },
     http::{HeaderMap, HeaderValue, Method, StatusCode, header, request::Parts},
     response::{IntoResponse, Redirect, Response},
@@ -15,6 +19,8 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use jacquard::oauth::types::CallbackParams;
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
+use tokio::time::{Instant, MissedTickBehavior};
 use tower_http::{
     cors::CorsLayer,
     services::{ServeDir, ServeFile},
@@ -24,16 +30,21 @@ use crate::{
     auth::{AppSession, AuthService},
     metadata::fetch_online_metadata,
     radio::{
-        NewRadioAlbum, NewSongUpload, RadioControlAction, RadioSeek, RadioService,
+        NewRadioAlbum, NewSongUpload, RadioControlAction, RadioEvent, RadioSeek, RadioService,
         SongMetadataUpdate, event_message,
     },
 };
+
+const VIEWER_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
+const VIEWER_KEEPALIVE_GRACE: Duration = Duration::from_secs(10);
+const MAX_VIEWER_ID_LEN: usize = 128;
 
 /// Shared application state for HTTP routes.
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) auth: Arc<AuthService>,
     pub(crate) radio: Arc<RadioService>,
+    viewers: ViewerTracker,
 }
 
 impl AppState {
@@ -42,8 +53,80 @@ impl AppState {
         Self {
             auth: Arc::new(auth),
             radio: Arc::new(radio),
+            viewers: ViewerTracker::new(),
         }
     }
+}
+
+#[derive(Clone)]
+struct ViewerTracker {
+    inner: Arc<Mutex<HashMap<String, usize>>>,
+    events: broadcast::Sender<usize>,
+}
+
+impl ViewerTracker {
+    fn new() -> Self {
+        let (events, _) = broadcast::channel(32);
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            events,
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.inner
+            .lock()
+            .expect("viewer tracker mutex poisoned")
+            .len()
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<usize> {
+        self.events.subscribe()
+    }
+
+    fn register(&self, viewer_id: &str) -> usize {
+        let mut viewers = self.inner.lock().expect("viewer tracker mutex poisoned");
+        let previous_count = viewers.len();
+        *viewers.entry(viewer_id.to_owned()).or_insert(0) += 1;
+        let count = viewers.len();
+        drop(viewers);
+
+        if count != previous_count {
+            let _ = self.events.send(count);
+        }
+
+        count
+    }
+
+    fn unregister(&self, viewer_id: &str) {
+        let mut viewers = self.inner.lock().expect("viewer tracker mutex poisoned");
+        let previous_count = viewers.len();
+        if let Some(connections) = viewers.get_mut(viewer_id) {
+            *connections = connections.saturating_sub(1);
+            if *connections == 0 {
+                viewers.remove(viewer_id);
+            }
+        }
+        let count = viewers.len();
+        drop(viewers);
+
+        if count != previous_count {
+            let _ = self.events.send(count);
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+enum RadioClientMessage {
+    ViewerHello {
+        #[serde(alias = "viewerId")]
+        viewer_id: String,
+    },
+    ViewerKeepalive {
+        #[serde(alias = "viewerId")]
+        viewer_id: String,
+    },
 }
 
 /// Builds the application router.
@@ -965,13 +1048,14 @@ async fn control_radio(
 }
 
 async fn radio_ws(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(|socket| radio_socket(state.radio, socket))
+    ws.on_upgrade(|socket| radio_socket(state, socket))
 }
 
-async fn radio_socket(radio: Arc<RadioService>, mut socket: WebSocket) {
+async fn radio_socket(state: AppState, mut socket: WebSocket) {
+    let radio = state.radio.clone();
     match radio.external_snapshot().await {
         Ok(snapshot) => {
-            let event = crate::radio::RadioEvent::SnapshotChanged { snapshot };
+            let event = RadioEvent::SnapshotChanged { snapshot };
             if let Ok(message) = event_message(&event) {
                 if socket.send(message).await.is_err() {
                     return;
@@ -980,8 +1064,25 @@ async fn radio_socket(radio: Arc<RadioService>, mut socket: WebSocket) {
         }
         Err(error) => tracing::error!(?error, "failed to send initial radio snapshot"),
     }
+    let event = RadioEvent::ViewerCountChanged {
+        viewer_count: state.viewers.count(),
+    };
+    if let Ok(message) = event_message(&event) {
+        if socket.send(message).await.is_err() {
+            return;
+        }
+    }
 
     let mut events = radio.subscribe();
+    let mut viewer_counts = state.viewers.subscribe();
+    let mut keepalive = tokio::time::interval_at(
+        Instant::now() + VIEWER_KEEPALIVE_INTERVAL,
+        VIEWER_KEEPALIVE_INTERVAL,
+    );
+    keepalive.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut registered_viewer_id: Option<String> = None;
+    let mut last_viewer_seen: Option<Instant> = None;
+
     loop {
         tokio::select! {
             event = events.recv() => match event {
@@ -996,7 +1097,64 @@ async fn radio_socket(radio: Arc<RadioService>, mut socket: WebSocket) {
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             },
+            count = viewer_counts.recv() => match count {
+                Ok(viewer_count) => {
+                    let event = RadioEvent::ViewerCountChanged { viewer_count };
+                    match event_message(&event) {
+                        Ok(message) => {
+                            if socket.send(message).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(error) => tracing::error!(?error, "failed to serialize viewer count event"),
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            },
+            _ = keepalive.tick() => {
+                if registered_viewer_id.is_some()
+                    && last_viewer_seen
+                        .is_some_and(|seen| seen.elapsed() > VIEWER_KEEPALIVE_INTERVAL + VIEWER_KEEPALIVE_GRACE)
+                {
+                    break;
+                }
+                match event_message(&RadioEvent::ViewerKeepalive) {
+                    Ok(message) => {
+                        if socket.send(message).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => tracing::error!(?error, "failed to serialize viewer keepalive"),
+                }
+            },
             message = socket.recv() => match message {
+                Some(Ok(Message::Text(text))) => {
+                    match serde_json::from_str::<RadioClientMessage>(&text) {
+                        Ok(RadioClientMessage::ViewerHello { viewer_id })
+                        | Ok(RadioClientMessage::ViewerKeepalive { viewer_id }) => {
+                            if valid_viewer_id(&viewer_id) && registered_viewer_id.as_deref() != Some(viewer_id.as_str()) {
+                                if let Some(previous_viewer_id) = registered_viewer_id.replace(viewer_id.clone()) {
+                                    state.viewers.unregister(&previous_viewer_id);
+                                }
+                                let viewer_count = state.viewers.register(&viewer_id);
+                                match event_message(&RadioEvent::ViewerCountChanged { viewer_count }) {
+                                    Ok(message) => {
+                                        if socket.send(message).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    Err(error) => tracing::error!(?error, "failed to serialize viewer count event"),
+                                }
+                            }
+                            if valid_viewer_id(&viewer_id) && registered_viewer_id.as_deref() == Some(viewer_id.as_str()) {
+                                last_viewer_seen = Some(Instant::now());
+                            }
+                        }
+                        Err(error) => tracing::debug!(?error, "ignored malformed radio websocket client message"),
+                    }
+                }
+                Some(Ok(Message::Close(_))) => break,
                 Some(Ok(_)) => {}
                 Some(Err(error)) => {
                     tracing::debug!(?error, "radio websocket closed with error");
@@ -1006,6 +1164,18 @@ async fn radio_socket(radio: Arc<RadioService>, mut socket: WebSocket) {
             },
         }
     }
+
+    if let Some(viewer_id) = registered_viewer_id {
+        state.viewers.unregister(&viewer_id);
+    }
+}
+
+fn valid_viewer_id(viewer_id: &str) -> bool {
+    !viewer_id.is_empty()
+        && viewer_id.len() <= MAX_VIEWER_ID_LEN
+        && viewer_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
 #[derive(Deserialize)]

@@ -70,6 +70,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const [coverVersions, setCoverVersions] = createSignal<Record<string, number>>({})
   const [draggingQueueId, setDraggingQueueId] = createSignal<string | null>(null)
   const [clock, setClock] = createSignal(Date.now())
+  const [snapshotSyncedAt, setSnapshotSyncedAt] = createSignal(Date.now())
   const inFlightDids = new Set<string>()
   const pageSize = 8
 
@@ -78,6 +79,10 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   createEffect(() => {
     const interval = window.setInterval(() => setClock(Date.now()), 1000)
     onCleanup(() => window.clearInterval(interval))
+  })
+
+  createEffect(() => {
+    if (snapshot()) setSnapshotSyncedAt(Date.now())
   })
 
   createEffect(() => {
@@ -178,10 +183,10 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   })
 
   const livePositionSeconds = () => {
-    void clock()
+    const now = clock()
     const state = snapshot()?.state
     if (!state || state.status !== 'playing' || !state.startedAt) return state?.positionSeconds ?? 0
-    return Math.max(0, state.positionSeconds + Math.floor(Date.now() / 1000) - state.startedAt)
+    return Math.max(0, state.positionSeconds + Math.floor((now - snapshotSyncedAt()) / 1000))
   }
 
   const sendControl = async (action: 'play' | 'pause' | 'stop' | 'skip') => {

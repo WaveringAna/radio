@@ -480,6 +480,23 @@ main {
   margin-top: 1rem;
 }
 
+.live-viewer-counter {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 0.45rem;
+  min-height: 1.75rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  font-weight: 300;
+  text-transform: lowercase;
+}
+
+.live-viewer-counter svg {
+  color: var(--accent);
+}
+
 .volume-control {
   display: flex;
   align-items: center;

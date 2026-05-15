@@ -1,11 +1,14 @@
 import { createEffect, createResource, createSignal, For, Index, onCleanup, Show, untrack } from 'solid-js'
-import { Volume2 } from 'lucide-solid'
+import { Eye, Volume2 } from 'lucide-solid'
 import { resolveAtprotoProfile, type AtprotoProfile } from '../lib/atproto'
 import {
   API_BASE,
   fetchRadioSnapshot,
   fetchSongs,
+  getRadioViewerId,
   openRadioSocket,
+  sendRadioViewerHello,
+  sendRadioViewerKeepalive,
   type QueueItem,
   type RadioEvent,
   type RadioState,
@@ -182,6 +185,7 @@ export default function RadioPage() {
   const [volume, setVolume] = createSignal(readVolumeCookie())
   const [hasStarted, setHasStarted] = createSignal(false)
   const [isAudioPlaying, setIsAudioPlaying] = createSignal(false)
+  const [viewerCount, setViewerCount] = createSignal(0)
   const [albumAccent, setAlbumAccent] = createSignal<AlbumAccent>(DEFAULT_ALBUM_ACCENT)
   const [ambientLayers, setAmbientLayers] = createSignal<[AlbumAccent, AlbumAccent]>([DEFAULT_ALBUM_ACCENT, DEFAULT_ALBUM_ACCENT])
   const [activeAmbientLayer, setActiveAmbientLayer] = createSignal<0 | 1>(0)
@@ -196,6 +200,7 @@ export default function RadioPage() {
   let audioRef: HTMLAudioElement | undefined
   const onMobile = isMobileDevice()
   const equalizer = createEqualizerController(() => audioRef)
+  const viewerId = getRadioViewerId()
 
   const playbackKey = (state: RadioState | undefined) =>
     state ? `${state.currentSongId ?? ''}|${state.status}|${state.startedAt ?? ''}|${state.pausedAt ?? ''}` : ''
@@ -326,6 +331,9 @@ export default function RadioPage() {
 
       socket.addEventListener('open', () => {
         reconnectAttempt = 0
+        if (socket) {
+          sendRadioViewerHello(socket, viewerId)
+        }
       })
 
       socket.addEventListener('message', (message) => {
@@ -335,6 +343,13 @@ export default function RadioPage() {
           // Don't refetch songs/albums here — most snapshot events are queue
           // mutations that don't affect the library. Local actions that do
           // change the library refetch explicitly.
+        } else if (event.type === 'viewerCountChanged') {
+          const count = event.viewerCount ?? event.viewer_count
+          if (typeof count === 'number' && Number.isFinite(count)) {
+            setViewerCount(count)
+          }
+        } else if (event.type === 'viewerKeepalive' && socket?.readyState === WebSocket.OPEN) {
+          sendRadioViewerKeepalive(socket, viewerId)
         }
       })
 
@@ -383,6 +398,8 @@ export default function RadioPage() {
   const currentSong = () => localCurrentSong()
   const currentSongTitle = () => currentSong()?.title ?? 'nothing playing yet'
   const shouldMarqueeTitle = () => currentSongTitle().length > 25
+  const viewerCountValue = () => viewerCount() ?? 0
+  const viewerCountLabel = () => viewerCountValue().toString()
 
   createEffect(() => {
     const song = currentSong()
@@ -601,6 +618,11 @@ export default function RadioPage() {
           {(url) => <audio src={url()} preload="auto" crossOrigin="anonymous" aria-hidden="true" style="display:none" />}
         </Show>
         <div class="listener-controls">
+          <div class="live-viewer-counter" aria-live="polite">
+            <Eye size={16} />
+            <span>{viewerCountLabel()}</span>
+            <span>{viewerCountValue() === 1 ? 'viewer' : 'viewers'}</span>
+          </div>
           <div class="listen-attribution-row">
             <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
               <button class="listen-button" type="button" onClick={() => void startListening()}>

@@ -1,6 +1,7 @@
 export const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 
 const SESSION_TOKEN_KEY = 'radio_session_token'
+const VIEWER_ID_KEY = 'radio_viewer_id'
 
 export function getSessionToken(): string | null {
   return localStorage.getItem(SESSION_TOKEN_KEY)
@@ -75,6 +76,12 @@ export interface RadioSnapshot {
 export type RadioEvent = {
   type: 'snapshotChanged'
   snapshot: RadioSnapshot
+} | {
+  type: 'viewerCountChanged'
+  viewerCount?: number
+  viewer_count?: number
+} | {
+  type: 'viewerKeepalive'
 }
 
 export interface AlbumInput {
@@ -143,8 +150,33 @@ export async function fetchRadioSeek(): Promise<RadioSeek> {
  */
 export function openRadioSocket(): WebSocket {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const host = API_BASE ? new URL(API_BASE).host : window.location.host
+  const host = API_BASE
+    ? new URL(API_BASE).host
+    : window.location.port === '5173'
+      ? `${window.location.hostname}:3000`
+      : window.location.host
   return new WebSocket(`${protocol}//${host}/api/radio/ws`)
+}
+
+/**
+ * Returns this tab's stable viewer id for websocket presence.
+ * @returns A UUID-like id scoped to the current browser tab.
+ */
+export function getRadioViewerId(): string {
+  const stored = window.sessionStorage.getItem(VIEWER_ID_KEY)
+  if (stored) return stored
+
+  const viewerId = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  window.sessionStorage.setItem(VIEWER_ID_KEY, viewerId)
+  return viewerId
+}
+
+export function sendRadioViewerHello(socket: WebSocket, viewerId: string): void {
+  socket.send(JSON.stringify({ type: 'viewerHello', viewer_id: viewerId }))
+}
+
+export function sendRadioViewerKeepalive(socket: WebSocket, viewerId: string): void {
+  socket.send(JSON.stringify({ type: 'viewerKeepalive', viewer_id: viewerId }))
 }
 
 /**

@@ -2,12 +2,12 @@ node_modules
 .research
 /target
 /.env
-/radio.db
-/radio.db-shm
-/radio.db-wal
+**/radio.db
+**/radio.db-shm
+**/radio.db-wal
 /frontend/dist
 /frontend/node_modules
-/data
+**/data
 **/AnalogMonoPlus.ttf
 **/AnalogMonoPlus-subset.woff2
 **/analogmono_glyphs.txt
