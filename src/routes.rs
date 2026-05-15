@@ -899,6 +899,40 @@ async fn upload_song(
     if upload.genre.is_none() {
         upload.genre = embedded.genre;
     }
+    if upload.title.is_empty() {
+        if let Some(title) = embedded.title.clone() {
+            upload.title = title;
+        }
+    }
+    if upload.artist.is_empty() {
+        if let Some(artist) = embedded.artist.clone() {
+            upload.artist = artist;
+        }
+    }
+    if upload.album.is_none() {
+        upload.album = embedded.album.clone();
+    }
+    if (upload.title.is_empty() || upload.artist.is_empty())
+        && let Some(filename) = upload.filename.as_deref()
+    {
+        let (parsed_artist, parsed_title) = parse_filename_metadata(filename);
+        if upload.title.is_empty()
+            && let Some(title) = parsed_title
+        {
+            upload.title = title;
+        }
+        if upload.artist.is_empty()
+            && let Some(artist) = parsed_artist
+        {
+            upload.artist = artist;
+        }
+    }
+    if upload.title.is_empty() {
+        return Err(api_error(StatusCode::BAD_REQUEST, "missing_title"));
+    }
+    if upload.artist.is_empty() {
+        return Err(api_error(StatusCode::BAD_REQUEST, "missing_artist"));
+    }
 
     let artist = upload.artist.clone();
     let album = upload.album.clone();
@@ -1864,6 +1898,21 @@ fn html_decode(input: &str) -> String {
 struct EmbeddedMetadata {
     cover: Option<(Vec<u8>, String)>,
     genre: Option<String>,
+    title: Option<String>,
+    artist: Option<String>,
+    album: Option<String>,
+}
+
+impl EmbeddedMetadata {
+    fn empty() -> Self {
+        Self {
+            cover: None,
+            genre: None,
+            title: None,
+            artist: None,
+            album: None,
+        }
+    }
 }
 
 async fn extract_embedded_metadata(bytes: &[u8]) -> EmbeddedMetadata {
@@ -1874,18 +1923,12 @@ async fn extract_embedded_metadata(bytes: &[u8]) -> EmbeddedMetadata {
         use std::io::{BufReader, Cursor};
         let cursor = BufReader::new(Cursor::new(bytes));
         let Ok(probe) = Probe::new(cursor).guess_file_type() else {
-            return EmbeddedMetadata {
-                cover: None,
-                genre: None,
-            };
+            return EmbeddedMetadata::empty();
         };
         let Ok(tagged) = probe.read() else {
-            return EmbeddedMetadata {
-                cover: None,
-                genre: None,
-            };
+            return EmbeddedMetadata::empty();
         };
-        let tag = tagged.primary_tag();
+        let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
         let cover = tag.and_then(|t| t.pictures().first()).map(|pic| {
             let mime = pic
                 .mime_type()
@@ -1893,18 +1936,62 @@ async fn extract_embedded_metadata(bytes: &[u8]) -> EmbeddedMetadata {
                 .unwrap_or_else(|| "image/jpeg".to_owned());
             (pic.data().to_vec(), mime)
         });
-        let genre = tag.and_then(|t| {
-            t.genre()
-                .map(|g| g.trim().to_owned())
-                .filter(|g| !g.is_empty())
-        });
-        EmbeddedMetadata { cover, genre }
+        let trim_owned = |value: std::borrow::Cow<'_, str>| {
+            let trimmed = value.trim().to_owned();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        };
+        let genre = tag.and_then(|t| t.genre()).and_then(trim_owned);
+        let title = tag.and_then(|t| t.title()).and_then(trim_owned);
+        let artist = tag.and_then(|t| t.artist()).and_then(trim_owned);
+        let album = tag.and_then(|t| t.album()).and_then(trim_owned);
+        EmbeddedMetadata {
+            cover,
+            genre,
+            title,
+            artist,
+            album,
+        }
     })
     .await
-    .unwrap_or(EmbeddedMetadata {
-        cover: None,
-        genre: None,
-    })
+    .unwrap_or_else(|_| EmbeddedMetadata::empty())
+}
+
+/// Best-effort artist/title extraction from filenames like:
+/// "07. Dom & Optical - Time Frame.flac", "Artist - Title.mp3", "Track.flac".
+fn parse_filename_metadata(filename: &str) -> (Option<String>, Option<String>) {
+    let stem = std::path::Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename);
+    // Strip a leading track number plus its delimiter ("07. ", "07 - ", "07_").
+    let stripped = {
+        let after_digits = stem.trim_start_matches(|c: char| c.is_ascii_digit());
+        if after_digits.len() < stem.len() {
+            after_digits
+                .trim_start_matches(|c: char| {
+                    c == '.' || c == '-' || c == '_' || c.is_whitespace()
+                })
+                .trim()
+        } else {
+            stem.trim()
+        }
+    };
+    if let Some((artist, title)) = stripped.split_once(" - ") {
+        let artist = artist.trim();
+        let title = title.trim();
+        if !artist.is_empty() && !title.is_empty() {
+            return (Some(artist.to_owned()), Some(title.to_owned()));
+        }
+    }
+    if stripped.is_empty() {
+        (None, None)
+    } else {
+        (None, Some(stripped.to_owned()))
+    }
 }
 
 async fn parse_song_upload(
@@ -1952,11 +2039,11 @@ async fn parse_song_upload(
     let title = title
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "missing_title"))?;
+        .unwrap_or_default();
     let artist = artist
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "missing_artist"))?;
+        .unwrap_or_default();
     let bytes = bytes.ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "missing_audio_file"))?;
     let genre = genre.map(|g| g.trim().to_owned()).filter(|g| !g.is_empty());
 

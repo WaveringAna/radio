@@ -82,9 +82,18 @@ export function FileUploadForm(props: FileUploadFormProps) {
         let resolvedAlbum: string | undefined
         let extracted: ExtractedAudioMetadata | null = null
 
+        const extractSafe = async () => {
+          try {
+            return await extractAudioMetadata(selectedFile)
+          } catch (error) {
+            console.warn(`[upload] metadata extraction failed for ${selectedFile.name}`, error)
+            return {} as ExtractedAudioMetadata
+          }
+        }
+
         if (uploadKind() === 'album') {
-          extracted = await extractAudioMetadata(selectedFile).catch(() => ({} as ExtractedAudioMetadata))
-          resolvedTitle = extracted.title ?? selectedFile.name.replace(/\.[^/.]+$/, '').replace(/^\d+\s*[-_. ]\s*/, '')
+          extracted = await extractSafe()
+          resolvedTitle = extracted.title ?? ''
           resolvedArtist = extracted.artist ?? albumArtistFallback
           resolvedAlbum = extracted.album ?? albumName
         } else if (selectedFiles.length === 1) {
@@ -93,15 +102,12 @@ export function FileUploadForm(props: FileUploadFormProps) {
           resolvedArtist = metadata()?.artist ?? artist().trim()
           resolvedAlbum = extracted?.album
         } else {
-          extracted = await extractAudioMetadata(selectedFile).catch(() => ({} as ExtractedAudioMetadata))
-          resolvedTitle = extracted.title ?? selectedFile.name.replace(/\.[^/.]+$/, '')
+          extracted = await extractSafe()
+          resolvedTitle = extracted.title ?? ''
           resolvedArtist = extracted.artist ?? ''
           resolvedAlbum = extracted.album
         }
 
-        if (!resolvedTitle || !resolvedArtist) {
-          throw new Error(`${selectedFile.name} is missing title or artist metadata.`)
-        }
         if (uploadKind() === 'album' && !resolvedAlbum) {
           throw new Error('album uploads need an album title when files do not have album tags.')
         }
