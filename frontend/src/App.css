@@ -5,9 +5,9 @@
   --surface-soft: rgb(255 255 255 / 70%);
   --surface-fade: rgb(255 255 255 / 0%);
   --text: #000000;
-  --muted: #666666;
-  --line: #d0d0d0;
-  --hairline: #cccccc;
+  --muted: #000000;
+  --line: #1a1a1a;
+  --hairline: #2a2a2a;
   --accent: #be7c8f;
   --accent-rgb: 190 124 143;
   --accent-line: rgb(190 124 143 / 34%);
@@ -109,13 +109,14 @@ main {
 
 .album-ambient-layer {
   position: absolute;
-  inset: -8rem;
+  inset: -12rem;
   opacity: 0;
   background:
-    radial-gradient(circle at 24% 6%, var(--ambient-a-wash, transparent) 0, transparent 44rem),
-    radial-gradient(circle at 76% 0%, var(--ambient-b-wash, transparent) 0, transparent 40rem),
-    linear-gradient(180deg, var(--ambient-top-wash, transparent) 0, transparent 32rem);
-  filter: blur(0.01px) saturate(1.08);
+    radial-gradient(circle at 22% 8%, var(--ambient-a-wash, transparent) 0, transparent 64rem),
+    radial-gradient(circle at 78% 4%, var(--ambient-b-wash, transparent) 0, transparent 60rem),
+    radial-gradient(circle at 50% 100%, var(--ambient-a-wash, transparent) 0, transparent 56rem),
+    linear-gradient(180deg, var(--ambient-top-wash, transparent) 0, transparent 56rem);
+  filter: blur(0.01px) saturate(1.12);
   transition: opacity 1400ms ease;
 }
 
@@ -185,6 +186,21 @@ main {
   gap: 1rem;
 }
 
+.listener-opt-out {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 1rem;
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.listener-opt-out input {
+  accent-color: var(--accent);
+}
+
 .admin-page > p,
 .admin-page > .error-copy {
   grid-column: 1 / -1;
@@ -224,7 +240,7 @@ main {
 
 .art-shell {
   position: relative;
-  width: min(100%, 34rem, calc(100vh - 22rem));
+  width: min(100%, 28rem, calc(100vh - 26rem));
   aspect-ratio: 1;
   justify-self: center;
   margin-bottom: 0.6rem;
@@ -352,17 +368,17 @@ main {
   align-items: center;
   gap: 0.12rem;
   width: min(100%, 34rem, calc(100vh - 22rem));
-  height: 2.4rem;
+  height: 3.6rem;
   justify-self: center;
   margin: 0 0 0.5rem;
-  padding: 0.32rem 0;
+  padding: 0.4rem 0;
   border-block: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
   background: transparent;
 }
 
 .nowplaying-waveform span {
   display: block;
-  height: calc(0.12rem + var(--wave, 0.05) * 2.8rem);
+  height: calc(0.12rem + var(--wave, 0.05) * 2.6rem);
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 82%, transparent);
   opacity: calc(0.24 + var(--wave, 0.05) * 0.76);
@@ -495,6 +511,125 @@ main {
 
 .live-viewer-counter svg {
   color: var(--accent);
+}
+
+.listener-avatars {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 0 0.55rem;
+  padding: 0;
+  list-style: none;
+  position: relative;
+}
+
+.listener-avatars li {
+  margin: 0;
+  position: relative;
+}
+
+.listener-avatars a,
+.listener-avatars button {
+  display: block;
+  line-height: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  position: relative;
+}
+
+.listener-avatars > li > a::after,
+.listener-avatars > li > button::after {
+  content: attr(data-handle);
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  left: 50%;
+  transform: translate(-50%, 4px);
+  padding: 0.4rem 0.65rem;
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  font-weight: 500;
+  white-space: nowrap;
+  color: #fff;
+  background: rgb(0 0 0 / 88%);
+  border-radius: 0.45rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 6;
+}
+
+.listener-avatars > li > a:hover::after,
+.listener-avatars > li > a:focus-visible::after,
+.listener-avatars > li > button:hover::after,
+.listener-avatars > li > button:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.listener-avatar {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 2px solid var(--surface, var(--background, #fff));
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 12%);
+  background: var(--surface, var(--background, #fff));
+}
+
+.listener-avatar-more {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 2px solid var(--surface, var(--background, #fff));
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--surface, #fff);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.listener-avatars-overflow {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 5;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.6rem 0.7rem;
+  min-width: 12rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  background: var(--surface, #fff);
+  border: 1px solid rgb(0 0 0 / 10%);
+  border-radius: 0.6rem;
+  box-shadow: 0 14px 28px rgb(0 0 0 / 18%);
+  list-style: none;
+  margin: 0;
+}
+
+.listener-avatars-overflow li {
+  margin: 0;
+}
+
+.listener-avatars-overflow a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text, inherit);
+  text-decoration: none;
+  line-height: 1.2;
+}
+
+.listener-avatars-overflow .listener-avatar {
+  width: 1.4rem;
+  height: 1.4rem;
 }
 
 .volume-control {

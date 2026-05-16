@@ -58,10 +58,22 @@ impl AppState {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct ViewerEntry {
+    connections: usize,
+    did: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ViewerStats {
+    pub(crate) count: usize,
+    pub(crate) listener_dids: Vec<String>,
+}
+
 #[derive(Clone)]
 struct ViewerTracker {
-    inner: Arc<Mutex<HashMap<String, usize>>>,
-    events: broadcast::Sender<usize>,
+    inner: Arc<Mutex<HashMap<String, ViewerEntry>>>,
+    events: broadcast::Sender<ViewerStats>,
 }
 
 impl ViewerTracker {
@@ -73,45 +85,74 @@ impl ViewerTracker {
         }
     }
 
-    fn count(&self) -> usize {
-        self.inner
-            .lock()
-            .expect("viewer tracker mutex poisoned")
-            .len()
+    fn stats(&self) -> ViewerStats {
+        let viewers = self.inner.lock().expect("viewer tracker mutex poisoned");
+        Self::collect_stats(&viewers)
     }
 
-    fn subscribe(&self) -> broadcast::Receiver<usize> {
+    fn collect_stats(viewers: &HashMap<String, ViewerEntry>) -> ViewerStats {
+        let mut listener_dids: Vec<String> = viewers
+            .values()
+            .filter_map(|entry| entry.did.clone())
+            .collect();
+        listener_dids.sort();
+        listener_dids.dedup();
+        ViewerStats {
+            count: viewers.len(),
+            listener_dids,
+        }
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<ViewerStats> {
         self.events.subscribe()
     }
 
-    fn register(&self, viewer_id: &str) -> usize {
+    fn register(&self, viewer_id: &str, did: Option<String>) -> ViewerStats {
         let mut viewers = self.inner.lock().expect("viewer tracker mutex poisoned");
-        let previous_count = viewers.len();
-        *viewers.entry(viewer_id.to_owned()).or_insert(0) += 1;
-        let count = viewers.len();
+        let previous_stats = Self::collect_stats(&viewers);
+        let entry = viewers.entry(viewer_id.to_owned()).or_default();
+        entry.connections += 1;
+        entry.did = did;
+        let stats = Self::collect_stats(&viewers);
         drop(viewers);
 
-        if count != previous_count {
-            let _ = self.events.send(count);
+        if stats.count != previous_stats.count || stats.listener_dids != previous_stats.listener_dids {
+            let _ = self.events.send(stats.clone());
         }
 
-        count
+        stats
+    }
+
+    fn update_did(&self, viewer_id: &str, did: Option<String>) -> ViewerStats {
+        let mut viewers = self.inner.lock().expect("viewer tracker mutex poisoned");
+        let previous_stats = Self::collect_stats(&viewers);
+        if let Some(entry) = viewers.get_mut(viewer_id) {
+            entry.did = did;
+        }
+        let stats = Self::collect_stats(&viewers);
+        drop(viewers);
+
+        if stats.listener_dids != previous_stats.listener_dids {
+            let _ = self.events.send(stats.clone());
+        }
+
+        stats
     }
 
     fn unregister(&self, viewer_id: &str) {
         let mut viewers = self.inner.lock().expect("viewer tracker mutex poisoned");
-        let previous_count = viewers.len();
-        if let Some(connections) = viewers.get_mut(viewer_id) {
-            *connections = connections.saturating_sub(1);
-            if *connections == 0 {
+        let previous_stats = Self::collect_stats(&viewers);
+        if let Some(entry) = viewers.get_mut(viewer_id) {
+            entry.connections = entry.connections.saturating_sub(1);
+            if entry.connections == 0 {
                 viewers.remove(viewer_id);
             }
         }
-        let count = viewers.len();
+        let stats = Self::collect_stats(&viewers);
         drop(viewers);
 
-        if count != previous_count {
-            let _ = self.events.send(count);
+        if stats.count != previous_stats.count || stats.listener_dids != previous_stats.listener_dids {
+            let _ = self.events.send(stats);
         }
     }
 }
@@ -122,10 +163,14 @@ enum RadioClientMessage {
     ViewerHello {
         #[serde(alias = "viewerId")]
         viewer_id: String,
+        #[serde(default, alias = "did")]
+        did: Option<String>,
     },
     ViewerKeepalive {
         #[serde(alias = "viewerId")]
         viewer_id: String,
+        #[serde(default, alias = "did")]
+        did: Option<String>,
     },
 }
 
@@ -1098,8 +1143,10 @@ async fn radio_socket(state: AppState, mut socket: WebSocket) {
         }
         Err(error) => tracing::error!(?error, "failed to send initial radio snapshot"),
     }
+    let initial_stats = state.viewers.stats();
     let event = RadioEvent::ViewerCountChanged {
-        viewer_count: state.viewers.count(),
+        viewer_count: initial_stats.count,
+        listener_dids: initial_stats.listener_dids,
     };
     if let Ok(message) = event_message(&event) {
         if socket.send(message).await.is_err() {
@@ -1116,6 +1163,7 @@ async fn radio_socket(state: AppState, mut socket: WebSocket) {
     keepalive.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut registered_viewer_id: Option<String> = None;
     let mut last_viewer_seen: Option<Instant> = None;
+    let mut last_listener_did: Option<String> = None;
 
     loop {
         tokio::select! {
@@ -1132,8 +1180,11 @@ async fn radio_socket(state: AppState, mut socket: WebSocket) {
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             },
             count = viewer_counts.recv() => match count {
-                Ok(viewer_count) => {
-                    let event = RadioEvent::ViewerCountChanged { viewer_count };
+                Ok(stats) => {
+                    let event = RadioEvent::ViewerCountChanged {
+                        viewer_count: stats.count,
+                        listener_dids: stats.listener_dids,
+                    };
                     match event_message(&event) {
                         Ok(message) => {
                             if socket.send(message).await.is_err() {
@@ -1165,14 +1216,22 @@ async fn radio_socket(state: AppState, mut socket: WebSocket) {
             message = socket.recv() => match message {
                 Some(Ok(Message::Text(text))) => {
                     match serde_json::from_str::<RadioClientMessage>(&text) {
-                        Ok(RadioClientMessage::ViewerHello { viewer_id })
-                        | Ok(RadioClientMessage::ViewerKeepalive { viewer_id }) => {
+                        Ok(RadioClientMessage::ViewerHello { viewer_id, did })
+                        | Ok(RadioClientMessage::ViewerKeepalive { viewer_id, did }) => {
+                            let normalized_did = did
+                                .map(|value| value.trim().to_owned())
+                                .filter(|value| valid_listener_did(value));
                             if valid_viewer_id(&viewer_id) && registered_viewer_id.as_deref() != Some(viewer_id.as_str()) {
                                 if let Some(previous_viewer_id) = registered_viewer_id.replace(viewer_id.clone()) {
                                     state.viewers.unregister(&previous_viewer_id);
                                 }
-                                let viewer_count = state.viewers.register(&viewer_id);
-                                match event_message(&RadioEvent::ViewerCountChanged { viewer_count }) {
+                                let stats = state.viewers.register(&viewer_id, normalized_did.clone());
+                                last_listener_did = normalized_did.clone();
+                                let event = RadioEvent::ViewerCountChanged {
+                                    viewer_count: stats.count,
+                                    listener_dids: stats.listener_dids,
+                                };
+                                match event_message(&event) {
                                     Ok(message) => {
                                         if socket.send(message).await.is_err() {
                                             break;
@@ -1180,6 +1239,12 @@ async fn radio_socket(state: AppState, mut socket: WebSocket) {
                                     }
                                     Err(error) => tracing::error!(?error, "failed to serialize viewer count event"),
                                 }
+                            } else if valid_viewer_id(&viewer_id)
+                                && registered_viewer_id.as_deref() == Some(viewer_id.as_str())
+                                && last_listener_did != normalized_did
+                            {
+                                state.viewers.update_did(&viewer_id, normalized_did.clone());
+                                last_listener_did = normalized_did;
                             }
                             if valid_viewer_id(&viewer_id) && registered_viewer_id.as_deref() == Some(viewer_id.as_str()) {
                                 last_viewer_seen = Some(Instant::now());
@@ -1210,6 +1275,15 @@ fn valid_viewer_id(viewer_id: &str) -> bool {
         && viewer_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+fn valid_listener_did(did: &str) -> bool {
+    !did.is_empty()
+        && did.len() <= MAX_VIEWER_ID_LEN
+        && did.starts_with("did:")
+        && did.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_' | b'.')
+        })
 }
 
 #[derive(Deserialize)]

@@ -80,6 +80,8 @@ export type RadioEvent = {
   type: 'viewerCountChanged'
   viewerCount?: number
   viewer_count?: number
+  listenerDids?: string[]
+  listener_dids?: string[]
 } | {
   type: 'viewerKeepalive'
 }
@@ -171,12 +173,22 @@ export function getRadioViewerId(): string {
   return viewerId
 }
 
-export function sendRadioViewerHello(socket: WebSocket, viewerId: string): void {
-  socket.send(JSON.stringify({ type: 'viewerHello', viewer_id: viewerId }))
+export function sendRadioViewerHello(socket: WebSocket, viewerId: string, did?: string | null): void {
+  socket.send(JSON.stringify({ type: 'viewerHello', viewer_id: viewerId, did: did ?? null }))
 }
 
-export function sendRadioViewerKeepalive(socket: WebSocket, viewerId: string): void {
-  socket.send(JSON.stringify({ type: 'viewerKeepalive', viewer_id: viewerId }))
+export function sendRadioViewerKeepalive(socket: WebSocket, viewerId: string, did?: string | null): void {
+  socket.send(JSON.stringify({ type: 'viewerKeepalive', viewer_id: viewerId, did: did ?? null }))
+}
+
+const LISTENER_OPT_OUT_KEY = 'radio_listener_opt_out'
+
+export function getListenerOptOut(): boolean {
+  return localStorage.getItem(LISTENER_OPT_OUT_KEY) === 'on'
+}
+
+export function setListenerOptOut(optOut: boolean): void {
+  localStorage.setItem(LISTENER_OPT_OUT_KEY, optOut ? 'on' : 'off')
 }
 
 /**

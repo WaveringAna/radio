@@ -140,7 +140,11 @@ pub(crate) enum RadioEvent {
     /// Radio snapshot changed.
     SnapshotChanged { snapshot: RadioSnapshot },
     /// Live viewer count changed.
-    ViewerCountChanged { viewer_count: usize },
+    ViewerCountChanged {
+        viewer_count: usize,
+        #[serde(default)]
+        listener_dids: Vec<String>,
+    },
     /// Backend keepalive request for viewer sockets.
     ViewerKeepalive,
 }

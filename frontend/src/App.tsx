@@ -1,5 +1,5 @@
 import { createResource, createSignal, onCleanup, Show } from 'solid-js'
-import { setSessionToken } from './lib/radio'
+import { getListenerOptOut, setListenerOptOut, setSessionToken } from './lib/radio'
 import { Monitor, Moon, MoonStar } from 'lucide-solid'
 import AdminPage from './pages/AdminPage'
 import QueueControlPage from './pages/QueueControlPage'
@@ -54,6 +54,12 @@ export default function App() {
   const [path, setPath] = createSignal(currentPath())
   const [theme, setTheme] = createSignal(readThemePreference())
   const [session, { refetch }] = createResource(fetchSession)
+  const [listenerOptOut, setListenerOptOutSignal] = createSignal(getListenerOptOut())
+
+  const toggleListenerOptOut = (next: boolean) => {
+    setListenerOptOutSignal(next)
+    setListenerOptOut(next)
+  }
 
   applyThemePreference(theme())
 
@@ -160,6 +166,14 @@ export default function App() {
               sign out
             </button>
           </Show>
+          <label class="listener-opt-out">
+            <input
+              type="checkbox"
+              checked={listenerOptOut()}
+              onChange={(event) => toggleListenerOptOut(event.currentTarget.checked)}
+            />
+            <span>opt out of showing my profile in the listener counter</span>
+          </label>
         </section>
       </Show>
 

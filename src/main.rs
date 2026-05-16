@@ -82,6 +82,11 @@ impl AppConfig {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // .env.local takes precedence over .env, so a developer can drop
+    // dev-only overrides (APP_URL/CORS_ORIGIN pointing at localhost) into
+    // .env.local without disturbing the prod values in .env. dotenvy only
+    // sets vars that aren't already populated, so loading local first works.
+    dotenvy::from_filename(".env.local").ok();
     dotenvy::dotenv().ok();
     init_tracing();
 
@@ -90,11 +95,17 @@ async fn main() -> anyhow::Result<()> {
     db.prepare().await?;
     let auth = AuthService::new(config.auth_config(), db.clone())?;
     let radio = RadioService::new(db, config.audio_dir.clone());
-    match radio.backfill_missing_genres_on_boot().await {
-        Ok(0) => {}
-        Ok(updated) => tracing::info!(updated, "backfilled missing song genres on boot"),
-        Err(error) => tracing::warn!(%error, "failed to backfill missing song genres on boot"),
-    }
+
+    // Genre backfill hits an online metadata service per missing song, so run
+    // it in the background to keep the HTTP listener responsive at boot.
+    let genre_radio = radio.clone();
+    tokio::spawn(async move {
+        match genre_radio.backfill_missing_genres_on_boot().await {
+            Ok(0) => {}
+            Ok(updated) => tracing::info!(updated, "backfilled missing song genres on boot"),
+            Err(error) => tracing::warn!(%error, "failed to backfill missing song genres on boot"),
+        }
+    });
 
     // Loudness backfill can take seconds-per-track via ffmpeg; run it in the
     // background so the HTTP listener comes up immediately.

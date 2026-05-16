@@ -318,7 +318,12 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
       applyBands(preset.bands.map((band) => ({ ...band })))
       return
     }
-    applyBands(equalizerBands().map((band, index) => ({ ...band, gain: clampNumber(preset.gains?.[index] ?? 0, -12, 12) })))
+    // gains-only presets snap each band back to the default frequency/type so
+    // a previously-edited band (e.g. lowshelf flipped to peaking) is restored.
+    applyBands(DEFAULT_EQ_BANDS.map((defaults, index) => ({
+      ...defaults,
+      gain: clampNumber(preset.gains?.[index] ?? 0, -12, 12),
+    })))
   }
 
   const savePreset = (name: string) => {
@@ -461,9 +466,7 @@ export function EqualizerPanel(props: EqualizerPanelProps) {
             <label>
               <span>preset</span>
               <select class="equalizer-preset-select" value="" onChange={(event) => applyPresetById(event.currentTarget.value)}>
-                <option value="" disabled>
-                  select preset
-                </option>
+                <option value="">select preset</option>
                 <For each={presets()}>
                   {(preset) => <option value={preset.id}>{preset.label}</option>}
                 </For>

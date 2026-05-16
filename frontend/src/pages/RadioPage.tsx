@@ -5,6 +5,7 @@ import {
   API_BASE,
   fetchRadioSnapshot,
   fetchSongs,
+  getListenerOptOut,
   getRadioViewerId,
   openRadioSocket,
   sendRadioViewerHello,
@@ -14,6 +15,7 @@ import {
   type RadioState,
   type Song,
 } from '../lib/radio'
+import { fetchSession } from '../lib/auth'
 import { PaginationRow } from '../components/PaginationRow'
 import { ProfileAvatar } from '../components/ProfileAvatar'
 import { SongCoverThumb } from '../components/SongCoverThumb'
@@ -92,9 +94,9 @@ function accentFromRgb(primary: { red: number; green: number; blue: number }, se
   return {
     primary: `${primary.red} ${primary.green} ${primary.blue}`,
     secondary: `${secondary.red} ${secondary.green} ${secondary.blue}`,
-    primaryWash: `rgb(${primary.red} ${primary.green} ${primary.blue} / 26%)`,
-    secondaryWash: `rgb(${secondary.red} ${secondary.green} ${secondary.blue} / 20%)`,
-    topWash: `rgb(${primary.red} ${primary.green} ${primary.blue} / 10%)`,
+    primaryWash: `rgb(${primary.red} ${primary.green} ${primary.blue} / 42%)`,
+    secondaryWash: `rgb(${secondary.red} ${secondary.green} ${secondary.blue} / 34%)`,
+    topWash: `rgb(${primary.red} ${primary.green} ${primary.blue} / 18%)`,
   }
 }
 
@@ -186,6 +188,11 @@ export default function RadioPage() {
   const [hasStarted, setHasStarted] = createSignal(false)
   const [isAudioPlaying, setIsAudioPlaying] = createSignal(false)
   const [viewerCount, setViewerCount] = createSignal(0)
+  const [listenerDids, setListenerDids] = createSignal<string[]>([])
+  const [listenerOverflowOpen, setListenerOverflowOpen] = createSignal(false)
+  const MAX_VISIBLE_LISTENERS = 8
+  const visibleListenerDids = () => listenerDids().slice(0, MAX_VISIBLE_LISTENERS)
+  const overflowListenerDids = () => listenerDids().slice(MAX_VISIBLE_LISTENERS)
   const [albumAccent, setAlbumAccent] = createSignal<AlbumAccent>(DEFAULT_ALBUM_ACCENT)
   const [ambientLayers, setAmbientLayers] = createSignal<[AlbumAccent, AlbumAccent]>([DEFAULT_ALBUM_ACCENT, DEFAULT_ALBUM_ACCENT])
   const [activeAmbientLayer, setActiveAmbientLayer] = createSignal<0 | 1>(0)
@@ -201,6 +208,13 @@ export default function RadioPage() {
   const onMobile = isMobileDevice()
   const equalizer = createEqualizerController(() => audioRef)
   const viewerId = getRadioViewerId()
+  const [session] = createResource(fetchSession)
+  // Re-read on socket events so an in-tab opt-out toggle takes effect on next
+  // keepalive without forcing the user to reload.
+  const listenerDid = (): string | null => {
+    if (getListenerOptOut()) return null
+    return session()?.accountDid ?? null
+  }
 
   const playbackKey = (state: RadioState | undefined) =>
     state ? `${state.currentSongId ?? ''}|${state.status}|${state.startedAt ?? ''}|${state.pausedAt ?? ''}` : ''
@@ -332,7 +346,7 @@ export default function RadioPage() {
       socket.addEventListener('open', () => {
         reconnectAttempt = 0
         if (socket) {
-          sendRadioViewerHello(socket, viewerId)
+          sendRadioViewerHello(socket, viewerId, listenerDid())
         }
       })
 
@@ -348,8 +362,12 @@ export default function RadioPage() {
           if (typeof count === 'number' && Number.isFinite(count)) {
             setViewerCount(count)
           }
+          const dids = event.listenerDids ?? event.listener_dids
+          if (Array.isArray(dids)) {
+            setListenerDids(dids.filter((value): value is string => typeof value === 'string'))
+          }
         } else if (event.type === 'viewerKeepalive' && socket?.readyState === WebSocket.OPEN) {
-          sendRadioViewerKeepalive(socket, viewerId)
+          sendRadioViewerKeepalive(socket, viewerId, listenerDid())
         }
       })
 
@@ -385,6 +403,7 @@ export default function RadioPage() {
       ...(songs() ?? []).map((song) => song.addedByDid),
       ...(currentSongDid ? [currentSongDid] : []),
       ...(snapshot()?.queue ?? []).flatMap((item) => [item.addedByDid, item.queuedByDid]),
+      ...listenerDids(),
     ].filter((did, index, values) => values.indexOf(did) === index && !profiles()[did] && !inFlightDids.has(did))
 
     for (const did of dids) {
@@ -554,6 +573,17 @@ export default function RadioPage() {
     }
   })
 
+  createEffect(() => {
+    if (!listenerOverflowOpen()) return
+    const onDocClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && target.closest('.listener-avatars')) return
+      setListenerOverflowOpen(false)
+    }
+    document.addEventListener('click', onDocClick)
+    onCleanup(() => document.removeEventListener('click', onDocClick))
+  })
+
   // iOS Safari can pause a backgrounded <audio> on tab switch / lock screen.
   // When the page becomes visible again, resume if the user previously chose
   // to listen and we still have audio loaded.
@@ -622,6 +652,62 @@ export default function RadioPage() {
             <Eye size={16} />
             <span>{viewerCountLabel()}</span>
             <span>{viewerCountValue() === 1 ? 'viewer' : 'viewers'}</span>
+            <Show when={listenerDids().length > 0}>
+              <ul class="listener-avatars" aria-label="listeners">
+                <For each={visibleListenerDids()}>
+                  {(did) => {
+                    const profile = () => profileFor(did)
+                    return (
+                      <li>
+                        <a
+                          href={`https://bsky.app/profile/${profile().handle}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          data-handle={`@${profile().handle}`}
+                        >
+                          <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
+                        </a>
+                      </li>
+                    )
+                  }}
+                </For>
+                <Show when={overflowListenerDids().length > 0}>
+                  <li>
+                    <button
+                      type="button"
+                      class="listener-avatar-more"
+                      aria-expanded={listenerOverflowOpen()}
+                      aria-label={`show ${overflowListenerDids().length} more listeners`}
+                      data-handle={`+${overflowListenerDids().length} more`}
+                      onClick={() => setListenerOverflowOpen((open) => !open)}
+                    >
+                      +{overflowListenerDids().length}
+                    </button>
+                  </li>
+                  <Show when={listenerOverflowOpen()}>
+                    <ul class="listener-avatars-overflow" aria-label="more listeners">
+                      <For each={overflowListenerDids()}>
+                        {(did) => {
+                          const profile = () => profileFor(did)
+                          return (
+                            <li>
+                              <a
+                                href={`https://bsky.app/profile/${profile().handle}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
+                                <span>{profile().displayName || `@${profile().handle}`}</span>
+                              </a>
+                            </li>
+                          )
+                        }}
+                      </For>
+                    </ul>
+                  </Show>
+                </Show>
+              </ul>
+            </Show>
           </div>
           <div class="listen-attribution-row">
             <Show when={currentSong() && snapshot()?.state.status === 'playing'}>

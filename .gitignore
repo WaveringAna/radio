@@ -2,6 +2,7 @@ node_modules
 .research
 /target
 /.env
+/.env.local
 **/radio.db
 **/radio.db-shm
 **/radio.db-wal
