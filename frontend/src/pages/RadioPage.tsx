@@ -92,9 +92,9 @@ function accentFromRgb(primary: { red: number; green: number; blue: number }, se
   return {
     primary: `${primary.red} ${primary.green} ${primary.blue}`,
     secondary: `${secondary.red} ${secondary.green} ${secondary.blue}`,
-    primaryWash: `rgb(${primary.red} ${primary.green} ${primary.blue} / 18%)`,
-    secondaryWash: `rgb(${secondary.red} ${secondary.green} ${secondary.blue} / 14%)`,
-    topWash: `rgb(${primary.red} ${primary.green} ${primary.blue} / 8%)`,
+    primaryWash: `rgb(${primary.red} ${primary.green} ${primary.blue} / 26%)`,
+    secondaryWash: `rgb(${secondary.red} ${secondary.green} ${secondary.blue} / 20%)`,
+    topWash: `rgb(${primary.red} ${primary.green} ${primary.blue} / 10%)`,
   }
 }
 

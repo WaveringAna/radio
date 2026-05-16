@@ -1,13 +1,13 @@
 :root {
   color-scheme: light;
-  --bg: #f7f7f8;
-  --surface: rgb(255 255 255 / 72%);
-  --surface-soft: rgb(255 255 255 / 42%);
+  --bg: #f5f5f5;
+  --surface: rgb(255 255 255 / 94%);
+  --surface-soft: rgb(255 255 255 / 70%);
   --surface-fade: rgb(255 255 255 / 0%);
-  --text: #111114;
-  --muted: #7a7a82;
-  --line: #d7d7dc;
-  --hairline: #ececf0;
+  --text: #000000;
+  --muted: #666666;
+  --line: #d0d0d0;
+  --hairline: #cccccc;
   --accent: #be7c8f;
   --accent-rgb: 190 124 143;
   --accent-line: rgb(190 124 143 / 34%);
@@ -112,10 +112,10 @@ main {
   inset: -8rem;
   opacity: 0;
   background:
-    radial-gradient(circle at 24% 6%, var(--ambient-a-wash, transparent) 0, transparent 34rem),
-    radial-gradient(circle at 76% 0%, var(--ambient-b-wash, transparent) 0, transparent 30rem),
-    linear-gradient(180deg, var(--ambient-top-wash, transparent) 0, transparent 28rem);
-  filter: blur(0.01px) saturate(0.82);
+    radial-gradient(circle at 24% 6%, var(--ambient-a-wash, transparent) 0, transparent 44rem),
+    radial-gradient(circle at 76% 0%, var(--ambient-b-wash, transparent) 0, transparent 40rem),
+    linear-gradient(180deg, var(--ambient-top-wash, transparent) 0, transparent 32rem);
+  filter: blur(0.01px) saturate(1.08);
   transition: opacity 1400ms ease;
 }
 
@@ -805,6 +805,11 @@ main {
 
 .muted {
   color: var(--muted);
+}
+
+.chat-preview .muted,
+.up-next-card .muted {
+  color: var(--text);
 }
 
 .radio-panel {
