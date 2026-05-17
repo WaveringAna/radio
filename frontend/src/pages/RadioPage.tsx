@@ -90,6 +90,24 @@ function rgbToHsl(red: number, green: number, blue: number): { hue: number; satu
   return { hue, saturation, lightness }
 }
 
+function themeColorFromAccent(accent: AlbumAccent): string {
+  const [r, g, b] = accent.primary.split(' ').map(Number)
+  if (![r, g, b].every(Number.isFinite)) return '#1e1e1e'
+  // Blend the primary toward #1e1e1e ~78% so the status bar reads as a darkened
+  // tint of the album rather than the saturated color.
+  const blend = (channel: number, base: number) => Math.round(channel * 0.22 + base * 0.78)
+  const toHex = (value: number) => value.toString(16).padStart(2, '0')
+  return `#${toHex(blend(r, 0x1e))}${toHex(blend(g, 0x1e))}${toHex(blend(b, 0x1e))}`
+}
+
+function setMetaThemeColor(color: string): void {
+  const existing = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+  const meta = existing ?? document.createElement('meta')
+  meta.name = 'theme-color'
+  meta.content = color
+  if (!existing) document.head.append(meta)
+}
+
 function accentFromRgb(primary: { red: number; green: number; blue: number }, secondary: { red: number; green: number; blue: number }): AlbumAccent {
   return {
     primary: `${primary.red} ${primary.green} ${primary.blue}`,
@@ -98,6 +116,11 @@ function accentFromRgb(primary: { red: number; green: number; blue: number }, se
     secondaryWash: `rgb(${secondary.red} ${secondary.green} ${secondary.blue} / 34%)`,
     topWash: `rgb(${primary.red} ${primary.green} ${primary.blue} / 18%)`,
   }
+}
+
+function ambientImageDataUrl(accent: AlbumAccent): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1800" preserveAspectRatio="none"><defs><radialGradient id="glow" cx="50%" cy="40%" r="42%"><stop offset="0" stop-color="rgb(${accent.primary})" stop-opacity="0.62"/><stop offset="0.5" stop-color="rgb(${accent.primary})" stop-opacity="0.26"/><stop offset="0.85" stop-color="rgb(${accent.primary})" stop-opacity="0.04"/><stop offset="1" stop-color="rgb(${accent.primary})" stop-opacity="0"/></radialGradient><radialGradient id="warm" cx="50%" cy="40%" r="28%"><stop offset="0" stop-color="rgb(${accent.secondary})" stop-opacity="0.4"/><stop offset="1" stop-color="rgb(${accent.secondary})" stop-opacity="0"/></radialGradient></defs><rect width="1200" height="1800" fill="url(#glow)"/><rect width="1200" height="1800" fill="url(#warm)"/></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
 }
 
 function extractAlbumAccent(image: HTMLImageElement): AlbumAccent {
@@ -197,6 +220,17 @@ export default function RadioPage() {
   const [ambientLayers, setAmbientLayers] = createSignal<[AlbumAccent, AlbumAccent]>([DEFAULT_ALBUM_ACCENT, DEFAULT_ALBUM_ACCENT])
   const [activeAmbientLayer, setActiveAmbientLayer] = createSignal<0 | 1>(0)
   let lastAmbientKey = ''
+  const [queueDrawerOpen, setQueueDrawerOpen] = createSignal(false)
+  const [volumeOverlayActive, setVolumeOverlayActive] = createSignal(false)
+  let volumeOverlayTimeout: ReturnType<typeof setTimeout> | null = null
+  let volumeOverlayInitialized = false
+
+  const volumeMeterChars = () => {
+    const v = Math.max(0, Math.min(1, volume()))
+    const cells = 14
+    const filled = Math.round(v * cells)
+    return '█'.repeat(filled) + '▁'.repeat(cells - filled)
+  }
 
   // Local playback state. Frontend self-advances through localQueue; backend
   // resyncs only on admin actions (detected via playbackKey diff).
@@ -467,8 +501,11 @@ export default function RadioPage() {
     const nextLayer = untrack(activeAmbientLayer) === 0 ? 1 : 0
     setAmbientLayers(([first, second]) => (nextLayer === 0 ? [accent, second] : [first, accent]))
     window.requestAnimationFrame(() => setActiveAmbientLayer(nextLayer))
+
+    setMetaThemeColor(themeColorFromAccent(accent))
   })
 
+  const ambientImageSrc = (accent: AlbumAccent) => ambientImageDataUrl(accent)
   const ambientLayerStyle = (accent: AlbumAccent) =>
     `--ambient-a-wash: ${accent.primaryWash}; --ambient-b-wash: ${accent.secondaryWash}; --ambient-top-wash: ${accent.topWash};`
 
@@ -599,17 +636,97 @@ export default function RadioPage() {
     onCleanup(() => document.removeEventListener('visibilitychange', onVisible))
   })
 
+  // Show the CRT volume meter overlay briefly whenever volume changes (skip
+  // the initial mount so it doesn't flash on page load).
+  createEffect(() => {
+    volume()
+    if (!volumeOverlayInitialized) {
+      volumeOverlayInitialized = true
+      return
+    }
+    setVolumeOverlayActive(true)
+    if (volumeOverlayTimeout) clearTimeout(volumeOverlayTimeout)
+    volumeOverlayTimeout = setTimeout(() => setVolumeOverlayActive(false), 1400)
+  })
+  onCleanup(() => {
+    if (volumeOverlayTimeout) clearTimeout(volumeOverlayTimeout)
+  })
+
+  // Mobile: swipe-left-from-right-edge opens the queue drawer; swipe-right when
+  // open closes it.
+  createEffect(() => {
+    if (!onMobile) return
+    let startX = -1
+    let startY = 0
+    let trackedAsClose = false
+    const EDGE_PX = 28
+    const OPEN_PX = 60
+    const CLOSE_PX = 60
+
+    const onTouchStart = (event: TouchEvent) => {
+      const touch = event.touches[0]
+      startY = touch.clientY
+      if (queueDrawerOpen()) {
+        startX = touch.clientX
+        trackedAsClose = true
+        return
+      }
+      if (window.innerWidth - touch.clientX <= EDGE_PX) {
+        startX = touch.clientX
+        trackedAsClose = false
+      } else {
+        startX = -1
+      }
+    }
+
+    const onTouchEnd = (event: TouchEvent) => {
+      if (startX < 0) return
+      const touch = event.changedTouches[0]
+      const dx = touch.clientX - startX
+      const dy = Math.abs(touch.clientY - startY)
+      startX = -1
+      if (dy > Math.abs(dx)) return
+      if (trackedAsClose && dx > CLOSE_PX) setQueueDrawerOpen(false)
+      else if (!trackedAsClose && dx < -OPEN_PX) setQueueDrawerOpen(true)
+    }
+
+    document.addEventListener('touchstart', onTouchStart, { passive: true })
+    document.addEventListener('touchend', onTouchEnd, { passive: true })
+    onCleanup(() => {
+      document.removeEventListener('touchstart', onTouchStart)
+      document.removeEventListener('touchend', onTouchEnd)
+    })
+  })
+
   return (
     <>
       <div class="album-ambient" aria-hidden="true">
         <div class="album-ambient-layer" classList={{ active: activeAmbientLayer() === 0 }} style={ambientLayerStyle(ambientLayers()[0])} />
         <div class="album-ambient-layer" classList={{ active: activeAmbientLayer() === 1 }} style={ambientLayerStyle(ambientLayers()[1])} />
       </div>
+      <img class="album-ambient-image" classList={{ active: activeAmbientLayer() === 0 }} src={ambientImageSrc(ambientLayers()[0])} alt="" aria-hidden="true" />
+      <img class="album-ambient-image" classList={{ active: activeAmbientLayer() === 1 }} src={ambientImageSrc(ambientLayers()[1])} alt="" aria-hidden="true" />
       <section class="radio-page">
         <div class="now-playing-card">
         <div class="art-shell">
-          <Show when={currentSong()?.hasCover} fallback={<div class="art-glow" />}>
-            <img class="album-cover" src={`${API_BASE}/api/songs/${currentSong()?.id}/cover`} alt="" />
+          <Show when={currentSong()?.id ?? ''} keyed>
+            {(songId) => (
+              <>
+                <Show when={currentSong()?.hasCover} fallback={<div class="art-glow" />}>
+                  <img class="album-cover" src={`${API_BASE}/api/songs/${songId}/cover`} alt="" />
+                </Show>
+                <div class="art-crt-scanload" aria-hidden="true" />
+              </>
+            )}
+          </Show>
+          <div class="art-crt-sweep" aria-hidden="true" />
+          <div class="art-crt-scanlines" aria-hidden="true" />
+          <div class="art-crt-vignette" aria-hidden="true" />
+          <Show when={volumeOverlayActive()}>
+            <div class="art-crt-volume" aria-hidden="true">
+              <span class="art-crt-volume-label">vol</span>
+              <span class="art-crt-volume-bar">{volumeMeterChars()}</span>
+            </div>
           </Show>
           <div class="station-id-card" aria-hidden="true">
             <small>sigil id: {currentSong()?.id.slice(0, 8) ?? 'awaiting'}</small>
@@ -749,7 +866,13 @@ export default function RadioPage() {
         </div>
       </div>
 
-      <aside class="radio-panel">
+      <div
+        class="radio-panel-backdrop"
+        classList={{ 'is-open': queueDrawerOpen() }}
+        onClick={() => setQueueDrawerOpen(false)}
+        aria-hidden="true"
+      />
+      <aside class="radio-panel" classList={{ 'is-open': queueDrawerOpen() }}>
         <section class="glass-card chat-preview">
           <p class="eyebrow">chat</p>
           <p class="muted">coming later</p>
@@ -793,9 +916,6 @@ export default function RadioPage() {
         </Show>
       </aside>
       </section>
-      <footer class="radio-footer">
-        made by <a href="https://bsky.app/profile/okami.mom" target="_blank" rel="noreferrer">@okami.mom</a> source: <a href="https://tangled.org/okami.mom/sister-radio" target="_blank" rel="noreferrer">sister-radio</a>, and font: <a href="https://gleeson.itch.io/analog-mono" target="_blank" rel="noreferrer">analog mono</a>
-      </footer>
     </>
   )
 }

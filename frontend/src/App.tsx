@@ -1,6 +1,5 @@
 import { createResource, createSignal, onCleanup, Show } from 'solid-js'
 import { getListenerOptOut, setListenerOptOut, setSessionToken } from './lib/radio'
-import { Monitor, Moon, MoonStar } from 'lucide-solid'
 import AdminPage from './pages/AdminPage'
 import QueueControlPage from './pages/QueueControlPage'
 import RadioPage from './pages/RadioPage'
@@ -12,26 +11,9 @@ import {
   signOut,
   startSignIn,
 } from './lib/auth'
-import {
-  applyThemePreference,
-  nextThemePreference,
-  readThemePreference,
-  type ThemePreference,
-} from './lib/theme'
 
 function currentPath(): string {
   return window.location.pathname
-}
-
-function ThemeIcon(props: { preference: () => ThemePreference }) {
-  return (
-    <Show
-      when={props.preference() === 'system'}
-      fallback={props.preference() === 'light' ? <Moon size={17} /> : <MoonStar size={17} />}
-    >
-      <Monitor size={17} />
-    </Show>
-  )
 }
 
 /**
@@ -52,7 +34,6 @@ export default function App() {
   const [input, setInput] = createSignal('')
   const [localError, setLocalError] = createSignal<string | null>(null)
   const [path, setPath] = createSignal(currentPath())
-  const [theme, setTheme] = createSignal(readThemePreference())
   const [session, { refetch }] = createResource(fetchSession)
   const [listenerOptOut, setListenerOptOutSignal] = createSignal(getListenerOptOut())
 
@@ -60,8 +41,6 @@ export default function App() {
     setListenerOptOutSignal(next)
     setListenerOptOut(next)
   }
-
-  applyThemePreference(theme())
 
   const updatePath = () => setPath(currentPath())
   window.addEventListener('popstate', updatePath)
@@ -71,12 +50,6 @@ export default function App() {
     event.preventDefault()
     window.history.pushState({}, '', to)
     setPath(to)
-  }
-
-  const switchTheme = () => {
-    const nextTheme = nextThemePreference(theme())
-    setTheme(nextTheme)
-    applyThemePreference(nextTheme)
   }
 
   const authError = () => readAuthError() ?? localError()
@@ -140,9 +113,6 @@ export default function App() {
         <a href="/auth" onClick={navigate('/auth')} aria-current={path() === '/auth' || path() === '/admin' ? 'page' : undefined}>
           auth
         </a>
-        <button class="theme-switch" type="button" onClick={switchTheme} aria-label={`theme: ${theme()}`} title={`theme: ${theme()}`}>
-          <ThemeIcon preference={theme} />
-        </button>
       </nav>
 
       <Show when={!session.loading} fallback={<p>checking session...</p>}>
