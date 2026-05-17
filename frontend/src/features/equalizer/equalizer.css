@@ -97,7 +97,9 @@
   border: 1px solid var(--hairline);
   border-radius: 0;
   color: var(--text);
+  -webkit-text-fill-color: var(--text);
   background: rgb(var(--accent-rgb) / 5%);
+  color-scheme: dark;
   padding: 0 0.45rem;
   font-size: 0.78rem;
   font-weight: 300;
@@ -165,7 +167,9 @@
   border: 1px solid var(--hairline);
   border-radius: 0;
   color: var(--text);
+  -webkit-text-fill-color: var(--text);
   background: rgb(var(--accent-rgb) / 5%);
+  color-scheme: dark;
   font-size: 0.68rem;
   font-weight: 300;
 }
@@ -180,6 +184,7 @@
   height: 1.65rem;
   padding: 0 0.1rem;
   color: var(--accent);
+  -webkit-text-fill-color: var(--accent);
 }
 
 .equalizer-graph {
