@@ -1,8 +1,8 @@
 import { createResource, createSignal, onCleanup, Show } from 'solid-js'
-import { getListenerOptOut, setListenerOptOut, setSessionToken } from './lib/radio'
-import AdminPage from './pages/AdminPage'
-import QueueControlPage from './pages/QueueControlPage'
-import RadioPage from './pages/RadioPage'
+import { getListenerOptOut, setListenerOptOut, setSessionToken } from './shared/lib/radio'
+import AdminPage from './pages/admin/AdminPage'
+import QueueControlPage from './pages/queue-control/QueueControlPage'
+import RadioPage from './pages/radio/RadioPage'
 import './App.css'
 import {
   fetchSession,
@@ -10,7 +10,7 @@ import {
   readAuthError,
   signOut,
   startSignIn,
-} from './lib/auth'
+} from './shared/lib/auth'
 
 function currentPath(): string {
   return window.location.pathname

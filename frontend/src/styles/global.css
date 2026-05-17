@@ -1,0 +1,136 @@
+:root {
+  color-scheme: dark;
+  --bg: #1e1e1e;
+  --surface: rgb(64 57 57 / 34%);
+  --surface-soft: rgb(51 46 46 / 22%);
+  --surface-fade: rgb(64 57 57 / 0%);
+  --text: #f4eeee;
+  --muted: #b7aaaa;
+  --line: #5a5151;
+  --hairline: #4a4242;
+  --accent: #be7c8f;
+  --accent-rgb: 190 124 143;
+  --accent-line: rgb(190 124 143 / 46%);
+  --accent-art: rgb(190 124 143 / 22%);
+  --danger: #ff6b63;
+  --nav-bg: rgb(30 30 30 / 88%);
+  --art-bg-a: #2a2727;
+  --art-bg-b: #403939;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: var(--bg);
+}
+
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  background: var(--bg);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", "Courier New", monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+@font-face {
+  font-family: "AnalogMonoPlus";
+  src: url("/AnalogMonoPlus-subset.woff2") format("woff2");
+  font-display: swap;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+main {
+  position: relative;
+  z-index: 1;
+  width: min(1360px, calc(100vw - 2rem));
+  margin: 0 auto;
+  padding: 0 0 3rem;
+}
+
+.album-ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.album-ambient-layer {
+  position: absolute;
+  inset: -12rem;
+  opacity: 0;
+  background:
+    radial-gradient(ellipse 90vmax 80vmax at 36% 30%, var(--ambient-a-wash, transparent) 0%, var(--ambient-a-wash, transparent) 8%, transparent 70%),
+    radial-gradient(ellipse 45vmax 40vmax at 36% 30%, var(--ambient-b-wash, transparent) 0%, var(--ambient-b-wash, transparent) 6%, transparent 75%);
+  filter: blur(80px) saturate(0.72);
+  transition: opacity 1400ms ease;
+}
+
+.album-ambient::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  opacity: 0.22;
+  mix-blend-mode: overlay;
+}
+
+@media (max-width: 860px) {
+  .album-ambient-layer {
+    background:
+      radial-gradient(circle at 22% 8%, var(--ambient-a-wash, transparent) 0, transparent 64rem),
+      radial-gradient(circle at 78% 4%, var(--ambient-b-wash, transparent) 0, transparent 60rem),
+      radial-gradient(circle at 50% 100%, var(--ambient-a-wash, transparent) 0, transparent 56rem),
+      linear-gradient(180deg, var(--ambient-top-wash, transparent) 0, transparent 56rem);
+  }
+}
+
+.album-ambient-layer.active {
+  opacity: 1;
+}
+
+.album-ambient-image {
+  display: none;
+}
+
+.top-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  min-height: 2.6rem;
+  margin: 0 -1rem 0.75rem;
+  padding-top: 1.25rem;
+  border-bottom: 0;
+}
+
+.top-nav a {
+  color: var(--accent);
+  text-decoration: none;
+  padding: 0.8rem 1rem;
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.top-nav a[aria-current='page'] {
+  color: var(--text);
+  font-weight: 600;
+}
+

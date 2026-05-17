@@ -1,0 +1,237 @@
+.equalizer-card {
+  padding: 0;
+  background: transparent;
+}
+
+.equalizer-panel {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.equalizer-header {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 42%, transparent);
+  padding: 0.58rem 0.55rem 0.58rem 0.8rem;
+  background: transparent;
+}
+
+.equalizer-title {
+  min-width: 0;
+  flex: 1;
+  color: var(--muted);
+  font-weight: 300;
+}
+
+.equalizer-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  padding: 0;
+}
+
+.equalizer-panel.open .equalizer-toggle svg {
+  transform: rotate(180deg);
+}
+
+.equalizer-power {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  padding: 0;
+}
+
+.normalization-toggle {
+  min-height: 1.8rem;
+  border: 1px solid var(--line);
+  padding: 0 0.55rem;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.76rem;
+}
+
+.equalizer-power[aria-pressed='true'],
+.normalization-toggle[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+
+.equalizer-controls {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 0;
+  padding: 0;
+}
+
+.equalizer-presets {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: end;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 300;
+  flex-wrap: wrap;
+}
+
+.equalizer-presets label {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.equalizer-preset-select,
+.equalizer-preset-name {
+  height: 1.9rem;
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  color: var(--text);
+  background: rgb(var(--accent-rgb) / 5%);
+  padding: 0 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 300;
+}
+
+.equalizer-preset-name {
+  width: 8.5rem;
+}
+
+.equalizer-preset {
+  min-height: 1.9rem;
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  color: var(--accent);
+  background: rgb(var(--accent-rgb) / 5%);
+  padding: 0.32rem 0.62rem;
+  font-size: 0.78rem;
+  font-weight: 300;
+}
+
+.equalizer-preset:disabled {
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.equalizer-band {
+  display: grid;
+  justify-items: center;
+  gap: 0.42rem;
+  min-width: 0;
+  padding: 0.7rem 0.32rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 300;
+  border-right: 1px solid var(--hairline);
+}
+
+.equalizer-band:nth-child(8) {
+  border-right: 0;
+}
+
+.equalizer-band-label {
+  color: var(--text);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.equalizer-gain {
+  width: 1.5rem;
+  height: 6rem;
+  accent-color: var(--accent);
+  writing-mode: vertical-lr;
+  direction: rtl;
+}
+
+.equalizer-band small {
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.equalizer-frequency,
+.equalizer-filter {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  color: var(--text);
+  background: rgb(var(--accent-rgb) / 5%);
+  font-size: 0.68rem;
+  font-weight: 300;
+}
+
+.equalizer-frequency {
+  height: 1.65rem;
+  padding: 0 0.2rem;
+  text-align: center;
+}
+
+.equalizer-filter {
+  height: 1.65rem;
+  padding: 0 0.1rem;
+  color: var(--accent);
+}
+
+.equalizer-graph {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--hairline);
+  padding: 0.7rem 0.8rem 0.55rem;
+  background: transparent;
+}
+
+.equalizer-graph svg {
+  display: block;
+  width: 100%;
+  height: 7rem;
+  border: 1px solid var(--hairline);
+  background:
+    linear-gradient(to right, transparent calc(25% - 0.5px), var(--hairline) 25%, transparent calc(25% + 0.5px)),
+    linear-gradient(to right, transparent calc(50% - 0.5px), var(--hairline) 50%, transparent calc(50% + 0.5px)),
+    linear-gradient(to right, transparent calc(75% - 0.5px), var(--hairline) 75%, transparent calc(75% + 0.5px)),
+    rgb(var(--accent-rgb) / 4%);
+}
+
+.equalizer-graph-zero {
+  stroke: var(--line);
+  stroke-width: 0.7;
+  vector-effect: non-scaling-stroke;
+}
+
+.equalizer-graph-curve {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.equalizer-graph-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 300;
+}
+
+.equalizer-reset {
+  grid-column: 1 / -1;
+  justify-self: stretch;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  color: var(--accent);
+  background: transparent;
+  padding: 0.7rem 0.8rem;
+  font-weight: 300;
+}
