@@ -768,7 +768,7 @@ export default function RadioPage() {
           <div class="live-viewer-counter" aria-live="polite">
             <Eye size={16} />
             <span>{viewerCountLabel()}</span>
-            <span>{viewerCountValue() === 1 ? 'viewer' : 'viewers'}</span>
+            <span>{viewerCountValue() === 1 ? 'listener' : 'listeners'}</span>
             <Show when={listenerDids().length > 0}>
               <ul class="listener-avatars" aria-label="listeners">
                 <For each={visibleListenerDids()}>
