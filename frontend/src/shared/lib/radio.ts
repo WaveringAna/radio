@@ -181,6 +181,96 @@ export function sendRadioViewerKeepalive(socket: WebSocket, viewerId: string, di
   socket.send(JSON.stringify({ type: 'viewerKeepalive', viewer_id: viewerId, did: did ?? null }))
 }
 
+export const MAX_CHAT_BODY_LEN = 1000
+
+export type ChatMessageKind = 'user' | 'now_playing'
+
+export interface ChatMessage {
+  id: string
+  senderDid: string
+  body: string
+  createdAt: number
+  kind: ChatMessageKind
+}
+
+export type ChatEvent =
+  | { type: 'history'; messages: ChatMessage[] }
+  | { type: 'message'; message: ChatMessage }
+  | { type: 'messageDeleted'; id: string }
+  | { type: 'messagesPurged'; senderDid: string }
+
+export interface ChatBan {
+  did: string
+  bannedByDid: string
+  reason?: string | null
+  createdAt: number
+}
+
+export async function deleteChatMessage(messageId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/radio/chat/messages/${messageId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+    headers: authHeaders(),
+  })
+  if (!response.ok) {
+    throw new Error('failed to delete chat message')
+  }
+}
+
+export async function fetchChatBans(): Promise<ChatBan[]> {
+  const response = await fetch(`${API_BASE}/api/radio/chat/bans`, {
+    credentials: 'include',
+    headers: authHeaders(),
+  })
+  if (!response.ok) {
+    throw new Error('failed to load chat bans')
+  }
+  return (await response.json()) as ChatBan[]
+}
+
+export async function createChatBan(did: string, reason?: string): Promise<ChatBan> {
+  const response = await fetch(`${API_BASE}/api/radio/chat/bans`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    credentials: 'include',
+    body: JSON.stringify({ did, reason: reason ?? null }),
+  })
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as { error?: string }
+    throw new Error(data.error ?? 'failed to ban did')
+  }
+  return (await response.json()) as ChatBan
+}
+
+export async function removeChatBan(did: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/radio/chat/bans/${encodeURIComponent(did)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+    headers: authHeaders(),
+  })
+  if (!response.ok) {
+    throw new Error('failed to remove chat ban')
+  }
+}
+
+/**
+ * Opens a websocket for the relayed chat channel.
+ * @returns A connected websocket instance.
+ */
+export function openChatSocket(): WebSocket {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = API_BASE
+    ? new URL(API_BASE).host
+    : window.location.port === '5173'
+      ? `${window.location.hostname}:3000`
+      : window.location.host
+  return new WebSocket(`${protocol}//${host}/api/radio/chat/ws`)
+}
+
+export function sendChatMessage(socket: WebSocket, text: string, token: string | null): void {
+  socket.send(JSON.stringify({ type: 'send', text, token }))
+}
+
 const LISTENER_OPT_OUT_KEY = 'radio_listener_opt_out'
 
 export function getListenerOptOut(): boolean {

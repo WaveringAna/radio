@@ -36,7 +36,13 @@ export function resolveAtprotoProfile(did: string): Promise<AtprotoProfile> {
     return cached
   }
 
-  const profile = resolveSlingshotProfile(did).catch(() => ({ did, handle: did }))
+  // Don't cache the fallback — a transient slingshot failure would otherwise
+  // permanently pin the row to the raw DID with no chance of recovery.
+  const profile = resolveSlingshotProfile(did).catch((error) => {
+    profileCache.delete(did)
+    console.warn('atproto profile resolution failed for', did, error)
+    return { did, handle: did }
+  })
   profileCache.set(did, profile)
   return profile
 }

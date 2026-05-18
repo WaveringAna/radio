@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from 'solid-js'
 import { ListPlus, Pause, Play, SkipForward, Trash2, UploadCloud } from 'lucide-solid'
 import { AdminUploadPanel } from '../../features/upload/AdminUploadPanel'
+import { ChatModerationPanel } from './ChatModerationPanel'
 import { PaginationRow } from '../../shared/components/PaginationRow'
 import { ProfileAvatar } from '../../shared/components/ProfileAvatar'
 import { resolveAtprotoProfile, type AtprotoProfile } from '../../shared/lib/atproto'
@@ -447,6 +448,8 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                 </Show>
               </Show>
             </section>
+
+            <ChatModerationPanel />
           </div>
 
           <div class="qc-right">

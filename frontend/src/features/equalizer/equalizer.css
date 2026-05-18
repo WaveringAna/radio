@@ -109,6 +109,16 @@
   width: 8.5rem;
 }
 
+.equalizer-preset-select option {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.equalizer-preset-select option:checked {
+  color: #ffffff;
+  background: var(--accent);
+}
+
 .equalizer-preset {
   min-height: 1.9rem;
   border: 1px solid var(--hairline);

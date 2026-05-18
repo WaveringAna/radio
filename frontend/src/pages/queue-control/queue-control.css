@@ -564,3 +564,119 @@
   font-size: 0.78rem;
   letter-spacing: 0.02em;
 }
+
+.chat-moderation-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.8rem 0 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.chat-moderation-error {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.chat-moderation-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.chat-moderation-subtitle {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.chat-moderation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.chat-moderation-list li {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--hairline);
+  border-radius: 0.55rem;
+  background: rgb(255 255 255 / 3%);
+}
+
+.chat-moderation-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.chat-moderation-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.chat-moderation-handle {
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-moderation-time {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.chat-moderation-body {
+  margin: 0.1rem 0 0;
+  font-size: 0.88rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.chat-moderation-reason {
+  font-style: italic;
+  color: var(--muted);
+}
+
+.chat-moderation-actions {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.chat-moderation-ban-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
+  gap: 0.4rem;
+}
+
+.chat-moderation-ban-form input {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+  border: 1px solid var(--hairline);
+  border-radius: 0.45rem;
+  background: rgb(255 255 255 / 4%);
+  color: var(--text);
+}
+
+.chat-moderation-ban-form input:focus {
+  outline: none;
+  border-color: rgb(var(--accent-rgb) / 60%);
+}

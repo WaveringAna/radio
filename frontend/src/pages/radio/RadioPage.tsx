@@ -1,5 +1,5 @@
 import { createEffect, createResource, createSignal, For, Index, onCleanup, Show, untrack } from 'solid-js'
-import { Eye, Volume2 } from 'lucide-solid'
+import { Eye, Send, Volume2 } from 'lucide-solid'
 import { resolveAtprotoProfile, type AtprotoProfile } from '../../shared/lib/atproto'
 import {
   API_BASE,
@@ -7,9 +7,15 @@ import {
   fetchSongs,
   getListenerOptOut,
   getRadioViewerId,
+  getSessionToken,
+  MAX_CHAT_BODY_LEN,
+  openChatSocket,
   openRadioSocket,
+  sendChatMessage,
   sendRadioViewerHello,
   sendRadioViewerKeepalive,
+  type ChatEvent,
+  type ChatMessage,
   type QueueItem,
   type RadioEvent,
   type RadioState,
@@ -217,6 +223,11 @@ export default function RadioPage() {
   const [isAudioPlaying, setIsAudioPlaying] = createSignal(false)
   const [viewerCount, setViewerCount] = createSignal(0)
   const [listenerDids, setListenerDids] = createSignal<string[]>([])
+  const [chatMessages, setChatMessages] = createSignal<ChatMessage[]>([])
+  const [chatDraft, setChatDraft] = createSignal('')
+  const [chatConnected, setChatConnected] = createSignal(false)
+  let chatSocket: WebSocket | null = null
+  let chatLogRef: HTMLDivElement | undefined
   const [listenerOverflowOpen, setListenerOverflowOpen] = createSignal(false)
   const MAX_VISIBLE_LISTENERS = 8
   const visibleListenerDids = () => listenerDids().slice(0, MAX_VISIBLE_LISTENERS)
@@ -434,6 +445,100 @@ export default function RadioPage() {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
       socket?.close()
     })
+  })
+
+  createEffect(() => {
+    let reconnectTimer: number | null = null
+    let reconnectAttempt = 0
+    let cancelled = false
+
+    const connect = () => {
+      if (cancelled) return
+      chatSocket = openChatSocket()
+
+      chatSocket.addEventListener('open', () => {
+        reconnectAttempt = 0
+        setChatConnected(true)
+      })
+
+      chatSocket.addEventListener('message', (message) => {
+        const event = JSON.parse(message.data) as ChatEvent
+        if (event.type === 'history') {
+          setChatMessages(event.messages)
+        } else if (event.type === 'message') {
+          setChatMessages((current) => [...current, event.message])
+        } else if (event.type === 'messageDeleted') {
+          setChatMessages((current) => current.filter((entry) => entry.id !== event.id))
+        } else if (event.type === 'messagesPurged') {
+          setChatMessages((current) => current.filter((entry) => entry.senderDid !== event.senderDid))
+        }
+      })
+
+      const scheduleReconnect = () => {
+        setChatConnected(false)
+        if (cancelled || reconnectTimer !== null) return
+        const delay = Math.min(30000, 500 * 2 ** Math.min(reconnectAttempt, 6))
+        reconnectAttempt += 1
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null
+          connect()
+        }, delay)
+      }
+
+      chatSocket.addEventListener('close', scheduleReconnect)
+      chatSocket.addEventListener('error', () => chatSocket?.close())
+    }
+
+    connect()
+
+    onCleanup(() => {
+      cancelled = true
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      chatSocket?.close()
+      chatSocket = null
+    })
+  })
+
+  // Auto-scroll the chat log to the newest message when it changes.
+  createEffect(() => {
+    chatMessages()
+    if (chatLogRef) {
+      queueMicrotask(() => {
+        if (chatLogRef) chatLogRef.scrollTop = chatLogRef.scrollHeight
+      })
+    }
+  })
+
+  const canSendChat = () => Boolean(session()?.accountDid) && chatConnected()
+
+  const submitChat = () => {
+    const text = chatDraft().trim()
+    if (!text) return
+    if (!chatSocket || chatSocket.readyState !== WebSocket.OPEN) return
+    const token = getSessionToken()
+    if (!token) return
+    sendChatMessage(chatSocket, text.slice(0, MAX_CHAT_BODY_LEN), token)
+    setChatDraft('')
+  }
+
+  const formatChatTime = (createdAt: number): string => {
+    const date = new Date(createdAt * 1000)
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+
+  createEffect(() => {
+    const senders = chatMessages()
+      .filter((message) => message.kind === 'user')
+      .map((message) => message.senderDid)
+    const dids = senders.filter(
+      (did, index, values) => values.indexOf(did) === index && !profiles()[did] && !inFlightDids.has(did),
+    )
+    for (const did of dids) {
+      inFlightDids.add(did)
+      void resolveAtprotoProfile(did)
+        .then((profile) => setProfiles((current) => ({ ...current, [did]: profile })))
+        .finally(() => inFlightDids.delete(did))
+    }
   })
 
   createEffect(() => {
@@ -885,9 +990,85 @@ export default function RadioPage() {
         aria-hidden="true"
       />
       <aside class="radio-panel" classList={{ 'is-open': queueDrawerOpen() }}>
-        <section class="glass-card chat-preview">
-          <p class="eyebrow">chat</p>
-          <p class="muted">coming later</p>
+        <section class="glass-card chat-card">
+          <div class="section-heading">
+            <p class="eyebrow">chat</p>
+            <span>{chatConnected() ? 'live' : 'offline'}</span>
+          </div>
+          <div class="chat-log" ref={chatLogRef}>
+            <Show
+              when={chatMessages().length > 0}
+              fallback={<p class="muted chat-empty">no messages yet</p>}
+            >
+              <ul class="chat-message-list">
+                <For each={chatMessages()}>
+                  {(message) => {
+                    if (message.kind === 'now_playing') {
+                      return (
+                        <li class="chat-now-playing">
+                          <span class="chat-now-playing-label">now playing</span>
+                          <span class="chat-now-playing-body">{message.body}</span>
+                          <span class="chat-message-time">{formatChatTime(message.createdAt)}</span>
+                        </li>
+                      )
+                    }
+                    const profile = () => profileFor(message.senderDid)
+                    return (
+                      <li class="chat-message">
+                        <a
+                          class="chat-message-avatar"
+                          href={`https://bsky.app/profile/${profile().handle}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <ProfileAvatar profile={profile()} class="chat-avatar" title={`@${profile().handle}`} />
+                        </a>
+                        <div class="chat-message-body">
+                          <div class="chat-message-meta">
+                            <span class="chat-message-handle">
+                              {profile().displayName || `@${profile().handle}`}
+                            </span>
+                            <span class="chat-message-time">{formatChatTime(message.createdAt)}</span>
+                          </div>
+                          <p class="chat-message-text">{message.body}</p>
+                        </div>
+                      </li>
+                    )
+                  }}
+                </For>
+              </ul>
+            </Show>
+          </div>
+          <form
+            class="chat-composer"
+            onSubmit={(event) => {
+              event.preventDefault()
+              submitChat()
+            }}
+          >
+            <Show
+              when={session()?.accountDid}
+              fallback={<p class="muted chat-empty">log in to chat</p>}
+            >
+              <input
+                class="chat-input"
+                type="text"
+                placeholder="say something nice"
+                maxlength={MAX_CHAT_BODY_LEN}
+                value={chatDraft()}
+                onInput={(event) => setChatDraft(event.currentTarget.value)}
+                disabled={!chatConnected()}
+              />
+              <button
+                class="chat-send"
+                type="submit"
+                aria-label="send"
+                disabled={!canSendChat() || chatDraft().trim().length === 0}
+              >
+                <Send size={16} />
+              </button>
+            </Show>
+          </form>
         </section>
 
         <section class="glass-card up-next-card">
