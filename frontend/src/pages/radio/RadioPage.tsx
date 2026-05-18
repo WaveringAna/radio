@@ -236,7 +236,6 @@ export default function RadioPage() {
   const [ambientLayers, setAmbientLayers] = createSignal<[AlbumAccent, AlbumAccent]>([DEFAULT_ALBUM_ACCENT, DEFAULT_ALBUM_ACCENT])
   const [activeAmbientLayer, setActiveAmbientLayer] = createSignal<0 | 1>(0)
   let lastAmbientKey = ''
-  const [queueDrawerOpen, setQueueDrawerOpen] = createSignal(false)
   const [volumeOverlayActive, setVolumeOverlayActive] = createSignal(false)
   let volumeOverlayTimeout: ReturnType<typeof setTimeout> | null = null
   let volumeOverlayInitialized = false
@@ -628,6 +627,90 @@ export default function RadioPage() {
     return next ? `${API_BASE}/api/songs/${next.songId}/audio` : undefined
   }
   const profileFor = (did: string) => profiles()[did] ?? fallbackProfile(did)
+
+  const chatCard = () => (
+    <section class="glass-card chat-card">
+      <div class="section-heading">
+        <p class="eyebrow">chat</p>
+        <span>{chatConnected() ? 'live' : 'offline'}</span>
+      </div>
+      <div class="chat-log" ref={chatLogRef}>
+        <Show
+          when={chatMessages().length > 0}
+          fallback={<p class="muted chat-empty">no messages yet</p>}
+        >
+          <ul class="chat-message-list">
+            <For each={chatMessages()}>
+              {(message) => {
+                if (message.kind === 'now_playing') {
+                  return (
+                    <li class="chat-now-playing">
+                      <span class="chat-now-playing-label">now playing</span>
+                      <span class="chat-now-playing-body">{message.body}</span>
+                      <span class="chat-message-time">{formatChatTime(message.createdAt)}</span>
+                    </li>
+                  )
+                }
+                const profile = () => profileFor(message.senderDid)
+                return (
+                  <li class="chat-message">
+                    <a
+                      class="chat-message-avatar"
+                      href={`https://bsky.app/profile/${profile().handle}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <ProfileAvatar profile={profile()} class="chat-avatar" title={`@${profile().handle}`} />
+                    </a>
+                    <div class="chat-message-body">
+                      <div class="chat-message-meta">
+                        <span class="chat-message-handle">
+                          {profile().displayName || `@${profile().handle}`}
+                        </span>
+                        <span class="chat-message-time">{formatChatTime(message.createdAt)}</span>
+                      </div>
+                      <p class="chat-message-text">{message.body}</p>
+                    </div>
+                  </li>
+                )
+              }}
+            </For>
+          </ul>
+        </Show>
+      </div>
+      <form
+        class="chat-composer"
+        onSubmit={(event) => {
+          event.preventDefault()
+          submitChat()
+        }}
+      >
+        <Show
+          when={session()?.accountDid}
+          fallback={<p class="muted chat-empty">log in to chat</p>}
+        >
+          <input
+            class="chat-input"
+            type="text"
+            placeholder="say something nice"
+            maxlength={MAX_CHAT_BODY_LEN}
+            value={chatDraft()}
+            onInput={(event) => setChatDraft(event.currentTarget.value)}
+            disabled={!chatConnected()}
+          />
+          <button
+            class="chat-send"
+            type="submit"
+            aria-label="send"
+            disabled={!canSendChat() || chatDraft().trim().length === 0}
+          >
+            <Send size={16} />
+          </button>
+        </Show>
+      </form>
+    </section>
+  )
+
   const queuePageSize = 6
   const upNextPaging = createPagedList(localQueue, queuePageSize)
 
@@ -765,52 +848,6 @@ export default function RadioPage() {
   })
   onCleanup(() => {
     if (volumeOverlayTimeout) clearTimeout(volumeOverlayTimeout)
-  })
-
-  // Mobile: swipe-left-from-right-edge opens the queue drawer; swipe-right when
-  // open closes it.
-  createEffect(() => {
-    if (!onMobile) return
-    let startX = -1
-    let startY = 0
-    let trackedAsClose = false
-    const EDGE_PX = 28
-    const OPEN_PX = 60
-    const CLOSE_PX = 60
-
-    const onTouchStart = (event: TouchEvent) => {
-      const touch = event.touches[0]
-      startY = touch.clientY
-      if (queueDrawerOpen()) {
-        startX = touch.clientX
-        trackedAsClose = true
-        return
-      }
-      if (window.innerWidth - touch.clientX <= EDGE_PX) {
-        startX = touch.clientX
-        trackedAsClose = false
-      } else {
-        startX = -1
-      }
-    }
-
-    const onTouchEnd = (event: TouchEvent) => {
-      if (startX < 0) return
-      const touch = event.changedTouches[0]
-      const dx = touch.clientX - startX
-      const dy = Math.abs(touch.clientY - startY)
-      startX = -1
-      if (dy > Math.abs(dx)) return
-      if (trackedAsClose && dx > CLOSE_PX) setQueueDrawerOpen(false)
-      else if (!trackedAsClose && dx < -OPEN_PX) setQueueDrawerOpen(true)
-    }
-
-    document.addEventListener('touchstart', onTouchStart, { passive: true })
-    document.addEventListener('touchend', onTouchEnd, { passive: true })
-    onCleanup(() => {
-      document.removeEventListener('touchstart', onTouchStart)
-      document.removeEventListener('touchend', onTouchEnd)
-    })
   })
 
   return (
@@ -981,133 +1018,49 @@ export default function RadioPage() {
             />
           </label>
         </div>
+        {onMobile && chatCard()}
       </div>
 
-      <div
-        class="radio-panel-backdrop"
-        classList={{ 'is-open': queueDrawerOpen() }}
-        onClick={() => setQueueDrawerOpen(false)}
-        aria-hidden="true"
-      />
-      <aside class="radio-panel" classList={{ 'is-open': queueDrawerOpen() }}>
-        <section class="glass-card chat-card">
-          <div class="section-heading">
-            <p class="eyebrow">chat</p>
-            <span>{chatConnected() ? 'live' : 'offline'}</span>
-          </div>
-          <div class="chat-log" ref={chatLogRef}>
-            <Show
-              when={chatMessages().length > 0}
-              fallback={<p class="muted chat-empty">no messages yet</p>}
-            >
-              <ul class="chat-message-list">
-                <For each={chatMessages()}>
-                  {(message) => {
-                    if (message.kind === 'now_playing') {
-                      return (
-                        <li class="chat-now-playing">
-                          <span class="chat-now-playing-label">now playing</span>
-                          <span class="chat-now-playing-body">{message.body}</span>
-                          <span class="chat-message-time">{formatChatTime(message.createdAt)}</span>
-                        </li>
-                      )
-                    }
-                    const profile = () => profileFor(message.senderDid)
+      <Show when={!onMobile}>
+        <aside class="radio-panel">
+          {chatCard()}
+
+          <section class="glass-card up-next-card">
+            <div class="section-heading">
+              <p class="eyebrow">up next</p>
+              <span>{snapshot()?.state.status ?? 'loading'}</span>
+            </div>
+            <Show when={!snapshot.loading} fallback={<p class="muted">loading queue...</p>}>
+              <ul class="queue-list">
+                <For each={upNextPaging.paged()} fallback={<li class="muted">queue is empty</li>}>
+                  {(item, index) => {
+                    const profile = () => profileFor(item.queuedByDid)
+                    const hasCover = () => (songs() ?? []).some((song) => song.id === item.songId && song.hasCover)
                     return (
-                      <li class="chat-message">
-                        <a
-                          class="chat-message-avatar"
-                          href={`https://bsky.app/profile/${profile().handle}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          <ProfileAvatar profile={profile()} class="chat-avatar" title={`@${profile().handle}`} />
-                        </a>
-                        <div class="chat-message-body">
-                          <div class="chat-message-meta">
-                            <span class="chat-message-handle">
-                              {profile().displayName || `@${profile().handle}`}
-                            </span>
-                            <span class="chat-message-time">{formatChatTime(message.createdAt)}</span>
-                          </div>
-                          <p class="chat-message-text">{message.body}</p>
+                      <li>
+                        <span class="queue-number">{upNextPaging.page() * queuePageSize + index() + 1}</span>
+                        <SongCoverThumb songId={item.songId} hasCover={hasCover()} />
+                        <div class="up-next-copy">
+                          <span class="up-next-title">{item.title}</span>
+                          <small class="up-next-artist">{item.artist || 'unknown artist'}</small>
                         </div>
+                        <ProfileAvatar profile={profile()} class="up-next-profile-avatar" title={`@${profile().handle}`} />
                       </li>
                     )
                   }}
                 </For>
               </ul>
+              <Show when={upNextPaging.pageCount() > 1}>
+                <PaginationRow page={upNextPaging.page()} pageCount={upNextPaging.pageCount()} onPageChange={upNextPaging.setPage} compact />
+              </Show>
             </Show>
-          </div>
-          <form
-            class="chat-composer"
-            onSubmit={(event) => {
-              event.preventDefault()
-              submitChat()
-            }}
-          >
-            <Show
-              when={session()?.accountDid}
-              fallback={<p class="muted chat-empty">log in to chat</p>}
-            >
-              <input
-                class="chat-input"
-                type="text"
-                placeholder="say something nice"
-                maxlength={MAX_CHAT_BODY_LEN}
-                value={chatDraft()}
-                onInput={(event) => setChatDraft(event.currentTarget.value)}
-                disabled={!chatConnected()}
-              />
-              <button
-                class="chat-send"
-                type="submit"
-                aria-label="send"
-                disabled={!canSendChat() || chatDraft().trim().length === 0}
-              >
-                <Send size={16} />
-              </button>
-            </Show>
-          </form>
-        </section>
+          </section>
 
-        <section class="glass-card up-next-card">
-          <div class="section-heading">
-            <p class="eyebrow">up next</p>
-            <span>{snapshot()?.state.status ?? 'loading'}</span>
-          </div>
-          <Show when={!snapshot.loading} fallback={<p class="muted">loading queue...</p>}>
-            <ul class="queue-list">
-              <For each={upNextPaging.paged()} fallback={<li class="muted">queue is empty</li>}>
-                {(item, index) => {
-                  const profile = () => profileFor(item.queuedByDid)
-                  const hasCover = () => (songs() ?? []).some((song) => song.id === item.songId && song.hasCover)
-                  return (
-                    <li>
-                      <span class="queue-number">{upNextPaging.page() * queuePageSize + index() + 1}</span>
-                      <SongCoverThumb songId={item.songId} hasCover={hasCover()} />
-                      <div class="up-next-copy">
-                        <span class="up-next-title">{item.title}</span>
-                        <small class="up-next-artist">{item.artist || 'unknown artist'}</small>
-                      </div>
-                      <ProfileAvatar profile={profile()} class="up-next-profile-avatar" title={`@${profile().handle}`} />
-                    </li>
-                  )
-                }}
-              </For>
-            </ul>
-            <Show when={upNextPaging.pageCount() > 1}>
-              <PaginationRow page={upNextPaging.page()} pageCount={upNextPaging.pageCount()} onPageChange={upNextPaging.setPage} compact />
-            </Show>
-          </Show>
-        </section>
-
-        <Show when={!onMobile}>
           <section class="glass-card equalizer-card">
             <EqualizerPanel controller={equalizer} />
           </section>
-        </Show>
-      </aside>
+        </aside>
+      </Show>
       </section>
     </>
   )

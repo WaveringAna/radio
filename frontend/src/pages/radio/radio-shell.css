@@ -641,6 +641,10 @@
   color: var(--accent);
   background: rgb(var(--accent-rgb) / 12%);
   padding: 0.3rem 0.65rem;
+  /* Reserve width for the longer "listening live" label so toggling between
+     the two states doesn't shift surrounding content. */
+  min-width: 8.5rem;
+  text-align: center;
   font-family: var(--mono);
   font-size: 0.82rem;
   letter-spacing: 0.04em;

@@ -449,7 +449,31 @@
   }
 
   .radio-page {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     padding: 0 1rem;
+  }
+
+  /* Hard fit: every descendant of the radio page must obey its parent's
+     width. min-width: 0 stops flex/grid auto-sizing from inflating a parent
+     to fit unbreakable content; max-width: 100% stops any element (images,
+     fixed-width buttons) from extending past its container. Together they
+     force the page to fit inside the 1rem-gutter container above. */
+  .radio-page *,
+  .radio-page *::before,
+  .radio-page *::after {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Pin grid containers so their auto column can't be sized by max-content of
+     a child wider than the viewport. */
+  .now-playing-card,
+  .listener-controls,
+  .chat-card,
+  .chat-message-body {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .now-playing-card,
@@ -458,49 +482,14 @@
     grid-row: auto;
   }
 
-  .radio-panel {
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 20;
-    width: min(420px, 88vw);
-    padding: calc(env(safe-area-inset-top, 0) + 0.75rem) 1rem calc(env(safe-area-inset-bottom, 0) + 4rem);
-    background: rgb(30 30 30 / 96%);
-    backdrop-filter: blur(14px);
-    border-left: 1px solid var(--hairline);
-    box-shadow: -12px 0 32px rgb(0 0 0 / 40%);
-    transform: translateX(100%);
-    transition: transform 240ms ease;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-
-  .radio-panel.is-open {
-    transform: translateX(0);
-  }
-
-  .radio-panel-backdrop {
-    display: block;
-    position: fixed;
-    inset: 0;
-    z-index: 19;
-    background: rgb(0 0 0 / 0%);
-    pointer-events: none;
-    transition: background-color 240ms ease;
-  }
-
-  .radio-panel-backdrop.is-open {
-    background: rgb(0 0 0 / 42%);
-    pointer-events: auto;
-  }
-
   .art-shell {
     width: 100%;
   }
 
-  .chat-preview {
-    display: none;
+  /* Listen button still wants its 8.5rem reserved width when the parent has
+     room, but mustn't push past the row's container. */
+  .listen-button {
+    min-width: min(8.5rem, 100%);
   }
 
   .song-filters,

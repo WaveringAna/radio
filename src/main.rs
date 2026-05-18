@@ -13,7 +13,7 @@ use anyhow::Context;
 use auth::{AuthConfig, AuthService, parse_admin_dids};
 use chat::ChatService;
 use db::Database;
-use radio::{RadioEvent, RadioService};
+use radio::RadioService;
 use tower_http::trace::TraceLayer;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{EnvFilter, fmt};
@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
     db.prepare().await?;
     let auth = AuthService::new(config.auth_config(), db.clone())?;
     let chat = ChatService::new(db.clone());
-    let radio = RadioService::new(db, config.audio_dir.clone());
+    let radio = RadioService::new(db, config.audio_dir.clone(), chat.clone());
 
     // Genre backfill hits an online metadata service per missing song, so run
     // it in the background to keep the HTTP listener responsive at boot.
@@ -123,42 +123,6 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
-    // Bridge radio "current song changed" events into the chat log as
-    // now_playing breadcrumbs. Subscribe before reading the initial snapshot
-    // so a transition arriving in between is buffered and replayed.
-    let bridge_chat = chat.clone();
-    let bridge_radio = radio.clone();
-    tokio::spawn(async move {
-        let mut events = bridge_radio.subscribe();
-        let mut last_song_id: Option<String> = match bridge_radio.snapshot().await {
-            Ok(snap) => snap.current_song.as_ref().map(|song| song.id.clone()),
-            Err(error) => {
-                tracing::warn!(%error, "initial snapshot failed for chat bridge");
-                None
-            }
-        };
-
-        loop {
-            match events.recv().await {
-                Ok(RadioEvent::SnapshotChanged { snapshot }) => {
-                    let next_id = snapshot.current_song.as_ref().map(|song| song.id.clone());
-                    if next_id != last_song_id {
-                        if let Some(song) = snapshot.current_song.as_ref() {
-                            let body = format!("{} — {}", song.title, song.artist);
-                            if let Err(error) = bridge_chat.post_now_playing(&body).await {
-                                tracing::warn!(%error, "failed to post now-playing chat row");
-                            }
-                        }
-                        last_song_id = next_id;
-                    }
-                }
-                Ok(_) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
-
     let app = routes::app(routes::AppState::new(auth, radio, chat), &config.cors_origin)
         .layer(TraceLayer::new_for_http());
 

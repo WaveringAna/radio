@@ -8,7 +8,7 @@ use time::OffsetDateTime;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::{db::Database, loudness, metadata};
+use crate::{chat::ChatService, db::Database, loudness, metadata};
 
 /// Radio playback status persisted by the backend.
 #[derive(Clone, Debug, Serialize, FromRow)]
@@ -201,11 +201,12 @@ pub(crate) struct RadioService {
     cover_dir: Arc<PathBuf>,
     thumb_dir: Arc<PathBuf>,
     events: broadcast::Sender<RadioEvent>,
+    chat: ChatService,
 }
 
 impl RadioService {
     /// Creates a radio service using local disk audio storage.
-    pub(crate) fn new(db: Database, audio_dir: PathBuf) -> Self {
+    pub(crate) fn new(db: Database, audio_dir: PathBuf, chat: ChatService) -> Self {
         let (events, _) = broadcast::channel(128);
         let data_dir = audio_dir
             .parent()
@@ -218,8 +219,10 @@ impl RadioService {
         // advancing the current song when its duration elapses. Wakes on any
         // admin action (via the broadcast channel) to recompute its sleep.
         // Does not broadcast on natural song-end — frontends self-advance
-        // locally and drift is accepted.
-        tokio::spawn(advance_loop(db.clone(), events.clone()));
+        // locally and drift is accepted. The chat service is passed in so the
+        // loop can announce now-playing breadcrumbs without going through the
+        // radio events channel.
+        tokio::spawn(advance_loop(db.clone(), events.clone(), chat.clone()));
 
         Self {
             db,
@@ -227,6 +230,7 @@ impl RadioService {
             cover_dir: Arc::new(cover_dir),
             thumb_dir: Arc::new(thumb_dir),
             events,
+            chat,
         }
     }
 
@@ -1014,6 +1018,7 @@ impl RadioService {
         admin_did: &str,
     ) -> anyhow::Result<RadioSnapshot> {
         auto_advance(&self.db).await?;
+        let before = current_song_id(&self.db).await.ok().flatten();
         let action_name = match action {
             RadioControlAction::Play => "play",
             RadioControlAction::Pause => "pause",
@@ -1031,6 +1036,12 @@ impl RadioService {
         tracing::info!(action = action_name, admin_did, "playback control");
 
         let snapshot = self.snapshot().await?;
+        let after = snapshot.current_song.as_ref().map(|song| song.id.clone());
+        if before != after {
+            if let Some(song_id) = after {
+                spawn_now_playing_announcement(self.db.clone(), self.chat.clone(), song_id);
+            }
+        }
         let _ = self.events.send(RadioEvent::SnapshotChanged {
             snapshot: snapshot.clone(),
         });
@@ -1092,7 +1103,7 @@ async fn radio_state(db: &Database) -> anyhow::Result<RadioState> {
     Ok(state)
 }
 
-async fn advance_loop(db: Database, events: broadcast::Sender<RadioEvent>) {
+async fn advance_loop(db: Database, events: broadcast::Sender<RadioEvent>, chat: ChatService) {
     let mut rx = events.subscribe();
     loop {
         let sleep_for = match next_advance_in(&db).await {
@@ -1106,8 +1117,16 @@ async fn advance_loop(db: Database, events: broadcast::Sender<RadioEvent>) {
 
         tokio::select! {
             _ = tokio::time::sleep(sleep_for) => {
+                let before = current_song_id(&db).await.ok().flatten();
                 if let Err(error) = auto_advance(&db).await {
                     tracing::error!(?error, "advance loop failed to advance");
+                    continue;
+                }
+                let after = current_song_id(&db).await.ok().flatten();
+                if before != after {
+                    if let Some(song_id) = after {
+                        spawn_now_playing_announcement(db.clone(), chat.clone(), song_id);
+                    }
                 }
             }
             res = rx.recv() => {
@@ -1118,6 +1137,36 @@ async fn advance_loop(db: Database, events: broadcast::Sender<RadioEvent>) {
             }
         }
     }
+}
+
+async fn current_song_id(db: &Database) -> anyhow::Result<Option<String>> {
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("select current_song_id from radio_state where id = 1")
+            .fetch_optional(db.pool())
+            .await
+            .context("loading current song id")?;
+    Ok(row.and_then(|(id,)| id))
+}
+
+// Posts a now-playing breadcrumb after a short delay. Spawned and forgotten —
+// rapid skips simply queue multiple posts, which accurately reflects the
+// listening history even if every track was momentary.
+fn spawn_now_playing_announcement(db: Database, chat: ChatService, song_id: String) {
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        let song = match find_song(&db, &song_id).await {
+            Ok(Some(song)) => song,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(?error, "failed to load song for now-playing announcement");
+                return;
+            }
+        };
+        let body = format!("{} — {}", song.title, song.artist);
+        if let Err(error) = chat.post_now_playing(&body).await {
+            tracing::warn!(%error, "failed to post now-playing chat row");
+        }
+    });
 }
 
 async fn next_advance_in(db: &Database) -> anyhow::Result<Option<std::time::Duration>> {

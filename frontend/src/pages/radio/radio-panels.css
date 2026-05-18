@@ -451,6 +451,30 @@
   background: transparent;
 }
 
+/* Inline placement under the mobile volume slider — give it air so it
+   doesn't look glued to the controls row, and drop the inner gutters since
+   the parent .now-playing-card already supplies 1rem of horizontal padding. */
+.now-playing-card > .chat-card {
+  margin-top: 0.8rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--hairline);
+}
+
+.now-playing-card > .chat-card > .section-heading {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.now-playing-card > .chat-card > .chat-log {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.now-playing-card > .chat-card > .chat-composer {
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .chat-log {
   flex: 1;
   overflow-y: auto;
@@ -502,11 +526,16 @@
   display: flex;
   align-items: baseline;
   gap: 0.45rem;
+  min-width: 0;
   font-size: 0.8rem;
   color: var(--muted);
 }
 
 .chat-message-handle {
+  /* Flex items default to min-width: auto, which on a nowrap span equals the
+     intrinsic text width — a long handle pushes the row past the viewport.
+     Explicit min-width: 0 lets the ellipsis actually kick in. */
+  min-width: 0;
   font-weight: 500;
   color: var(--text);
   overflow: hidden;
