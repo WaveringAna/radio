@@ -24,6 +24,7 @@
 
 html {
   min-height: 100%;
+  overflow-x: hidden;
   background: var(--bg);
 }
 
@@ -31,6 +32,7 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
   margin: 0;
+  overflow-x: hidden;
   background: var(--bg);
   background-attachment: fixed;
   color: var(--text);
@@ -93,6 +95,17 @@ main {
 }
 
 @media (max-width: 860px) {
+  main {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    padding: 0 0 max(3rem, env(safe-area-inset-bottom, 0));
+  }
+
+  .top-nav {
+    margin-inline: 0;
+  }
+
   .album-ambient-layer {
     background:
       radial-gradient(circle at 22% 8%, var(--ambient-a-wash, transparent) 0, transparent 64rem),
