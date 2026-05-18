@@ -656,9 +656,14 @@
   .radio-page {
     display: block;
     width: 100%;
-    max-width: 100vw;
+    max-width: 100%;
     min-width: 0;
-    overflow-x: hidden;
+    overflow-x: clip;
+  }
+
+  .radio-page::before {
+    width: 100vw;
+    max-width: 100%;
   }
 
   .bottom-radio-tools,
@@ -700,6 +705,13 @@
     max-width: 100%;
   }
 
+  .listener-controls,
+  .live-viewer-counter,
+  .listen-attribution-row,
+  .volume-control {
+    width: 100%;
+  }
+
   .live-viewer-counter,
   .listen-attribution-row {
     flex-wrap: wrap;
@@ -713,6 +725,7 @@
 
   .track-attribution {
     flex: 1 1 12rem;
+    min-width: 0;
     justify-content: flex-start;
     text-align: left;
   }

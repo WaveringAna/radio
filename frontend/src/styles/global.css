@@ -23,12 +23,14 @@
 }
 
 html {
+  width: 100%;
   min-height: 100%;
   overflow-x: hidden;
   background: var(--bg);
 }
 
 body {
+  width: 100%;
   min-height: 100vh;
   min-height: 100dvh;
   margin: 0;
@@ -61,8 +63,13 @@ main {
   position: relative;
   z-index: 1;
   width: min(1360px, calc(100vw - 2rem));
+  min-width: 0;
   margin: 0 auto;
   padding: 0 0 3rem;
+}
+
+main > section {
+  min-width: 0;
 }
 
 .album-ambient {

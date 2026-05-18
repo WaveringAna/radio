@@ -544,6 +544,7 @@
 }
 
 .chat-message-time {
+  flex: 0 0 auto;
   font-family: var(--mono);
   font-size: 0.72rem;
   opacity: 0.7;
@@ -561,6 +562,7 @@
   display: flex;
   align-items: baseline;
   gap: 0.45rem;
+  min-width: 0;
   padding: 0.25rem 0.1rem;
   font-size: 0.85rem;
   color: var(--muted);
@@ -570,6 +572,11 @@
 }
 
 .chat-now-playing-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--mono);
   font-size: 0.7rem;
   text-transform: uppercase;
