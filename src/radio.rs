@@ -5,10 +5,12 @@ use axum::extract::ws::Message;
 use serde::Serialize;
 use sqlx::FromRow;
 use time::OffsetDateTime;
-use tokio::sync::broadcast;
+use tokio::{io::AsyncReadExt, sync::broadcast};
 use uuid::Uuid;
 
 use crate::{chat::ChatService, db::Database, loudness, metadata};
+
+const UNKNOWN_DURATION_ADVANCE_AFTER_SECONDS: i64 = 30 * 60;
 
 /// Radio playback status persisted by the backend.
 #[derive(Clone, Debug, Serialize, FromRow)]
@@ -64,6 +66,15 @@ pub(crate) struct SongFile {
     pub(crate) file_path: String,
     /// Stored file MIME type.
     pub(crate) mime_type: Option<String>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+struct StoredAudioFile {
+    id: String,
+    title: String,
+    artist: String,
+    file_path: String,
+    mime_type: Option<String>,
 }
 
 #[derive(Clone, Debug, FromRow)]
@@ -241,18 +252,7 @@ impl RadioService {
     /// # Errors
     /// Returns an error when sqlite queries fail.
     pub(crate) async fn snapshot(&self) -> anyhow::Result<RadioSnapshot> {
-        let state = radio_state(&self.db).await?;
-        let current_song = match &state.current_song_id {
-            Some(song_id) => find_song(&self.db, song_id).await?,
-            None => None,
-        };
-        let queue = queue_items(&self.db).await?;
-
-        Ok(RadioSnapshot {
-            state,
-            current_song,
-            queue,
-        })
+        snapshot_from_db(&self.db).await
     }
 
     /// Loads the snapshot for a fresh external observer (HTTP fetch / WS
@@ -296,6 +296,19 @@ impl RadioService {
         .fetch_all(self.db.pool())
         .await
         .context("listing songs")
+    }
+
+    /// Removes non-audio playlist files that were previously accepted as songs.
+    ///
+    /// # Errors
+    /// Returns an error when sqlite cleanup or recovery updates fail.
+    pub(crate) async fn cleanup_unsupported_audio_on_boot(&self) -> anyhow::Result<usize> {
+        let removed = cleanup_unsupported_audio(&self.db).await?;
+        if removed > 0 {
+            heal_empty_current_song(&self.db, "system").await?;
+            self.broadcast_snapshot().await;
+        }
+        Ok(removed)
     }
 
     /// Fetches and stores genres for songs where genre is currently empty.
@@ -1124,6 +1137,12 @@ async fn advance_loop(db: Database, events: broadcast::Sender<RadioEvent>, chat:
                 }
                 let after = current_song_id(&db).await.ok().flatten();
                 if before != after {
+                    match snapshot_from_db(&db).await {
+                        Ok(snapshot) => {
+                            let _ = events.send(RadioEvent::SnapshotChanged { snapshot });
+                        }
+                        Err(error) => tracing::error!(?error, "advance loop failed to broadcast snapshot"),
+                    }
                     if let Some(song_id) = after {
                         spawn_now_playing_announcement(db.clone(), chat.clone(), song_id);
                     }
@@ -1137,6 +1156,168 @@ async fn advance_loop(db: Database, events: broadcast::Sender<RadioEvent>, chat:
             }
         }
     }
+}
+
+async fn snapshot_from_db(db: &Database) -> anyhow::Result<RadioSnapshot> {
+    let state = radio_state(db).await?;
+    let current_song = match &state.current_song_id {
+        Some(song_id) => find_song(db, song_id).await?,
+        None => None,
+    };
+    let queue = queue_items(db).await?;
+
+    Ok(RadioSnapshot {
+        state,
+        current_song,
+        queue,
+    })
+}
+
+async fn cleanup_unsupported_audio(db: &Database) -> anyhow::Result<usize> {
+    let songs = stored_audio_files(db).await?;
+    let mut removed = 0usize;
+
+    for song in songs {
+        if is_unsupported_audio_file(&song.file_path, song.mime_type.as_deref()).await {
+            quarantine_unsupported_song(db, &song).await?;
+            removed += 1;
+        }
+    }
+
+    Ok(removed)
+}
+
+async fn stored_audio_files(db: &Database) -> anyhow::Result<Vec<StoredAudioFile>> {
+    sqlx::query_as::<_, StoredAudioFile>(
+        r#"
+        select id, title, artist, file_path, mime_type
+        from songs
+        "#,
+    )
+    .fetch_all(db.pool())
+    .await
+    .context("loading stored audio files")
+}
+
+async fn stored_audio_file(
+    db: &Database,
+    song_id: &str,
+) -> anyhow::Result<Option<StoredAudioFile>> {
+    sqlx::query_as::<_, StoredAudioFile>(
+        r#"
+        select id, title, artist, file_path, mime_type
+        from songs
+        where id = ?
+        "#,
+    )
+    .bind(song_id)
+    .fetch_optional(db.pool())
+    .await
+    .context("loading stored audio file")
+}
+
+async fn unsupported_audio_song(
+    db: &Database,
+    song_id: &str,
+) -> anyhow::Result<Option<StoredAudioFile>> {
+    let Some(song) = stored_audio_file(db, song_id).await? else {
+        return Ok(None);
+    };
+    if is_unsupported_audio_file(&song.file_path, song.mime_type.as_deref()).await {
+        return Ok(Some(song));
+    }
+
+    Ok(None)
+}
+
+async fn quarantine_unsupported_song(db: &Database, song: &StoredAudioFile) -> anyhow::Result<()> {
+    let removed = sqlx::query("delete from songs where id = ?")
+        .bind(&song.id)
+        .execute(db.pool())
+        .await
+        .context("deleting unsupported audio song")?
+        .rows_affected();
+
+    if removed == 0 {
+        return Ok(());
+    }
+
+    match tokio::fs::remove_file(&song.file_path).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => tracing::warn!(%error, path = %song.file_path, "failed to remove unsupported audio file"),
+    }
+
+    tracing::warn!(
+        song_id = %song.id,
+        title = %song.title,
+        artist = %song.artist,
+        path = %song.file_path,
+        "removed unsupported audio song"
+    );
+
+    Ok(())
+}
+
+async fn heal_empty_current_song(db: &Database, admin_did: &str) -> anyhow::Result<()> {
+    let state = radio_state(db).await?;
+    if state.current_song_id.is_some() {
+        return Ok(());
+    }
+
+    match state.status.as_str() {
+        "playing" => skip_to_next(db, admin_did).await,
+        "paused" => set_status(db, "stopped", admin_did).await,
+        _ => Ok(()),
+    }
+}
+
+async fn is_unsupported_audio_file(file_path: &str, mime_type: Option<&str>) -> bool {
+    has_playlist_extension(file_path)
+        || has_playlist_mime(mime_type)
+        || file_starts_with_extm3u(file_path).await
+}
+
+fn has_playlist_extension(file_path: &str) -> bool {
+    file_path
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .is_some_and(|extension| matches!(extension.as_str(), "m3u" | "m3u8" | "pls" | "xspf"))
+}
+
+fn has_playlist_mime(mime_type: Option<&str>) -> bool {
+    mime_type
+        .and_then(|mime| mime.split(';').next())
+        .map(|mime| mime.trim().to_ascii_lowercase())
+        .is_some_and(|mime| {
+            matches!(
+                mime.as_str(),
+                "application/vnd.apple.mpegurl"
+                    | "application/x-mpegurl"
+                    | "audio/mpegurl"
+                    | "audio/x-mpegurl"
+                    | "audio/m3u"
+                    | "audio/x-m3u"
+                    | "application/pls+xml"
+            )
+        })
+}
+
+async fn file_starts_with_extm3u(file_path: &str) -> bool {
+    let mut file = match tokio::fs::File::open(file_path).await {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let mut buffer = [0_u8; 256];
+    let read = match file.read(&mut buffer).await {
+        Ok(read) => read,
+        Err(_) => return false,
+    };
+
+    String::from_utf8_lossy(&buffer[..read])
+        .trim_start_matches('\u{feff}')
+        .trim_start()
+        .starts_with("#EXTM3U")
 }
 
 async fn current_song_id(db: &Database) -> anyhow::Result<Option<String>> {
@@ -1190,16 +1371,23 @@ async fn next_advance_in(db: &Database) -> anyhow::Result<Option<std::time::Dura
     let Some(current_id) = raw.current_song_id.as_deref() else {
         return Ok(None);
     };
+    if unsupported_audio_song(db, current_id).await?.is_some() {
+        return Ok(Some(std::time::Duration::from_secs(1)));
+    }
     let Some(song) = find_song(db, current_id).await? else {
-        return Ok(None);
+        return Ok(Some(std::time::Duration::from_secs(1)));
     };
-    let Some(duration) = song.duration_seconds.filter(|d| *d > 0) else {
-        return Ok(None);
-    };
+    let duration = advance_duration_seconds(&song);
 
     let elapsed = raw.position_seconds + now().saturating_sub(started_at);
     let remaining = duration.saturating_sub(elapsed).max(1);
     Ok(Some(std::time::Duration::from_secs(remaining as u64)))
+}
+
+fn advance_duration_seconds(song: &Song) -> i64 {
+    song.duration_seconds
+        .filter(|duration| *duration > 0)
+        .unwrap_or(UNKNOWN_DURATION_ADVANCE_AFTER_SECONDS)
 }
 
 async fn auto_advance(db: &Database) -> anyhow::Result<()> {
@@ -1224,12 +1412,19 @@ async fn auto_advance(db: &Database) -> anyhow::Result<()> {
         let Some(current_id) = raw.current_song_id.as_deref() else {
             return Ok(());
         };
+        if let Some(song) = unsupported_audio_song(db, current_id).await? {
+            let admin = raw.updated_by_did.as_deref().unwrap_or("system").to_owned();
+            quarantine_unsupported_song(db, &song).await?;
+            heal_empty_current_song(db, &admin).await?;
+            continue;
+        }
         let Some(song) = find_song(db, current_id).await? else {
-            return Ok(());
+            let admin = raw.updated_by_did.as_deref().unwrap_or("system").to_owned();
+            tracing::warn!(from_song_id = current_id, "auto-advance: current song missing");
+            heal_empty_current_song(db, &admin).await?;
+            continue;
         };
-        let Some(duration) = song.duration_seconds.filter(|d| *d > 0) else {
-            return Ok(());
-        };
+        let duration = advance_duration_seconds(&song);
 
         let elapsed = raw.position_seconds + now().saturating_sub(started_at);
         if elapsed < duration {
@@ -1238,12 +1433,21 @@ async fn auto_advance(db: &Database) -> anyhow::Result<()> {
 
         let overflow = elapsed - duration;
         let admin = raw.updated_by_did.as_deref().unwrap_or("system").to_owned();
-        tracing::info!(
-            from_song_id = current_id,
-            elapsed,
-            duration,
-            "auto-advance: track ended"
-        );
+        if song.duration_seconds.is_some_and(|stored| stored > 0) {
+            tracing::info!(
+                from_song_id = current_id,
+                elapsed,
+                duration,
+                "auto-advance: track ended"
+            );
+        } else {
+            tracing::warn!(
+                from_song_id = current_id,
+                elapsed,
+                fallback_duration = duration,
+                "auto-advance: unknown-duration track timed out"
+            );
+        }
         skip_to_next(db, &admin).await?;
 
         sqlx::query(
@@ -1763,6 +1967,39 @@ mod tests {
         assert_eq!(state.current_song_id, None);
         assert_eq!(state.status, "stopped");
         assert_eq!(state.position_seconds, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cleanup_removes_playlist_song_and_heals_current() -> anyhow::Result<()> {
+        let (db, temp_dir) = test_db().await?;
+        let poison_path = temp_dir.path().join("poison.m3u8");
+        tokio::fs::write(&poison_path, "#EXTM3U\n#EXTINF:1,bad\nbad.flac\n").await?;
+        insert_song(&db, "song-next", "next").await?;
+        sqlx::query(
+            r#"
+            insert into songs (id, title, artist, file_path, mime_type, added_by_did)
+            values ('song-poison', 'poison', 'artist', ?, 'audio/x-mpegurl', 'did:plc:uploader')
+            "#,
+        )
+        .bind(poison_path.to_string_lossy().as_ref())
+        .execute(db.pool())
+        .await?;
+        append_queue_item(&db, "song-next", "did:plc:admin").await?;
+        sqlx::query(
+            "update radio_state set current_song_id = 'song-poison', status = 'playing', started_at = ? where id = 1",
+        )
+        .bind(now())
+        .execute(db.pool())
+        .await?;
+
+        let removed = cleanup_unsupported_audio(&db).await?;
+        heal_empty_current_song(&db, "system").await?;
+        let state = radio_state(&db).await?;
+
+        assert_eq!(removed, 1);
+        assert_eq!(state.current_song_id.as_deref(), Some("song-next"));
+        assert!(!poison_path.exists());
         Ok(())
     }
 

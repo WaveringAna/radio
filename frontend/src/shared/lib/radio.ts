@@ -183,6 +183,11 @@ export function sendRadioViewerKeepalive(socket: WebSocket, viewerId: string, di
 
 export const MAX_CHAT_BODY_LEN = 1000
 
+async function apiErrorCode(response: Response): Promise<string | null> {
+  const data = await response.json().catch(() => ({})) as { error?: string }
+  return data.error ?? null
+}
+
 export type ChatMessageKind = 'user' | 'now_playing'
 
 export interface ChatMessage {
@@ -534,7 +539,8 @@ export async function uploadSong(input: SongUploadInput): Promise<Song> {
   })
 
   if (!response.ok) {
-    throw new Error('song upload failed')
+    const error = await apiErrorCode(response)
+    throw new Error(error === 'playlist_requires_batch_import' ? 'upload playlist files together with their referenced audio tracks.' : 'song upload failed')
   }
 
   const song = (await response.json()) as Song
@@ -703,8 +709,14 @@ export async function uploadSongFromUrl(input: UrlSongInput): Promise<Song> {
   })
 
   if (!response.ok) {
-    const data = await response.json().catch(() => ({})) as { error?: string }
-    throw new Error(data.error === 'url_fetch_failed' ? 'could not fetch audio from that url.' : 'url import failed')
+    const error = await apiErrorCode(response)
+    throw new Error(
+      error === 'url_fetch_failed'
+        ? 'could not fetch audio from that url.'
+        : error === 'playlist_requires_batch_import'
+          ? 'nested playlists are not supported yet.'
+          : 'url import failed',
+    )
   }
 
   return (await response.json()) as Song

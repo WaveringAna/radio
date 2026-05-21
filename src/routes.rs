@@ -946,6 +946,11 @@ async fn upload_song(
 ) -> Result<Json<crate::radio::Song>, (StatusCode, Json<ErrorResponse>)> {
     let session = admin_session(&state, session_token.0.as_deref()).await?;
     let mut upload = parse_song_upload(multipart).await?;
+    reject_unsupported_audio_upload(
+        upload.filename.as_deref(),
+        upload.mime_type.as_deref(),
+        &upload.bytes,
+    )?;
 
     let embedded = extract_embedded_metadata(&upload.bytes).await;
     if upload.genre.is_none() {
@@ -963,6 +968,9 @@ async fn upload_song(
     }
     if upload.album.is_none() {
         upload.album = embedded.album.clone();
+    }
+    if upload.duration_seconds.is_none() {
+        upload.duration_seconds = embedded.duration_seconds;
     }
     if (upload.title.is_empty() || upload.artist.is_empty())
         && let Some(filename) = upload.filename.as_deref()
@@ -1467,6 +1475,129 @@ fn valid_listener_did(did: &str) -> bool {
         })
 }
 
+fn reject_unsupported_audio_upload(
+    filename: Option<&str>,
+    mime_type: Option<&str>,
+    bytes: &[u8],
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    if is_playlist_upload(filename, mime_type, bytes) {
+        return Err(api_error(StatusCode::BAD_REQUEST, "playlist_requires_batch_import"));
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct PlaylistEntry {
+    location: String,
+    title: Option<String>,
+    artist: Option<String>,
+}
+
+fn is_playlist_upload(filename: Option<&str>, mime_type: Option<&str>, bytes: &[u8]) -> bool {
+    has_playlist_extension(filename) || has_playlist_mime(mime_type) || has_m3u_header(bytes)
+}
+
+fn has_playlist_extension(filename: Option<&str>) -> bool {
+    filename
+        .and_then(|name| name.rsplit_once('.').map(|(_, extension)| extension))
+        .map(|extension| extension.to_ascii_lowercase())
+        .is_some_and(|extension| matches!(extension.as_str(), "m3u" | "m3u8" | "pls" | "xspf"))
+}
+
+fn has_playlist_mime(mime_type: Option<&str>) -> bool {
+    mime_type
+        .and_then(|mime| mime.split(';').next())
+        .map(|mime| mime.trim().to_ascii_lowercase())
+        .is_some_and(|mime| {
+            matches!(
+                mime.as_str(),
+                "application/vnd.apple.mpegurl"
+                    | "application/x-mpegurl"
+                    | "audio/mpegurl"
+                    | "audio/x-mpegurl"
+                    | "audio/m3u"
+                    | "audio/x-m3u"
+                    | "application/pls+xml"
+            )
+        })
+}
+
+fn has_m3u_header(bytes: &[u8]) -> bool {
+    let head_len = bytes.len().min(256);
+    String::from_utf8_lossy(&bytes[..head_len])
+        .trim_start_matches('\u{feff}')
+        .trim_start()
+        .starts_with("#EXTM3U")
+}
+
+fn parse_m3u(bytes: &[u8]) -> Vec<PlaylistEntry> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut entries = Vec::new();
+    let mut label: Option<String> = None;
+
+    for raw_line in text.lines() {
+        let line = raw_line.trim().trim_start_matches('\u{feff}');
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(extinf) = line.strip_prefix("#EXTINF:") {
+            label = extinf
+                .split_once(',')
+                .map(|(_, value)| value.trim().to_owned())
+                .filter(|value| !value.is_empty());
+            continue;
+        }
+        if line.starts_with('#') {
+            continue;
+        }
+
+        let (artist, title) = playlist_label_metadata(label.take().as_deref());
+        entries.push(PlaylistEntry {
+            location: line.to_owned(),
+            title,
+            artist,
+        });
+    }
+
+    entries
+}
+
+fn playlist_label_metadata(label: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) else {
+        return (None, None);
+    };
+    if let Some((artist, title)) = label.split_once(" - ") {
+        let artist = artist.trim();
+        let title = title.trim();
+        if !artist.is_empty() && !title.is_empty() {
+            return (Some(artist.to_owned()), Some(title.to_owned()));
+        }
+    }
+
+    (None, Some(label.to_owned()))
+}
+
+fn playlist_entry_url(
+    base_url: &reqwest::Url,
+    location: &str,
+) -> Result<reqwest::Url, (StatusCode, Json<ErrorResponse>)> {
+    let entry_url = base_url
+        .join(location)
+        .map_err(|_| api_error(StatusCode::BAD_REQUEST, "invalid_playlist_entry"))?;
+    if !matches!(entry_url.scheme(), "http" | "https") {
+        return Err(api_error(StatusCode::BAD_REQUEST, "invalid_playlist_entry"));
+    }
+    if !entry_url.username().is_empty() || entry_url.password().is_some() {
+        return Err(api_error(StatusCode::BAD_REQUEST, "invalid_playlist_entry"));
+    }
+    if entry_url.origin().ascii_serialization() != base_url.origin().ascii_serialization() {
+        return Err(api_error(StatusCode::BAD_REQUEST, "cross_origin_playlist_entry"));
+    }
+
+    Ok(entry_url)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UrlSongRequest {
@@ -1683,6 +1814,23 @@ async fn upload_song_from_url(
         })?
         .to_vec();
 
+    if is_playlist_upload(filename.as_deref(), mime_type.as_deref(), &bytes) {
+        let songs = import_m3u_url_playlist(
+            &state,
+            &session.account_did,
+            &url,
+            &bytes,
+            payload.album.clone(),
+            payload.add_to_queue.unwrap_or(false),
+        )
+        .await?;
+        let first_song = songs
+            .into_iter()
+            .next()
+            .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "empty_playlist"))?;
+        return Ok(Json(first_song));
+    }
+
     let embedded = extract_embedded_metadata(&bytes).await;
     let embedded_cover = embedded.cover;
     let mut genre = embedded.genre;
@@ -1708,7 +1856,7 @@ async fn upload_song_from_url(
                 artist: artist.clone(),
                 album: payload.album.clone(),
                 genre,
-                duration_seconds: None,
+                duration_seconds: embedded.duration_seconds,
                 add_to_queue: payload.add_to_queue.unwrap_or(false),
             },
             &session.account_did,
@@ -1732,6 +1880,112 @@ async fn upload_song_from_url(
     }
 
     Ok(Json(song))
+}
+
+async fn import_m3u_url_playlist(
+    state: &AppState,
+    admin_did: &str,
+    playlist_url: &str,
+    playlist_bytes: &[u8],
+    album: Option<String>,
+    add_to_queue: bool,
+) -> Result<Vec<crate::radio::Song>, (StatusCode, Json<ErrorResponse>)> {
+    const MAX_PLAYLIST_ENTRIES: usize = 100;
+
+    let base_url = reqwest::Url::parse(playlist_url)
+        .map_err(|_| api_error(StatusCode::BAD_REQUEST, "invalid_url"))?;
+    let entries = parse_m3u(playlist_bytes);
+    if entries.is_empty() {
+        return Err(api_error(StatusCode::BAD_REQUEST, "empty_playlist"));
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent("radio/0.1")
+        .build()
+        .map_err(|error| internal_api_error(error.into()))?;
+    let mut songs = Vec::new();
+
+    for entry in entries.into_iter().take(MAX_PLAYLIST_ENTRIES) {
+        let entry_url = playlist_entry_url(&base_url, &entry.location)?;
+
+        let response = client.get(entry_url.clone()).send().await.map_err(|error| {
+            tracing::warn!(%error, url = %entry_url, "failed to fetch playlist entry");
+            api_error(StatusCode::BAD_REQUEST, "playlist_entry_fetch_failed")
+        })?;
+        if !response.status().is_success() {
+            return Err(api_error(StatusCode::BAD_REQUEST, "playlist_entry_fetch_failed"));
+        }
+
+        let mime_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.split(';').next().unwrap_or(value).trim().to_owned());
+        let filename = entry_url
+            .path_segments()
+            .and_then(Iterator::last)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|_| api_error(StatusCode::BAD_REQUEST, "playlist_entry_fetch_failed"))?
+            .to_vec();
+        reject_unsupported_audio_upload(filename.as_deref(), mime_type.as_deref(), &bytes)?;
+
+        let embedded = extract_embedded_metadata(&bytes).await;
+        let (parsed_artist, parsed_title) = filename
+            .as_deref()
+            .map(parse_filename_metadata)
+            .unwrap_or((None, None));
+        let title = embedded
+            .title
+            .clone()
+            .or(entry.title.clone())
+            .or(parsed_title)
+            .unwrap_or_else(|| "Unknown".to_owned());
+        let artist = embedded
+            .artist
+            .clone()
+            .or(entry.artist.clone())
+            .or(parsed_artist)
+            .unwrap_or_else(|| "Unknown".to_owned());
+        let genre = embedded.genre.clone();
+        let cover = embedded.cover;
+        let mut song = state
+            .radio
+            .add_song(
+                crate::radio::NewSongUpload {
+                    filename,
+                    mime_type,
+                    bytes,
+                    title,
+                    artist,
+                    album: embedded.album.clone().or_else(|| album.clone()),
+                    genre,
+                    duration_seconds: embedded.duration_seconds,
+                    add_to_queue,
+                },
+                admin_did,
+            )
+            .await
+            .map_err(internal_api_error)?;
+
+        if let Some((cover_bytes, cover_mime)) = cover {
+            match state
+                .radio
+                .set_song_cover(&song.id, None, Some(cover_mime), cover_bytes)
+                .await
+            {
+                Ok(updated) => song = updated,
+                Err(error) => tracing::warn!(%error, song_id = %song.id, "failed to set playlist entry cover"),
+            }
+        }
+
+        songs.push(song);
+    }
+
+    Ok(songs)
 }
 
 #[derive(Deserialize)]
@@ -2156,6 +2410,7 @@ struct EmbeddedMetadata {
     title: Option<String>,
     artist: Option<String>,
     album: Option<String>,
+    duration_seconds: Option<i64>,
 }
 
 impl EmbeddedMetadata {
@@ -2166,6 +2421,7 @@ impl EmbeddedMetadata {
             title: None,
             artist: None,
             album: None,
+            duration_seconds: None,
         }
     }
 }
@@ -2173,6 +2429,7 @@ impl EmbeddedMetadata {
 async fn extract_embedded_metadata(bytes: &[u8]) -> EmbeddedMetadata {
     let bytes = bytes.to_vec();
     tokio::task::spawn_blocking(move || -> EmbeddedMetadata {
+        use lofty::file::AudioFile;
         use lofty::prelude::*;
         use lofty::probe::Probe;
         use std::io::{BufReader, Cursor};
@@ -2203,12 +2460,20 @@ async fn extract_embedded_metadata(bytes: &[u8]) -> EmbeddedMetadata {
         let title = tag.and_then(|t| t.title()).and_then(trim_owned);
         let artist = tag.and_then(|t| t.artist()).and_then(trim_owned);
         let album = tag.and_then(|t| t.album()).and_then(trim_owned);
+        let duration_seconds = tagged
+            .properties()
+            .duration()
+            .as_secs()
+            .try_into()
+            .ok()
+            .filter(|duration: &i64| *duration > 0);
         EmbeddedMetadata {
             cover,
             genre,
             title,
             artist,
             album,
+            duration_seconds,
         }
     })
     .await
@@ -2284,7 +2549,13 @@ async fn parse_song_upload(
             "album" => album = Some(field.text().await.unwrap_or_default()),
             "genre" => genre = Some(field.text().await.unwrap_or_default()),
             "durationSeconds" => {
-                duration_seconds = field.text().await.unwrap_or_default().parse::<i64>().ok()
+                duration_seconds = field
+                    .text()
+                    .await
+                    .unwrap_or_default()
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|duration| *duration > 0)
             }
             "addToQueue" => add_to_queue = field.text().await.unwrap_or_default() == "true",
             _ => {}
@@ -2391,7 +2662,10 @@ fn internal_api_error(error: Error) -> (StatusCode, Json<ErrorResponse>) {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_byte_range;
+    use super::{
+        has_m3u_header, is_playlist_upload, parse_byte_range, parse_m3u, playlist_entry_url,
+        reject_unsupported_audio_upload,
+    };
 
     #[test]
     fn parses_open_ended_byte_range() {
@@ -2408,5 +2682,54 @@ mod tests {
         assert_eq!(parse_byte_range("bytes=101-120", 100), None);
         assert_eq!(parse_byte_range("bytes=30-20", 100), None);
         assert_eq!(parse_byte_range("bytes=0-1,5-6", 100), None);
+    }
+
+    #[test]
+    fn detects_playlist_uploads_by_extension_mime_or_body() {
+        assert!(is_playlist_upload(Some("mix.M3U8"), Some("audio/flac"), b"not a playlist"));
+        assert!(is_playlist_upload(None, Some("application/vnd.apple.mpegurl; charset=utf-8"), b"anything"));
+        assert!(is_playlist_upload(None, Some("audio/flac"), b"\xef\xbb\xbf#EXTM3U\ntrack.flac"));
+        assert!(has_m3u_header(b"   #EXTM3U\ntrack.flac"));
+        assert!(!is_playlist_upload(Some("track.flac"), Some("audio/flac"), b"fLaC data"));
+    }
+
+    #[test]
+    fn rejects_playlist_when_single_audio_upload_path_is_used() {
+        let result = reject_unsupported_audio_upload(
+            Some("poison.m3u8"),
+            Some("audio/x-mpegurl"),
+            b"#EXTM3U\ntrack.flac",
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_m3u_entries_with_metadata_comments_and_bom() {
+        let entries = parse_m3u(
+            b"\xef\xbb\xbf#EXTM3U\n# comment\n#EXTINF:238,artist - first\n01. first.flac\n\n#EXTINF:42,second\nhttps://example.test/second.mp3\n",
+        );
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].location, "01. first.flac");
+        assert_eq!(entries[0].artist.as_deref(), Some("artist"));
+        assert_eq!(entries[0].title.as_deref(), Some("first"));
+        assert_eq!(entries[1].location, "https://example.test/second.mp3");
+        assert_eq!(entries[1].title.as_deref(), Some("second"));
+    }
+
+    #[test]
+    fn resolves_playlist_entries_only_within_same_origin() {
+        let base = reqwest::Url::parse("https://music.example.test/albums/list.m3u8").unwrap();
+
+        let relative = playlist_entry_url(&base, "../tracks/01.flac").ok().unwrap();
+        assert_eq!(relative.as_str(), "https://music.example.test/tracks/01.flac");
+
+        let same_origin_absolute = playlist_entry_url(&base, "https://music.example.test/cdn/02.mp3").ok().unwrap();
+        assert_eq!(same_origin_absolute.as_str(), "https://music.example.test/cdn/02.mp3");
+
+        assert!(playlist_entry_url(&base, "https://evil.example.test/steal.mp3").is_err());
+        assert!(playlist_entry_url(&base, "file:///etc/passwd").is_err());
+        assert!(playlist_entry_url(&base, "https://user:pass@music.example.test/private.mp3").is_err());
     }
 }

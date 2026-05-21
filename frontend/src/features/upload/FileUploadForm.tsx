@@ -10,6 +10,83 @@ interface FileUploadFormProps {
 
 type FileUploadKind = 'songs' | 'album'
 
+interface PlaylistEntry {
+  location: string
+  title?: string
+  artist?: string
+}
+
+interface UploadPlanItem {
+  file: File
+  playlistEntry?: PlaylistEntry
+}
+
+const PLAYLIST_EXTENSIONS = new Set(['m3u', 'm3u8', 'pls', 'xspf'])
+
+function fileExtension(file: File): string | undefined {
+  return file.name.split('.').pop()?.toLowerCase()
+}
+
+function isPlaylistFile(file: File): boolean {
+  const extension = fileExtension(file)
+  return Boolean(extension && PLAYLIST_EXTENSIONS.has(extension))
+}
+
+function isSelectableAudioFile(file: File): boolean {
+  return file.type.startsWith('audio/') || isPlaylistFile(file)
+}
+
+function playlistBasename(location: string): string {
+  const withoutQuery = location.split('?')[0]?.split('#')[0] ?? location
+  return decodeURIComponent(withoutQuery.split('/').pop() ?? withoutQuery).trim()
+}
+
+function playlistLabelMetadata(label: string | undefined): Pick<PlaylistEntry, 'title' | 'artist'> {
+  const trimmed = label?.trim()
+  if (!trimmed) return {}
+  const [maybeArtist, maybeTitle] = trimmed.split(' - ')
+  if (maybeArtist && maybeTitle) {
+    return { artist: maybeArtist.trim(), title: maybeTitle.trim() }
+  }
+  return { title: trimmed }
+}
+
+function parseM3u(text: string): PlaylistEntry[] {
+  const entries: PlaylistEntry[] = []
+  let label: string | undefined
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.replace(/^\uFEFF/, '').trim()
+    if (!line) continue
+    if (line.startsWith('#EXTINF:')) {
+      label = line.split(',', 2)[1]?.trim()
+      continue
+    }
+    if (line.startsWith('#')) continue
+
+    entries.push({ location: line, ...playlistLabelMetadata(label) })
+    label = undefined
+  }
+
+  return entries
+}
+
+async function uploadPlanFromPlaylist(playlistFile: File, audioFiles: File[]): Promise<UploadPlanItem[]> {
+  const entries = parseM3u(await playlistFile.text())
+  if (entries.length === 0) {
+    throw new Error('playlist has no tracks.')
+  }
+
+  const filesByName = new Map(audioFiles.map((file) => [file.name, file]))
+  return entries.map((entry) => {
+    const file = filesByName.get(playlistBasename(entry.location))
+    if (!file) {
+      throw new Error(`playlist references missing file: ${entry.location}`)
+    }
+    return { file, playlistEntry: entry }
+  })
+}
+
 function hasRequiredMetadata(metadata: ExtractedAudioMetadata | null): boolean {
   return Boolean(metadata?.title && metadata.artist)
 }
@@ -37,18 +114,23 @@ export function FileUploadForm(props: FileUploadFormProps) {
   const needsAlbumFallbacks = () => uploadKind() === 'album'
 
   const selectFiles = async (selectedFiles: File[]) => {
-    setFiles(selectedFiles)
+    const selectableFiles = selectedFiles.filter(isSelectableAudioFile)
+    props.onError(
+      selectableFiles.length === selectedFiles.length
+        ? null
+        : 'skipped non-audio files.',
+    )
+    setFiles(selectableFiles)
     setMetadata(null)
     setTitle('')
     setArtist('')
-    props.onError(null)
 
-    if (selectedFiles.length !== 1) {
+    if (selectableFiles.length !== 1 || isPlaylistFile(selectableFiles[0])) {
       return
     }
 
     try {
-      const extracted = await extractAudioMetadata(selectedFiles[0])
+      const extracted = await extractAudioMetadata(selectableFiles[0])
       setMetadata(extracted)
       setTitle(extracted.title ?? '')
       setArtist(extracted.artist ?? '')
@@ -73,9 +155,18 @@ export function FileUploadForm(props: FileUploadFormProps) {
       const albumName = albumTitle().trim()
       const albumArtistFallback = albumArtist().trim()
       let albumLoopTitle = albumName
+      const playlistFiles = selectedFiles.filter(isPlaylistFile)
+      if (playlistFiles.length > 1) {
+        throw new Error('upload one playlist at a time.')
+      }
+      const uploadPlan: UploadPlanItem[] = playlistFiles[0]
+        ? await uploadPlanFromPlaylist(playlistFiles[0], selectedFiles.filter((file) => !isPlaylistFile(file)))
+        : selectedFiles.map((file) => ({ file }))
 
-      for (const [index, selectedFile] of selectedFiles.entries()) {
-        setUploadStatus(`uploading ${index + 1}/${selectedFiles.length}: ${selectedFile.name}`)
+      for (const [index, planItem] of uploadPlan.entries()) {
+        const selectedFile = planItem.file
+        const playlistEntry = planItem.playlistEntry
+        setUploadStatus(`uploading ${index + 1}/${uploadPlan.length}: ${selectedFile.name}`)
 
         let resolvedTitle: string
         let resolvedArtist: string
@@ -93,18 +184,18 @@ export function FileUploadForm(props: FileUploadFormProps) {
 
         if (uploadKind() === 'album') {
           extracted = await extractSafe()
-          resolvedTitle = extracted.title ?? ''
-          resolvedArtist = extracted.artist ?? albumArtistFallback
+          resolvedTitle = extracted.title ?? playlistEntry?.title ?? ''
+          resolvedArtist = extracted.artist ?? playlistEntry?.artist ?? albumArtistFallback
           resolvedAlbum = extracted.album ?? albumName
-        } else if (selectedFiles.length === 1) {
+        } else if (uploadPlan.length === 1 && !playlistEntry) {
           extracted = metadata()
           resolvedTitle = metadata()?.title ?? title().trim()
           resolvedArtist = metadata()?.artist ?? artist().trim()
           resolvedAlbum = extracted?.album
         } else {
           extracted = await extractSafe()
-          resolvedTitle = extracted.title ?? ''
-          resolvedArtist = extracted.artist ?? ''
+          resolvedTitle = extracted.title ?? playlistEntry?.title ?? ''
+          resolvedArtist = extracted.artist ?? playlistEntry?.artist ?? ''
           resolvedAlbum = extracted.album
         }
 
@@ -167,7 +258,7 @@ export function FileUploadForm(props: FileUploadFormProps) {
         onDrop={(e) => {
           e.preventDefault()
           setIsDropZoneActive(false)
-          const dropped = [...(e.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith('audio/'))
+          const dropped = [...(e.dataTransfer?.files ?? [])].filter(isSelectableAudioFile)
           if (dropped.length > 0) {
             void selectFiles(dropped)
           }
@@ -182,7 +273,7 @@ export function FileUploadForm(props: FileUploadFormProps) {
               : `${files().length} files selected`}
         </span>
         <small class="drop-zone-hint">{uploadKind() === 'album' ? 'select tracks in album order' : 'multiple files supported'}</small>
-        <input type="file" accept="audio/*" multiple onChange={(event) => void selectFiles([...(event.currentTarget.files ?? [])])} />
+        <input type="file" accept="audio/*,.m3u,.m3u8,.pls,.xspf" multiple onChange={(event) => void selectFiles([...(event.currentTarget.files ?? [])])} />
       </label>
 
       <div class="upload-options-row">

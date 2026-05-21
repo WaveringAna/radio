@@ -99,6 +99,12 @@ async fn main() -> anyhow::Result<()> {
     let chat = ChatService::new(db.clone());
     let radio = RadioService::new(db, config.audio_dir.clone(), chat.clone());
 
+    match radio.cleanup_unsupported_audio_on_boot().await {
+        Ok(0) => {}
+        Ok(removed) => tracing::warn!(removed, "removed unsupported legacy audio rows on boot"),
+        Err(error) => tracing::warn!(%error, "failed to clean unsupported legacy audio rows on boot"),
+    }
+
     // Genre backfill hits an online metadata service per missing song, so run
     // it in the background to keep the HTTP listener responsive at boot.
     let genre_radio = radio.clone();
