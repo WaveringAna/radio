@@ -1137,12 +1137,10 @@ async fn advance_loop(db: Database, events: broadcast::Sender<RadioEvent>, chat:
                 }
                 let after = current_song_id(&db).await.ok().flatten();
                 if before != after {
-                    match snapshot_from_db(&db).await {
-                        Ok(snapshot) => {
-                            let _ = events.send(RadioEvent::SnapshotChanged { snapshot });
-                        }
-                        Err(error) => tracing::error!(?error, "advance loop failed to broadcast snapshot"),
-                    }
+                    // Intentionally does NOT broadcast SnapshotChanged on natural
+                    // song-end: a forced advance from the server is jarring to
+                    // listeners. Frontends self-advance locally and drift is
+                    // accepted. We only send the now-playing chat breadcrumb.
                     if let Some(song_id) = after {
                         spawn_now_playing_announcement(db.clone(), chat.clone(), song_id);
                     }
