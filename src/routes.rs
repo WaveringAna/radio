@@ -397,7 +397,10 @@ async fn client_metadata(State(state): State<AppState>) -> Response {
 async fn atproto_did(State(state): State<AppState>) -> Response {
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
         state.service_did.as_str().to_owned(),
     )
         .into_response()
@@ -418,7 +421,10 @@ async fn did_json(State(state): State<AppState>) -> Response {
 
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/did+json")],
+        [
+            (header::CONTENT_TYPE, "application/did+json"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
         Json(json!({
             "@context": ["https://www.w3.org/ns/did/v1"],
             "id": state.service_did.as_str(),
@@ -844,23 +850,6 @@ async fn xrpc_admin_did(
     }
 }
 
-fn xrpc_songs_add_api_error(
-    error: (StatusCode, Json<ErrorResponse>),
-) -> XrpcErrorResponse<SongsAddError<'static>> {
-    let (status, Json(error)) = error;
-    let typed = match error.error.as_str() {
-        "invalid_url" => SongsAddError::InvalidUrl(xrpc_message("invalid url")),
-        "url_fetch_failed" | "ytdlp_failed" | "playlist_entry_fetch_failed" => {
-            SongsAddError::DownloadFailed(Some(CowStr::from(error.error)))
-        }
-        "unsupported_audio" | "missing_audio_file" | "invalid_audio_file" => {
-            SongsAddError::UnsupportedAudio(Some(CowStr::from(error.error)))
-        }
-        _ => SongsAddError::InvalidRequest(Some(CowStr::from(error.error))),
-    };
-    xrpc_typed_error(status, typed)
-}
-
 // This is a parameterless query, so it takes no `ExtractXrpc` request: the
 // generated request type is a unit struct, and jacquard-axum decodes queries
 // with `serde_html_form::from_str("")`, which rejects unit structs ("invalid
@@ -1115,20 +1104,44 @@ async fn xrpc_songs_add(
         ));
     }
 
-    let mut songs = Vec::new();
+    // Build owned import payloads up front so the spawned task is `'static`, and
+    // reject obviously-malformed URLs synchronously so callers still get fast
+    // feedback. Anything network-bound (yt-dlp, fetch) is deferred below.
+    let mut payloads = Vec::with_capacity(request.sources.len());
     for source in request.sources {
-        let payload = UrlSongRequest {
-            url: source.url.as_str().to_owned(),
+        let url = source.url.as_str().trim().to_owned();
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            return Err(xrpc_typed_error(
+                StatusCode::BAD_REQUEST,
+                SongsAddError::InvalidUrl(xrpc_message("url must be http(s)")),
+            ));
+        }
+        payloads.push(UrlSongRequest {
+            url,
             title: source.title.map(|value| value.as_ref().to_owned()),
             artist: source.artist.map(|value| value.as_ref().to_owned()),
             album: source.album.map(|value| value.as_ref().to_owned()),
             add_to_queue: source.add_to_queue,
-        };
-        let song = add_song_from_url_source(&state, &admin_did, payload)
-            .await
-            .map_err(xrpc_songs_add_api_error)?;
-        songs.push(song);
+        });
     }
+
+    // Importing a yt-dlp source (download + transcode) routinely takes longer
+    // than the upstream proxy's ~10s headers timeout, which surfaces to callers
+    // as a 502 `UpstreamFailure`. Run the import detached and respond
+    // immediately; finished songs reach clients via the radio websocket
+    // (`add_song` -> `broadcast_snapshot`) and subsequent `queue.list` calls.
+    let import_state = state.clone();
+    let importer_did = admin_did.clone();
+    tokio::spawn(async move {
+        for payload in payloads {
+            let url = payload.url.clone();
+            if let Err((status, Json(body))) =
+                add_song_from_url_source(&import_state, &importer_did, payload).await
+            {
+                tracing::warn!(%url, ?status, error = %body.error, "background songs.add import failed");
+            }
+        }
+    });
 
     let snapshot = state.radio.snapshot().await.map_err(|error| {
         tracing::error!(?error, "xrpc songs.add snapshot failed");
@@ -1138,8 +1151,10 @@ async fn xrpc_songs_add(
         )
     })?;
 
+    // `songs` is intentionally empty: imports complete asynchronously and surface
+    // via the radio websocket / `queue.list`, not in this immediate response.
     Ok(Json(SongsAddOutput {
-        songs: songs.into_iter().map(xrpc_song).collect(),
+        songs: Vec::new(),
         snapshot: xrpc_radio_snapshot(snapshot),
         extra_data: None,
     }))
