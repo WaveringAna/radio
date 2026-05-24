@@ -1,0 +1,17 @@
+[package]
+name = "radio-lexicons"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = ["pet_nkp"]
+pet_nkp = []
+
+[dependencies]
+jacquard-common = "0.11"
+jacquard-derive = "0.11"
+jacquard-lexicon = "0.11"
+miette = "7.6"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"

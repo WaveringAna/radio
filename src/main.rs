@@ -13,6 +13,7 @@ use anyhow::Context;
 use auth::{AuthConfig, AuthService, parse_admin_dids};
 use chat::ChatService;
 use db::Database;
+use jacquard::types::did::Did;
 use radio::RadioService;
 use tower_http::trace::TraceLayer;
 use tracing::level_filters::LevelFilter;
@@ -28,6 +29,9 @@ struct AppConfig {
     session_cookie_name: String,
     session_ttl_days: i64,
     admin_dids: Vec<String>,
+    service_did: Did<'static>,
+    service_endpoint: String,
+    service_ids: Vec<String>,
     audio_dir: PathBuf,
 }
 
@@ -37,7 +41,7 @@ impl AppConfig {
     /// # Errors
     /// Returns an error when an env var cannot be parsed.
     fn from_env() -> anyhow::Result<Self> {
-        let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".into());
+        let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".into());
         let app_url = std::env::var("APP_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".into());
         let cors_origin =
             std::env::var("CORS_ORIGIN").unwrap_or_else(|_| "http://127.0.0.1:5173".into());
@@ -54,6 +58,10 @@ impl AppConfig {
         let admin_dids = std::env::var("ADMIN_DIDS")
             .map(|value| parse_admin_dids(&value))
             .unwrap_or_default();
+        let service_did = service_did_from_env(&app_url)?;
+        let service_endpoint = std::env::var("SERVICE_ENDPOINT")
+            .unwrap_or_else(|_| default_service_endpoint(&app_url));
+        let service_ids = service_ids_from_env();
         let audio_dir = std::env::var("AUDIO_DIR").unwrap_or_else(|_| "data/audio".into());
 
         Ok(Self {
@@ -66,6 +74,9 @@ impl AppConfig {
             session_cookie_name,
             session_ttl_days,
             admin_dids,
+            service_did,
+            service_endpoint: service_endpoint.trim_end_matches('/').to_owned(),
+            service_ids,
             audio_dir: PathBuf::from(audio_dir),
         })
     }
@@ -102,7 +113,9 @@ async fn main() -> anyhow::Result<()> {
     match radio.cleanup_unsupported_audio_on_boot().await {
         Ok(0) => {}
         Ok(removed) => tracing::warn!(removed, "removed unsupported legacy audio rows on boot"),
-        Err(error) => tracing::warn!(%error, "failed to clean unsupported legacy audio rows on boot"),
+        Err(error) => {
+            tracing::warn!(%error, "failed to clean unsupported legacy audio rows on boot")
+        }
     }
 
     // Genre backfill hits an online metadata service per missing song, so run
@@ -129,8 +142,18 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
-    let app = routes::app(routes::AppState::new(auth, radio, chat), &config.cors_origin)
-        .layer(TraceLayer::new_for_http());
+    let app = routes::app(
+        routes::AppState::new(
+            auth,
+            radio,
+            chat,
+            config.service_did.clone(),
+            config.service_endpoint.clone(),
+            config.service_ids.clone(),
+        ),
+        &config.cors_origin,
+    )
+    .layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await
@@ -141,6 +164,9 @@ async fn main() -> anyhow::Result<()> {
         app_url = %config.app_url,
         cors_origin = %config.cors_origin,
         database_url = %config.database_url,
+        service_did = %config.service_did.as_str(),
+        service_endpoint = %config.service_endpoint,
+        service_ids = ?config.service_ids,
         "radio backend listening"
     );
 
@@ -149,6 +175,40 @@ async fn main() -> anyhow::Result<()> {
         .context("running axum server")?;
 
     Ok(())
+}
+
+fn service_did_from_env(app_url: &str) -> anyhow::Result<Did<'static>> {
+    let value = std::env::var("SERVICE_DID").unwrap_or_else(|_| default_service_did(app_url));
+    Did::new_owned(&value).map_err(|error| anyhow::anyhow!("invalid SERVICE_DID {value}: {error}"))
+}
+
+fn default_service_did(app_url: &str) -> String {
+    app_url
+        .strip_prefix("https://")
+        .and_then(|rest| rest.split('/').next())
+        .filter(|host| !host.is_empty())
+        .map(|host| format!("did:web:{host}"))
+        .unwrap_or_else(|| "did:web:localhost".into())
+}
+
+fn default_service_endpoint(app_url: &str) -> String {
+    app_url.replacen("http://", "https://", 1)
+}
+
+fn service_ids_from_env() -> Vec<String> {
+    let ids: Vec<String> = std::env::var("SERVICE_IDS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|id| id.starts_with('#'))
+        .map(ToOwned::to_owned)
+        .collect();
+
+    if ids.is_empty() {
+        vec!["#radio_xrpc".into()]
+    } else {
+        ids
+    }
 }
 
 fn init_tracing() {

@@ -1,0 +1,28 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.queue.list",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "Load the current radio snapshot, including playback state and upcoming queue.",
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["snapshot"],
+          "properties": {
+            "snapshot": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#radioSnapshot"
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" }
+      ]
+    }
+  }
+}

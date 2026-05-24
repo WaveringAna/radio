@@ -13,12 +13,7 @@ pub(crate) struct LoudnessMeasurement {
 /// by running `ffmpeg` with the `ebur128` filter.
 pub(crate) async fn measure(path: &Path) -> anyhow::Result<LoudnessMeasurement> {
     let output = Command::new("ffmpeg")
-        .args([
-            "-nostdin",
-            "-hide_banner",
-            "-nostats",
-            "-i",
-        ])
+        .args(["-nostdin", "-hide_banner", "-nostats", "-i"])
         .arg(path)
         .args(["-map", "a:0", "-af", "ebur128=peak=true", "-f", "null", "-"])
         .output()

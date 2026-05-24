@@ -1,0 +1,58 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.songs.add",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Import one or more remote songs through the existing radio backend importer.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["sources"],
+          "properties": {
+            "sources": {
+              "type": "array",
+              "description": "Remote audio sources to import in order.",
+              "minLength": 1,
+              "maxLength": 100,
+              "items": {
+                "type": "ref",
+                "ref": "pet.nkp.radio#songUrlSource"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["songs", "snapshot"],
+          "properties": {
+            "songs": {
+              "type": "array",
+              "description": "Imported or deduplicated songs.",
+              "items": {
+                "type": "ref",
+                "ref": "pet.nkp.radio#song"
+              }
+            },
+            "snapshot": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#radioSnapshot"
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" },
+        { "name": "InvalidUrl" },
+        { "name": "DownloadFailed" },
+        { "name": "UnsupportedAudio" }
+      ]
+    }
+  }
+}

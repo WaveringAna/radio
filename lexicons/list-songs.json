@@ -1,0 +1,32 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.songs.list",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "List songs stored in the radio library.",
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["songs"],
+          "properties": {
+            "songs": {
+              "type": "array",
+              "description": "Songs ordered by newest first.",
+              "items": {
+                "type": "ref",
+                "ref": "pet.nkp.radio#song"
+              }
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" }
+      ]
+    }
+  }
+}

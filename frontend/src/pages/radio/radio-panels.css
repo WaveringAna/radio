@@ -12,6 +12,9 @@
   grid-column: 2;
   grid-row: 1 / 3;
   display: grid;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.6rem;
   --text: #ffffff;
   --muted: #ffffff;
@@ -22,6 +25,8 @@
 }
 
 .glass-card {
+  min-width: 0;
+  max-width: 100%;
   padding: 0;
 }
 
@@ -77,6 +82,7 @@
 
 .queue-list li {
   display: grid;
+  min-width: 0;
   grid-template-columns: 1.4rem 2.1rem minmax(0, 1fr) 2rem;
   gap: 0.75rem;
   align-items: center;
@@ -446,8 +452,11 @@
 .chat-card {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
   max-height: 24rem;
+  overflow-x: clip;
   background: transparent;
 }
 
@@ -477,7 +486,10 @@
 
 .chat-log {
   flex: 1;
+  min-width: 0;
+  max-width: 100%;
   overflow-y: auto;
+  overflow-x: clip;
   padding: 0.4rem 1rem;
   scrollbar-width: thin;
 }
@@ -490,6 +502,8 @@
 .chat-message-list {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
   gap: 0.55rem;
   list-style: none;
   margin: 0;
@@ -498,6 +512,8 @@
 
 .chat-message {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   grid-template-columns: 1.8rem minmax(0, 1fr);
   gap: 0.55rem;
   align-items: start;
@@ -520,6 +536,7 @@
 .chat-message-body {
   display: grid;
   min-width: 0;
+  max-width: 100%;
 }
 
 .chat-message-meta {
@@ -527,6 +544,7 @@
   align-items: baseline;
   gap: 0.45rem;
   min-width: 0;
+  max-width: 100%;
   font-size: 0.8rem;
   color: var(--muted);
 }
@@ -551,9 +569,12 @@
 }
 
 .chat-message-text {
+  min-width: 0;
+  max-width: 100%;
   margin: 0.1rem 0 0;
   font-size: 0.92rem;
   line-height: 1.3;
+  word-break: break-word;
   word-wrap: break-word;
   overflow-wrap: anywhere;
 }
@@ -563,6 +584,7 @@
   align-items: baseline;
   gap: 0.45rem;
   min-width: 0;
+  max-width: 100%;
   padding: 0.25rem 0.1rem;
   font-size: 0.85rem;
   color: var(--muted);
@@ -596,6 +618,8 @@
 .chat-composer {
   display: flex;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
   gap: 0.45rem;
   padding: 0.5rem 1rem 0.7rem;
   border-top: 1px solid var(--hairline);

@@ -1912,6 +1912,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "jacquard-axum"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "707649f378c7aaac47a267e1eb95dbcf595fca3b0c949e0e7aa742dec7093cde"
+dependencies = [
+ "axum",
+ "bytes",
+ "jacquard",
+ "jacquard-common",
+ "jacquard-derive",
+ "jacquard-identity",
+ "miette",
+ "multibase",
+ "serde",
+ "serde_html_form",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower-http",
+ "tracing",
+]
+
+[[package]]
 name = "jacquard-common"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3130,7 +3153,9 @@ dependencies = [
  "dotenvy",
  "image",
  "jacquard",
+ "jacquard-axum",
  "lofty",
+ "radio-lexicons",
  "reqwest",
  "serde",
  "serde_json",
@@ -3143,6 +3168,18 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "radio-lexicons"
+version = "0.1.0"
+dependencies = [
+ "jacquard-common",
+ "jacquard-derive",
+ "jacquard-lexicon",
+ "miette",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

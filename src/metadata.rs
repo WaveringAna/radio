@@ -49,19 +49,11 @@ pub(crate) async fn fetch_online_metadata(
     OnlineLookup { cover, genre }
 }
 
-async fn fetch_itunes_genre(
-    client: &reqwest::Client,
-    artist: &str,
-    title: &str,
-) -> Option<String> {
+async fn fetch_itunes_genre(client: &reqwest::Client, artist: &str, title: &str) -> Option<String> {
     let term = format!("{artist} {title}");
     let resp = client
         .get("https://itunes.apple.com/search")
-        .query(&[
-            ("term", term.as_str()),
-            ("entity", "song"),
-            ("limit", "10"),
-        ])
+        .query(&[("term", term.as_str()), ("entity", "song"), ("limit", "10")])
         .send()
         .await
         .ok()?;

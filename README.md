@@ -16,8 +16,12 @@ edit `.env` for your local url, database, admin dids, and audio directory.
 
 | variable | default | description |
 | --- | --- | --- |
-| `BIND_ADDR` | `127.0.0.1:3000` | socket address the rust backend listens on |
-| `APP_URL` | `http://127.0.0.1:3000` | public backend url used for oauth client metadata and callbacks |
+| `BIND_ADDR` | `0.0.0.0:3000` | socket address the rust backend listens on |
+| `APP_URL` | `http://127.0.0.1:3000` | public backend url used for oauth client metadata, callbacks, and service defaults |
+| `SERVICE_DID` | `did:web:localhost` | service DID expected as the service-auth JWT audience |
+| `SERVICE_IDS` | `#radio_xrpc` | comma-separated DID document service ids; quote values starting with `#` in `.env` |
+| `SERVICE_ENDPOINT` | `APP_URL` with `http://` rewritten to `https://` | endpoint published in `/.well-known/did.json` for PDS proxy service routing |
+| `OAUTH_AUTHORIZATION_SERVER` | `https://bsky.social` | authorization server advertised by `/.well-known/oauth-protected-resource` |
 | `CORS_ORIGIN` | `http://127.0.0.1:5173` | allowed browser origin in dev; also used as the frontend redirect base |
 | `DATABASE_URL` | `sqlite://radio.db` | sqlite database url |
 | `SESSION_COOKIE_NAME` | `radio_session` | auth session cookie name |

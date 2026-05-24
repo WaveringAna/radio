@@ -1,5 +1,8 @@
 .radio-page {
   display: grid;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   grid-template-columns: minmax(0, 1.1fr) minmax(30rem, 0.9fr);
   gap: 1.5rem;
   align-items: start;
@@ -11,7 +14,9 @@
   grid-column: 1;
   grid-row: 2;
   display: grid;
-  grid-template-columns: 1fr;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
 }
 
@@ -52,6 +57,8 @@
   grid-column: 1;
   grid-row: 1;
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   grid-template-rows: auto auto;
   padding: 0.5rem 1rem;
   background: transparent;

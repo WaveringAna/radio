@@ -1243,7 +1243,9 @@ async fn quarantine_unsupported_song(db: &Database, song: &StoredAudioFile) -> a
     match tokio::fs::remove_file(&song.file_path).await {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => tracing::warn!(%error, path = %song.file_path, "failed to remove unsupported audio file"),
+        Err(error) => {
+            tracing::warn!(%error, path = %song.file_path, "failed to remove unsupported audio file")
+        }
     }
 
     tracing::warn!(
@@ -1418,7 +1420,10 @@ async fn auto_advance(db: &Database) -> anyhow::Result<()> {
         }
         let Some(song) = find_song(db, current_id).await? else {
             let admin = raw.updated_by_did.as_deref().unwrap_or("system").to_owned();
-            tracing::warn!(from_song_id = current_id, "auto-advance: current song missing");
+            tracing::warn!(
+                from_song_id = current_id,
+                "auto-advance: current song missing"
+            );
             heal_empty_current_song(db, &admin).await?;
             continue;
         };

@@ -1,0 +1,62 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.queue.modify",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Modify the radio queue using the existing backend queue operations.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["action"],
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "Queue operation to perform. Required companion fields are enforced by the server.",
+              "knownValues": ["enqueue", "remove", "clear", "reorder"]
+            },
+            "songIds": {
+              "type": "array",
+              "description": "Song ids to append when action is enqueue.",
+              "items": {
+                "type": "string"
+              }
+            },
+            "queueId": {
+              "type": "string",
+              "description": "Queue item id to remove when action is remove."
+            },
+            "queueIds": {
+              "type": "array",
+              "description": "Queue item ids in desired order when action is reorder.",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["snapshot"],
+          "properties": {
+            "snapshot": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#radioSnapshot"
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" },
+        { "name": "SongNotFound" },
+        { "name": "QueueItemNotFound" }
+      ]
+    }
+  }
+}

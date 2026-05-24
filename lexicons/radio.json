@@ -1,0 +1,221 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio",
+  "description": "Shared data shapes for nkp radio XRPC endpoints.",
+  "defs": {
+    "song": {
+      "type": "object",
+      "description": "Song metadata stored by the radio backend.",
+      "required": [
+        "id",
+        "title",
+        "artist",
+        "album",
+        "genre",
+        "durationSeconds",
+        "mimeType",
+        "hasCover",
+        "addedByDid",
+        "createdAt",
+        "loudnessLufs",
+        "loudnessPeak"
+      ],
+      "nullable": ["album", "genre", "durationSeconds", "mimeType", "loudnessLufs", "loudnessPeak"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable song id.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "description": "Song title.",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "artist": {
+          "type": "string",
+          "description": "Song artist.",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "album": {
+          "type": "string",
+          "description": "Optional album title."
+        },
+        "genre": {
+          "type": "string",
+          "description": "Optional genre."
+        },
+        "durationSeconds": {
+          "type": "integer",
+          "description": "Optional duration in seconds."
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "Stored audio MIME type."
+        },
+        "hasCover": {
+          "type": "boolean",
+          "description": "Whether the song has cover art."
+        },
+        "addedByDid": {
+          "type": "string",
+          "description": "DID that uploaded the song."
+        },
+        "createdAt": {
+          "type": "integer",
+          "description": "Unix timestamp when the song was uploaded.",
+          "minimum": 0
+        },
+        "loudnessLufs": {
+          "type": "string",
+          "description": "Integrated loudness in LUFS, serialized as a decimal string."
+        },
+        "loudnessPeak": {
+          "type": "string",
+          "description": "True peak in dBFS, serialized as a decimal string."
+        }
+      }
+    },
+    "queueItem": {
+      "type": "object",
+      "description": "Queue item joined with song metadata.",
+      "required": ["id", "position", "queuedByDid", "songId", "title", "artist", "album", "addedByDid"],
+      "nullable": ["album"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable queue item id.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "position": {
+          "type": "integer",
+          "description": "Queue position, lower values play first.",
+          "minimum": 1
+        },
+        "queuedByDid": {
+          "type": "string",
+          "description": "DID that queued the song."
+        },
+        "songId": {
+          "type": "string",
+          "description": "Queued song id.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "description": "Queued song title.",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "artist": {
+          "type": "string",
+          "description": "Queued song artist.",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "album": {
+          "type": "string",
+          "description": "Optional queued song album."
+        },
+        "addedByDid": {
+          "type": "string",
+          "description": "DID that originally uploaded the queued song."
+        }
+      }
+    },
+    "radioState": {
+      "type": "object",
+      "description": "Radio playback status persisted by the backend.",
+      "required": ["currentSongId", "status", "startedAt", "pausedAt", "positionSeconds", "updatedByDid"],
+      "nullable": ["currentSongId", "startedAt", "pausedAt", "updatedByDid"],
+      "properties": {
+        "currentSongId": {
+          "type": "string",
+          "description": "Currently active song id, when one is selected."
+        },
+        "status": {
+          "type": "string",
+          "description": "Current playback status.",
+          "knownValues": ["playing", "paused", "stopped"]
+        },
+        "startedAt": {
+          "type": "integer",
+          "description": "Unix timestamp when playback was last started."
+        },
+        "pausedAt": {
+          "type": "integer",
+          "description": "Unix timestamp when playback was last paused."
+        },
+        "positionSeconds": {
+          "type": "integer",
+          "description": "Stored playback offset in seconds.",
+          "minimum": 0
+        },
+        "updatedByDid": {
+          "type": "string",
+          "description": "DID or backend actor that last updated radio state."
+        }
+      }
+    },
+    "radioSnapshot": {
+      "type": "object",
+      "description": "Combined radio view returned to clients.",
+      "required": ["state", "currentSong", "queue"],
+      "nullable": ["currentSong"],
+      "properties": {
+        "state": {
+          "type": "ref",
+          "ref": "#radioState"
+        },
+        "currentSong": {
+          "type": "ref",
+          "ref": "#song"
+        },
+        "queue": {
+          "type": "array",
+          "description": "Upcoming queued songs.",
+          "items": {
+            "type": "ref",
+            "ref": "#queueItem"
+          }
+        }
+      }
+    },
+    "songUrlSource": {
+      "type": "object",
+      "description": "Remote audio source to import through the existing backend URL importer.",
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "HTTP(S) audio, playlist, or yt-dlp-supported URL to import.",
+          "minLength": 8,
+          "maxLength": 4096
+        },
+        "title": {
+          "type": "string",
+          "description": "Optional title override for plain audio URLs."
+        },
+        "artist": {
+          "type": "string",
+          "description": "Optional artist override for plain audio URLs."
+        },
+        "album": {
+          "type": "string",
+          "description": "Optional album override."
+        },
+        "addToQueue": {
+          "type": "boolean",
+          "description": "Whether imported songs should be queued immediately.",
+          "default": false
+        }
+      }
+    }
+  }
+}

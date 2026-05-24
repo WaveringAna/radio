@@ -17,8 +17,42 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use jacquard::oauth::types::CallbackParams;
+use jacquard::{
+    CowStr,
+    identity::{JacquardResolver, resolver::ResolverOptions},
+    oauth::types::CallbackParams,
+    types::did::Did,
+    xrpc::XrpcError,
+};
+use jacquard_axum::{
+    ExtractXrpc, IntoRouter, XrpcErrorResponse,
+    service_auth::{ExtractServiceAuth, ServiceAuth, VerifiedServiceAuth},
+};
+use radio_lexicons::pet_nkp::radio::{
+    QueueItem as XrpcQueueItem, RadioSnapshot as XrpcRadioSnapshot, RadioState as XrpcRadioState,
+    RadioStateStatus as XrpcRadioStateStatus, Song as XrpcSong,
+    queue::{
+        list::{
+            ListError as QueueListError, ListOutput as QueueListOutput,
+            ListRequest as QueueListRequest,
+        },
+        modify::{
+            ModifyAction as QueueModifyAction, ModifyError as QueueModifyError,
+            ModifyOutput as QueueModifyOutput, ModifyRequest as QueueModifyRequest,
+        },
+    },
+    songs::{
+        add::{
+            AddError as SongsAddError, AddOutput as SongsAddOutput, AddRequest as SongsAddRequest,
+        },
+        list::{
+            ListError as SongsListError, ListOutput as SongsListOutput,
+            ListRequest as SongsListRequest,
+        },
+    },
+};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::sync::broadcast;
 use tokio::time::{Instant, MissedTickBehavior};
 use tower_http::{
@@ -46,18 +80,52 @@ pub(crate) struct AppState {
     pub(crate) auth: Arc<AuthService>,
     pub(crate) radio: Arc<RadioService>,
     pub(crate) chat: Arc<ChatService>,
+    service_did: Did<'static>,
+    service_endpoint: String,
+    service_ids: Vec<String>,
+    service_auth_resolver: JacquardResolver,
     viewers: ViewerTracker,
 }
 
 impl AppState {
-    /// Creates route state from the auth, radio, and chat services.
-    pub(crate) fn new(auth: AuthService, radio: RadioService, chat: ChatService) -> Self {
+    /// Creates route state from the auth, radio, chat, and service-auth DID.
+    pub(crate) fn new(
+        auth: AuthService,
+        radio: RadioService,
+        chat: ChatService,
+        service_did: Did<'static>,
+        service_endpoint: String,
+        service_ids: Vec<String>,
+    ) -> Self {
         Self {
             auth: Arc::new(auth),
             radio: Arc::new(radio),
             chat: Arc::new(chat),
+            service_did,
+            service_endpoint,
+            service_ids,
+            service_auth_resolver: JacquardResolver::new(
+                reqwest::Client::new(),
+                ResolverOptions::default(),
+            ),
             viewers: ViewerTracker::new(),
         }
+    }
+}
+
+impl ServiceAuth for AppState {
+    type Resolver = JacquardResolver;
+
+    fn service_did(&self) -> &Did<'_> {
+        &self.service_did
+    }
+
+    fn resolver(&self) -> &Self::Resolver {
+        &self.service_auth_resolver
+    }
+
+    fn require_lxm(&self) -> bool {
+        true
     }
 }
 
@@ -119,7 +187,9 @@ impl ViewerTracker {
         let stats = Self::collect_stats(&viewers);
         drop(viewers);
 
-        if stats.count != previous_stats.count || stats.listener_dids != previous_stats.listener_dids {
+        if stats.count != previous_stats.count
+            || stats.listener_dids != previous_stats.listener_dids
+        {
             let _ = self.events.send(stats.clone());
         }
 
@@ -154,7 +224,9 @@ impl ViewerTracker {
         let stats = Self::collect_stats(&viewers);
         drop(viewers);
 
-        if stats.count != previous_stats.count || stats.listener_dids != previous_stats.listener_dids {
+        if stats.count != previous_stats.count
+            || stats.listener_dids != previous_stats.listener_dids
+        {
             let _ = self.events.send(stats);
         }
     }
@@ -221,8 +293,14 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .route("/api/radio/seek", get(get_radio_seek))
         .route("/api/radio/ws", get(radio_ws))
         .route("/api/radio/chat/ws", get(chat_ws))
-        .route("/api/radio/chat/messages/{message_id}", delete(delete_chat_message))
-        .route("/api/radio/chat/bans", get(list_chat_bans).post(create_chat_ban))
+        .route(
+            "/api/radio/chat/messages/{message_id}",
+            delete(delete_chat_message),
+        )
+        .route(
+            "/api/radio/chat/bans",
+            get(list_chat_bans).post(create_chat_ban),
+        )
         .route("/api/radio/chat/bans/{did}", delete(remove_chat_ban))
         .route("/api/radio/queue", post(enqueue_song).delete(clear_queue))
         .route("/api/radio/queue/album", post(enqueue_album))
@@ -248,12 +326,22 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
             get(song_cover_thumbnail),
         )
         .route("/api/logout", post(logout))
+        .merge(QueueListRequest::into_router(xrpc_queue_list))
+        .merge(QueueModifyRequest::into_router(xrpc_queue_modify))
+        .merge(SongsListRequest::into_router(xrpc_songs_list))
+        .merge(SongsAddRequest::into_router(xrpc_songs_add))
         .layer(cors);
 
     let frontend = ServeDir::new("static").fallback(ServeFile::new("static/index.html"));
 
     Router::new()
         .route("/client-metadata.json", get(client_metadata))
+        .route("/.well-known/atproto-did", get(atproto_did))
+        .route("/.well-known/did.json", get(did_json))
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(oauth_protected_resource),
+        )
         .nest("/rest", crate::subsonic::router())
         .merge(api)
         .fallback_service(frontend)
@@ -304,6 +392,51 @@ async fn client_metadata(State(state): State<AppState>) -> Response {
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+async fn atproto_did(State(state): State<AppState>) -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        state.service_did.as_str().to_owned(),
+    )
+        .into_response()
+}
+
+async fn did_json(State(state): State<AppState>) -> Response {
+    let services: Vec<_> = state
+        .service_ids
+        .iter()
+        .map(|id| {
+            json!({
+                "id": id,
+                "type": "AtprotoService",
+                "serviceEndpoint": state.service_endpoint.as_str(),
+            })
+        })
+        .collect();
+
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/did+json")],
+        Json(json!({
+            "@context": ["https://www.w3.org/ns/did/v1"],
+            "id": state.service_did.as_str(),
+            "service": services,
+        })),
+    )
+        .into_response()
+}
+
+async fn oauth_protected_resource(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let authorization_server = std::env::var("OAUTH_AUTHORIZATION_SERVER")
+        .unwrap_or_else(|_| "https://bsky.social".into());
+
+    Json(json!({
+        "resource": state.service_endpoint.as_str(),
+        "authorization_servers": [authorization_server],
+        "bearer_methods_supported": ["header"],
+    }))
 }
 
 #[derive(Serialize)]
@@ -591,6 +724,425 @@ async fn get_radio_seek(
         .await
         .map(Json)
         .map_err(internal_api_error)
+}
+
+fn xrpc_typed_error<E>(status: StatusCode, error: E) -> XrpcErrorResponse<E>
+where
+    E: std::error::Error + jacquard::IntoStatic + Serialize,
+{
+    XrpcErrorResponse::new(status, XrpcError::Xrpc(error))
+}
+
+fn xrpc_message(message: &'static str) -> Option<CowStr<'static>> {
+    Some(CowStr::from(message))
+}
+
+fn xrpc_cow(value: String) -> CowStr<'static> {
+    CowStr::from(value)
+}
+
+fn optional_xrpc_cow(value: Option<String>) -> Option<CowStr<'static>> {
+    value.map(xrpc_cow)
+}
+
+fn optional_decimal(value: Option<f64>) -> Option<CowStr<'static>> {
+    value.map(|number| CowStr::from(number.to_string()))
+}
+
+fn xrpc_song(song: crate::radio::Song) -> XrpcSong<'static> {
+    XrpcSong::new()
+        .id(song.id)
+        .title(song.title)
+        .artist(song.artist)
+        .maybe_album(optional_xrpc_cow(song.album))
+        .maybe_genre(optional_xrpc_cow(song.genre))
+        .maybe_duration_seconds(song.duration_seconds)
+        .maybe_mime_type(optional_xrpc_cow(song.mime_type))
+        .has_cover(song.has_cover)
+        .added_by_did(song.added_by_did)
+        .created_at(song.created_at)
+        .maybe_loudness_lufs(optional_decimal(song.loudness_lufs))
+        .maybe_loudness_peak(optional_decimal(song.loudness_peak))
+        .build()
+}
+
+fn xrpc_queue_item(item: crate::radio::QueueItem) -> XrpcQueueItem<'static> {
+    XrpcQueueItem::new()
+        .id(item.id)
+        .position(item.position)
+        .queued_by_did(item.queued_by_did)
+        .song_id(item.song_id)
+        .title(item.title)
+        .artist(item.artist)
+        .maybe_album(optional_xrpc_cow(item.album))
+        .added_by_did(item.added_by_did)
+        .build()
+}
+
+fn xrpc_radio_status(status: String) -> XrpcRadioStateStatus<'static> {
+    match status.as_str() {
+        "playing" => XrpcRadioStateStatus::Playing,
+        "paused" => XrpcRadioStateStatus::Paused,
+        "stopped" => XrpcRadioStateStatus::Stopped,
+        _ => XrpcRadioStateStatus::Other(CowStr::from(status)),
+    }
+}
+
+fn xrpc_radio_state(state: crate::radio::RadioState) -> XrpcRadioState<'static> {
+    XrpcRadioState::new()
+        .maybe_current_song_id(optional_xrpc_cow(state.current_song_id))
+        .status(xrpc_radio_status(state.status))
+        .maybe_started_at(state.started_at)
+        .maybe_paused_at(state.paused_at)
+        .position_seconds(state.position_seconds)
+        .maybe_updated_by_did(optional_xrpc_cow(state.updated_by_did))
+        .build()
+}
+
+fn xrpc_radio_snapshot(snapshot: crate::radio::RadioSnapshot) -> XrpcRadioSnapshot<'static> {
+    XrpcRadioSnapshot::new()
+        .state(xrpc_radio_state(snapshot.state))
+        .maybe_current_song(snapshot.current_song.map(xrpc_song))
+        .queue(
+            snapshot
+                .queue
+                .into_iter()
+                .map(xrpc_queue_item)
+                .collect::<Vec<_>>(),
+        )
+        .build()
+}
+
+fn service_auth_has_lxm(auth: &VerifiedServiceAuth<'_>, nsid: &str) -> bool {
+    auth.lxm().map(|lxm| lxm.as_str() == nsid).unwrap_or(false)
+}
+
+/// Why an XRPC caller failed the admin whitelist check.
+enum AdminDenied {
+    /// The caller authenticated but their DID is not on the admin whitelist.
+    NotAdmin,
+    /// The whitelist lookup itself failed.
+    Internal,
+}
+
+/// Verifies the service-auth caller's DID against the admin whitelist, returning
+/// the DID on success. Every XRPC endpoint is whitelist-gated; callers map the
+/// `AdminDenied` outcome onto their own typed error enum.
+async fn xrpc_admin_did(
+    state: &AppState,
+    auth: &VerifiedServiceAuth<'_>,
+    nsid: &str,
+) -> Result<String, AdminDenied> {
+    let did = auth.did().as_str();
+    match state.auth.is_admin_did(did).await {
+        Ok(true) => Ok(did.to_owned()),
+        Ok(false) => Err(AdminDenied::NotAdmin),
+        Err(error) => {
+            tracing::error!(?error, nsid, "xrpc admin check failed");
+            Err(AdminDenied::Internal)
+        }
+    }
+}
+
+fn xrpc_songs_add_api_error(
+    error: (StatusCode, Json<ErrorResponse>),
+) -> XrpcErrorResponse<SongsAddError<'static>> {
+    let (status, Json(error)) = error;
+    let typed = match error.error.as_str() {
+        "invalid_url" => SongsAddError::InvalidUrl(xrpc_message("invalid url")),
+        "url_fetch_failed" | "ytdlp_failed" | "playlist_entry_fetch_failed" => {
+            SongsAddError::DownloadFailed(Some(CowStr::from(error.error)))
+        }
+        "unsupported_audio" | "missing_audio_file" | "invalid_audio_file" => {
+            SongsAddError::UnsupportedAudio(Some(CowStr::from(error.error)))
+        }
+        _ => SongsAddError::InvalidRequest(Some(CowStr::from(error.error))),
+    };
+    xrpc_typed_error(status, typed)
+}
+
+// This is a parameterless query, so it takes no `ExtractXrpc` request: the
+// generated request type is a unit struct, and jacquard-axum decodes queries
+// with `serde_html_form::from_str("")`, which rejects unit structs ("invalid
+// type: map, expected unit struct"). Omitting the extractor sidesteps that.
+async fn xrpc_queue_list(
+    State(state): State<AppState>,
+    ExtractServiceAuth(auth): ExtractServiceAuth,
+) -> Result<Json<QueueListOutput<'static>>, XrpcErrorResponse<QueueListError<'static>>> {
+    if !service_auth_has_lxm(&auth, "pet.nkp.radio.queue.list") {
+        return Err(xrpc_typed_error(
+            StatusCode::UNAUTHORIZED,
+            QueueListError::AuthenticationRequired(xrpc_message(
+                "invalid service auth method binding",
+            )),
+        ));
+    }
+    xrpc_admin_did(&state, &auth, "pet.nkp.radio.queue.list")
+        .await
+        .map_err(|denied| match denied {
+            AdminDenied::NotAdmin => xrpc_typed_error(
+                StatusCode::FORBIDDEN,
+                QueueListError::AdminRequired(xrpc_message("admin privileges required")),
+            ),
+            AdminDenied::Internal => xrpc_typed_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                QueueListError::InvalidRequest(xrpc_message("internal server error")),
+            ),
+        })?;
+
+    let snapshot = state.radio.external_snapshot().await.map_err(|error| {
+        tracing::error!(?error, "xrpc queue.list failed");
+        xrpc_typed_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            QueueListError::InvalidRequest(xrpc_message("internal server error")),
+        )
+    })?;
+
+    Ok(Json(QueueListOutput {
+        snapshot: xrpc_radio_snapshot(snapshot),
+        extra_data: None,
+    }))
+}
+
+// Parameterless query; see `xrpc_queue_list` for why there is no `ExtractXrpc`.
+async fn xrpc_songs_list(
+    State(state): State<AppState>,
+    ExtractServiceAuth(auth): ExtractServiceAuth,
+) -> Result<Json<SongsListOutput<'static>>, XrpcErrorResponse<SongsListError<'static>>> {
+    if !service_auth_has_lxm(&auth, "pet.nkp.radio.songs.list") {
+        return Err(xrpc_typed_error(
+            StatusCode::UNAUTHORIZED,
+            SongsListError::AuthenticationRequired(xrpc_message(
+                "invalid service auth method binding",
+            )),
+        ));
+    }
+    xrpc_admin_did(&state, &auth, "pet.nkp.radio.songs.list")
+        .await
+        .map_err(|denied| match denied {
+            AdminDenied::NotAdmin => xrpc_typed_error(
+                StatusCode::FORBIDDEN,
+                SongsListError::AdminRequired(xrpc_message("admin privileges required")),
+            ),
+            AdminDenied::Internal => xrpc_typed_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                SongsListError::InvalidRequest(xrpc_message("internal server error")),
+            ),
+        })?;
+
+    let songs = state.radio.songs().await.map_err(|error| {
+        tracing::error!(?error, "xrpc songs.list failed");
+        xrpc_typed_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            SongsListError::InvalidRequest(xrpc_message("internal server error")),
+        )
+    })?;
+
+    Ok(Json(SongsListOutput {
+        songs: songs.into_iter().map(xrpc_song).collect(),
+        extra_data: None,
+    }))
+}
+
+async fn xrpc_queue_modify(
+    State(state): State<AppState>,
+    ExtractServiceAuth(auth): ExtractServiceAuth,
+    ExtractXrpc(request): ExtractXrpc<QueueModifyRequest>,
+) -> Result<Json<QueueModifyOutput<'static>>, XrpcErrorResponse<QueueModifyError<'static>>> {
+    if !service_auth_has_lxm(&auth, "pet.nkp.radio.queue.modify") {
+        return Err(xrpc_typed_error(
+            StatusCode::UNAUTHORIZED,
+            QueueModifyError::AuthenticationRequired(xrpc_message(
+                "invalid service auth method binding",
+            )),
+        ));
+    }
+    let admin_did = xrpc_admin_did(&state, &auth, "pet.nkp.radio.queue.modify")
+        .await
+        .map_err(|denied| match denied {
+            AdminDenied::NotAdmin => xrpc_typed_error(
+                StatusCode::FORBIDDEN,
+                QueueModifyError::AdminRequired(xrpc_message("admin privileges required")),
+            ),
+            AdminDenied::Internal => xrpc_typed_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                QueueModifyError::InvalidRequest(xrpc_message("internal server error")),
+            ),
+        })?;
+
+    let snapshot = match request.action {
+        QueueModifyAction::Enqueue => {
+            let song_ids = request.song_ids.ok_or_else(|| {
+                xrpc_typed_error(
+                    StatusCode::BAD_REQUEST,
+                    QueueModifyError::InvalidRequest(xrpc_message(
+                        "songIds is required for enqueue",
+                    )),
+                )
+            })?;
+            if song_ids.is_empty() {
+                return Err(xrpc_typed_error(
+                    StatusCode::BAD_REQUEST,
+                    QueueModifyError::InvalidRequest(xrpc_message("songIds cannot be empty")),
+                ));
+            }
+            let song_ids: Vec<String> = song_ids
+                .iter()
+                .map(|song_id| song_id.as_ref().to_owned())
+                .collect();
+            state
+                .radio
+                .enqueue_songs(&song_ids, &admin_did)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(?error, "xrpc queue.modify enqueue failed");
+                    let message = error.to_string();
+                    let typed = if message.contains("song not found") {
+                        QueueModifyError::SongNotFound(Some(CowStr::from(message)))
+                    } else {
+                        QueueModifyError::InvalidRequest(Some(CowStr::from(message)))
+                    };
+                    xrpc_typed_error(StatusCode::BAD_REQUEST, typed)
+                })?
+        }
+        QueueModifyAction::Remove => {
+            let queue_id = request.queue_id.ok_or_else(|| {
+                xrpc_typed_error(
+                    StatusCode::BAD_REQUEST,
+                    QueueModifyError::InvalidRequest(xrpc_message(
+                        "queueId is required for remove",
+                    )),
+                )
+            })?;
+            state
+                .radio
+                .remove_queue_item(queue_id.as_ref())
+                .await
+                .map_err(|error| {
+                    tracing::warn!(?error, "xrpc queue.modify remove failed");
+                    xrpc_typed_error(
+                        StatusCode::BAD_REQUEST,
+                        QueueModifyError::QueueItemNotFound(Some(CowStr::from(error.to_string()))),
+                    )
+                })?
+        }
+        QueueModifyAction::Clear => state.radio.clear_queue().await.map_err(|error| {
+            tracing::warn!(?error, "xrpc queue.modify clear failed");
+            xrpc_typed_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                QueueModifyError::InvalidRequest(xrpc_message("internal server error")),
+            )
+        })?,
+        QueueModifyAction::Reorder => {
+            let queue_ids = request.queue_ids.ok_or_else(|| {
+                xrpc_typed_error(
+                    StatusCode::BAD_REQUEST,
+                    QueueModifyError::InvalidRequest(xrpc_message(
+                        "queueIds is required for reorder",
+                    )),
+                )
+            })?;
+            let queue_ids: Vec<String> = queue_ids
+                .iter()
+                .map(|queue_id| queue_id.as_ref().to_owned())
+                .collect();
+            state
+                .radio
+                .reorder_queue(&queue_ids)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(?error, "xrpc queue.modify reorder failed");
+                    xrpc_typed_error(
+                        StatusCode::BAD_REQUEST,
+                        QueueModifyError::InvalidRequest(Some(CowStr::from(error.to_string()))),
+                    )
+                })?
+        }
+        QueueModifyAction::Other(action) => {
+            return Err(xrpc_typed_error(
+                StatusCode::BAD_REQUEST,
+                QueueModifyError::InvalidRequest(Some(CowStr::from(format!(
+                    "unknown queue action: {action}"
+                )))),
+            ));
+        }
+    };
+
+    Ok(Json(QueueModifyOutput {
+        snapshot: xrpc_radio_snapshot(snapshot),
+        extra_data: None,
+    }))
+}
+
+async fn xrpc_songs_add(
+    State(state): State<AppState>,
+    ExtractServiceAuth(auth): ExtractServiceAuth,
+    ExtractXrpc(request): ExtractXrpc<SongsAddRequest>,
+) -> Result<Json<SongsAddOutput<'static>>, XrpcErrorResponse<SongsAddError<'static>>> {
+    if !service_auth_has_lxm(&auth, "pet.nkp.radio.songs.add") {
+        return Err(xrpc_typed_error(
+            StatusCode::UNAUTHORIZED,
+            SongsAddError::AuthenticationRequired(xrpc_message(
+                "invalid service auth method binding",
+            )),
+        ));
+    }
+    let admin_did = xrpc_admin_did(&state, &auth, "pet.nkp.radio.songs.add")
+        .await
+        .map_err(|denied| match denied {
+            AdminDenied::NotAdmin => xrpc_typed_error(
+                StatusCode::FORBIDDEN,
+                SongsAddError::AdminRequired(xrpc_message("admin privileges required")),
+            ),
+            AdminDenied::Internal => xrpc_typed_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                SongsAddError::InvalidRequest(xrpc_message("internal server error")),
+            ),
+        })?;
+
+    if request.sources.is_empty() {
+        return Err(xrpc_typed_error(
+            StatusCode::BAD_REQUEST,
+            SongsAddError::InvalidRequest(xrpc_message("sources cannot be empty")),
+        ));
+    }
+    if request.sources.len() > 100 {
+        return Err(xrpc_typed_error(
+            StatusCode::BAD_REQUEST,
+            SongsAddError::InvalidRequest(xrpc_message(
+                "sources cannot contain more than 100 items",
+            )),
+        ));
+    }
+
+    let mut songs = Vec::new();
+    for source in request.sources {
+        let payload = UrlSongRequest {
+            url: source.url.as_str().to_owned(),
+            title: source.title.map(|value| value.as_ref().to_owned()),
+            artist: source.artist.map(|value| value.as_ref().to_owned()),
+            album: source.album.map(|value| value.as_ref().to_owned()),
+            add_to_queue: source.add_to_queue,
+        };
+        let song = add_song_from_url_source(&state, &admin_did, payload)
+            .await
+            .map_err(xrpc_songs_add_api_error)?;
+        songs.push(song);
+    }
+
+    let snapshot = state.radio.snapshot().await.map_err(|error| {
+        tracing::error!(?error, "xrpc songs.add snapshot failed");
+        xrpc_typed_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            SongsAddError::InvalidRequest(xrpc_message("internal server error")),
+        )
+    })?;
+
+    Ok(Json(SongsAddOutput {
+        songs: songs.into_iter().map(xrpc_song).collect(),
+        snapshot: xrpc_radio_snapshot(snapshot),
+        extra_data: None,
+    }))
 }
 
 async fn get_albums(
@@ -1470,9 +2022,9 @@ fn valid_listener_did(did: &str) -> bool {
     !did.is_empty()
         && did.len() <= MAX_VIEWER_ID_LEN
         && did.starts_with("did:")
-        && did.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_' | b'.')
-        })
+        && did
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_' | b'.'))
 }
 
 fn reject_unsupported_audio_upload(
@@ -1481,7 +2033,10 @@ fn reject_unsupported_audio_upload(
     bytes: &[u8],
 ) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
     if is_playlist_upload(filename, mime_type, bytes) {
-        return Err(api_error(StatusCode::BAD_REQUEST, "playlist_requires_batch_import"));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "playlist_requires_batch_import",
+        ));
     }
 
     Ok(())
@@ -1592,7 +2147,10 @@ fn playlist_entry_url(
         return Err(api_error(StatusCode::BAD_REQUEST, "invalid_playlist_entry"));
     }
     if entry_url.origin().ascii_serialization() != base_url.origin().ascii_serialization() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "cross_origin_playlist_entry"));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "cross_origin_playlist_entry",
+        ));
     }
 
     Ok(entry_url)
@@ -1708,7 +2266,16 @@ async fn upload_song_from_url(
     Json(payload): Json<UrlSongRequest>,
 ) -> Result<Json<crate::radio::Song>, (StatusCode, Json<ErrorResponse>)> {
     let session = admin_session(&state, session_token.0.as_deref()).await?;
+    add_song_from_url_source(&state, &session.account_did, payload)
+        .await
+        .map(Json)
+}
 
+async fn add_song_from_url_source(
+    state: &AppState,
+    admin_did: &str,
+    payload: UrlSongRequest,
+) -> Result<crate::radio::Song, (StatusCode, Json<ErrorResponse>)> {
     let url = payload.url.trim().to_owned();
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(api_error(StatusCode::BAD_REQUEST, "invalid_url"));
@@ -1747,7 +2314,7 @@ async fn upload_song_from_url(
                     duration_seconds: dl.duration_seconds,
                     add_to_queue: payload.add_to_queue.unwrap_or(false),
                 },
-                &session.account_did,
+                admin_did,
             )
             .await
             .map_err(internal_api_error)?;
@@ -1774,7 +2341,7 @@ async fn upload_song_from_url(
             }
         }
 
-        return Ok(Json(song));
+        return Ok(song);
     }
 
     // Plain URL download
@@ -1816,8 +2383,8 @@ async fn upload_song_from_url(
 
     if is_playlist_upload(filename.as_deref(), mime_type.as_deref(), &bytes) {
         let songs = import_m3u_url_playlist(
-            &state,
-            &session.account_did,
+            state,
+            admin_did,
             &url,
             &bytes,
             payload.album.clone(),
@@ -1828,7 +2395,7 @@ async fn upload_song_from_url(
             .into_iter()
             .next()
             .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "empty_playlist"))?;
-        return Ok(Json(first_song));
+        return Ok(first_song);
     }
 
     let embedded = extract_embedded_metadata(&bytes).await;
@@ -1859,7 +2426,7 @@ async fn upload_song_from_url(
                 duration_seconds: embedded.duration_seconds,
                 add_to_queue: payload.add_to_queue.unwrap_or(false),
             },
-            &session.account_did,
+            admin_did,
         )
         .await
         .map_err(internal_api_error)?;
@@ -1879,7 +2446,7 @@ async fn upload_song_from_url(
         }
     }
 
-    Ok(Json(song))
+    Ok(song)
 }
 
 async fn import_m3u_url_playlist(
@@ -1908,12 +2475,19 @@ async fn import_m3u_url_playlist(
     for entry in entries.into_iter().take(MAX_PLAYLIST_ENTRIES) {
         let entry_url = playlist_entry_url(&base_url, &entry.location)?;
 
-        let response = client.get(entry_url.clone()).send().await.map_err(|error| {
-            tracing::warn!(%error, url = %entry_url, "failed to fetch playlist entry");
-            api_error(StatusCode::BAD_REQUEST, "playlist_entry_fetch_failed")
-        })?;
+        let response = client
+            .get(entry_url.clone())
+            .send()
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, url = %entry_url, "failed to fetch playlist entry");
+                api_error(StatusCode::BAD_REQUEST, "playlist_entry_fetch_failed")
+            })?;
         if !response.status().is_success() {
-            return Err(api_error(StatusCode::BAD_REQUEST, "playlist_entry_fetch_failed"));
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "playlist_entry_fetch_failed",
+            ));
         }
 
         let mime_type = response
@@ -1978,7 +2552,9 @@ async fn import_m3u_url_playlist(
                 .await
             {
                 Ok(updated) => song = updated,
-                Err(error) => tracing::warn!(%error, song_id = %song.id, "failed to set playlist entry cover"),
+                Err(error) => {
+                    tracing::warn!(%error, song_id = %song.id, "failed to set playlist entry cover")
+                }
             }
         }
 
@@ -2323,23 +2899,20 @@ async fn import_from_subsonic_share(
 fn parse_share_url(input: &str) -> Option<(String, String)> {
     let trimmed = input.trim();
     let without_fragment = trimmed.split('#').next().unwrap_or(trimmed);
-    let without_query = without_fragment.split('?').next().unwrap_or(without_fragment);
+    let without_query = without_fragment
+        .split('?')
+        .next()
+        .unwrap_or(without_fragment);
     let url = reqwest::Url::parse(without_query).ok()?;
     let scheme = url.scheme();
     if scheme != "http" && scheme != "https" {
         return None;
     }
     let host = url.host_str()?;
-    let port = url
-        .port()
-        .map(|p| format!(":{p}"))
-        .unwrap_or_default();
+    let port = url.port().map(|p| format!(":{p}")).unwrap_or_default();
     let base = format!("{scheme}://{host}{port}");
 
-    let segments: Vec<&str> = url
-        .path_segments()?
-        .filter(|s| !s.is_empty())
-        .collect();
+    let segments: Vec<&str> = url.path_segments()?.filter(|s| !s.is_empty()).collect();
     let share_idx = segments.iter().rposition(|s| *s == "share")?;
     let id = segments.get(share_idx + 1)?.to_string();
     if id.is_empty() {
@@ -2385,10 +2958,9 @@ fn html_decode(input: &str) -> String {
                         .ok()
                         .and_then(char::from_u32)
                 }
-                _ if entity.starts_with('#') => entity[1..]
-                    .parse::<u32>()
-                    .ok()
-                    .and_then(char::from_u32),
+                _ if entity.starts_with('#') => {
+                    entity[1..].parse::<u32>().ok().and_then(char::from_u32)
+                }
                 _ => None,
             };
             if let Some(c) = replacement {
@@ -2492,9 +3064,7 @@ fn parse_filename_metadata(filename: &str) -> (Option<String>, Option<String>) {
         let after_digits = stem.trim_start_matches(|c: char| c.is_ascii_digit());
         if after_digits.len() < stem.len() {
             after_digits
-                .trim_start_matches(|c: char| {
-                    c == '.' || c == '-' || c == '_' || c.is_whitespace()
-                })
+                .trim_start_matches(|c: char| c == '.' || c == '-' || c == '_' || c.is_whitespace())
                 .trim()
         } else {
             stem.trim()
@@ -2686,11 +3256,27 @@ mod tests {
 
     #[test]
     fn detects_playlist_uploads_by_extension_mime_or_body() {
-        assert!(is_playlist_upload(Some("mix.M3U8"), Some("audio/flac"), b"not a playlist"));
-        assert!(is_playlist_upload(None, Some("application/vnd.apple.mpegurl; charset=utf-8"), b"anything"));
-        assert!(is_playlist_upload(None, Some("audio/flac"), b"\xef\xbb\xbf#EXTM3U\ntrack.flac"));
+        assert!(is_playlist_upload(
+            Some("mix.M3U8"),
+            Some("audio/flac"),
+            b"not a playlist"
+        ));
+        assert!(is_playlist_upload(
+            None,
+            Some("application/vnd.apple.mpegurl; charset=utf-8"),
+            b"anything"
+        ));
+        assert!(is_playlist_upload(
+            None,
+            Some("audio/flac"),
+            b"\xef\xbb\xbf#EXTM3U\ntrack.flac"
+        ));
         assert!(has_m3u_header(b"   #EXTM3U\ntrack.flac"));
-        assert!(!is_playlist_upload(Some("track.flac"), Some("audio/flac"), b"fLaC data"));
+        assert!(!is_playlist_upload(
+            Some("track.flac"),
+            Some("audio/flac"),
+            b"fLaC data"
+        ));
     }
 
     #[test]
@@ -2723,13 +3309,24 @@ mod tests {
         let base = reqwest::Url::parse("https://music.example.test/albums/list.m3u8").unwrap();
 
         let relative = playlist_entry_url(&base, "../tracks/01.flac").ok().unwrap();
-        assert_eq!(relative.as_str(), "https://music.example.test/tracks/01.flac");
+        assert_eq!(
+            relative.as_str(),
+            "https://music.example.test/tracks/01.flac"
+        );
 
-        let same_origin_absolute = playlist_entry_url(&base, "https://music.example.test/cdn/02.mp3").ok().unwrap();
-        assert_eq!(same_origin_absolute.as_str(), "https://music.example.test/cdn/02.mp3");
+        let same_origin_absolute =
+            playlist_entry_url(&base, "https://music.example.test/cdn/02.mp3")
+                .ok()
+                .unwrap();
+        assert_eq!(
+            same_origin_absolute.as_str(),
+            "https://music.example.test/cdn/02.mp3"
+        );
 
         assert!(playlist_entry_url(&base, "https://evil.example.test/steal.mp3").is_err());
         assert!(playlist_entry_url(&base, "file:///etc/passwd").is_err());
-        assert!(playlist_entry_url(&base, "https://user:pass@music.example.test/private.mp3").is_err());
+        assert!(
+            playlist_entry_url(&base, "https://user:pass@music.example.test/private.mp3").is_err()
+        );
     }
 }
