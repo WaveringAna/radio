@@ -109,20 +109,32 @@ the companion fields it requires are enforced by the server.
 
 **Response:**
 
+Imports run asynchronously: the call returns as soon as the sources are queued,
+so `songs` is normally empty and finished imports surface via the radio websocket
+and subsequent `queue.list` calls. Use `accepted` to confirm how many sources
+were queued for download.
+
 | Field | Type | Notes |
 | --- | --- | --- |
-| `songs` | [`song`](#song)[] | Imported or deduplicated songs. |
+| `accepted` | integer | Number of sources accepted and queued for asynchronous download. |
+| `songs` | [`song`](#song)[] | Imported or deduplicated songs. Empty while imports are still in progress. |
 | `snapshot` | [`radioSnapshot`](#radiosnapshot) | Snapshot taken after the import. |
 
 **Errors:** `AuthenticationRequired`, `AdminRequired`, `InvalidRequest`,
 `InvalidUrl`, `DownloadFailed`, `UnsupportedAudio`.
 
-| Error | When |
-| --- | --- |
-| `InvalidRequest` | `sources` is empty or contains more than 100 items. |
-| `InvalidUrl` | A source URL is malformed or rejected. |
-| `DownloadFailed` | Fetching the URL, running `yt-dlp`, or reading a playlist entry failed. |
-| `UnsupportedAudio` | The downloaded media is missing, unreadable, or an unsupported format. |
+Only validation errors are returned by this call, because the actual import runs
+after the response. Each source is checked for a valid `http(s)` URL up front;
+everything network-bound (`yt-dlp`, fetch, transcode) happens in the background,
+so per-source failures are logged and reflected in later `queue.list` results
+rather than returned here.
+
+| Error | When | Returned |
+| --- | --- | --- |
+| `InvalidRequest` | `sources` is empty or contains more than 100 items. | synchronously |
+| `InvalidUrl` | A source URL is malformed or not `http(s)`. | synchronously |
+| `DownloadFailed` | Fetching the URL, running `yt-dlp`, or reading a playlist entry failed — including a source that is removed, private, or region-locked. | logged only (async) |
+| `UnsupportedAudio` | The downloaded media is missing, unreadable, or an unsupported format. | logged only (async) |
 
 ---
 

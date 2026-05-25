@@ -711,11 +711,13 @@ export async function uploadSongFromUrl(input: UrlSongInput): Promise<Song> {
   if (!response.ok) {
     const error = await apiErrorCode(response)
     throw new Error(
-      error === 'url_fetch_failed'
-        ? 'could not fetch audio from that url.'
-        : error === 'playlist_requires_batch_import'
-          ? 'nested playlists are not supported yet.'
-          : 'url import failed',
+      error === 'source_unavailable'
+        ? 'that video is unavailable (removed, private, or region-locked).'
+        : error === 'url_fetch_failed'
+          ? 'could not fetch audio from that url.'
+          : error === 'playlist_requires_batch_import'
+            ? 'nested playlists are not supported yet.'
+            : 'url import failed',
     )
   }
 

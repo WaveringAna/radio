@@ -563,127 +563,127 @@ pub mod queue_item_state {
     }
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
-        type Position;
-        type AddedByDid;
         type Title;
-        type QueuedByDid;
         type Artist;
+        type AddedByDid;
         type Id;
         type SongId;
+        type QueuedByDid;
+        type Position;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
-        type Position = Unset;
-        type AddedByDid = Unset;
         type Title = Unset;
-        type QueuedByDid = Unset;
         type Artist = Unset;
+        type AddedByDid = Unset;
         type Id = Unset;
         type SongId = Unset;
-    }
-    ///State transition - sets the `position` field to Set
-    pub struct SetPosition<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetPosition<S> {}
-    impl<S: State> State for SetPosition<S> {
-        type Position = Set<members::position>;
-        type AddedByDid = S::AddedByDid;
-        type Title = S::Title;
-        type QueuedByDid = S::QueuedByDid;
-        type Artist = S::Artist;
-        type Id = S::Id;
-        type SongId = S::SongId;
-    }
-    ///State transition - sets the `added_by_did` field to Set
-    pub struct SetAddedByDid<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetAddedByDid<S> {}
-    impl<S: State> State for SetAddedByDid<S> {
-        type Position = S::Position;
-        type AddedByDid = Set<members::added_by_did>;
-        type Title = S::Title;
-        type QueuedByDid = S::QueuedByDid;
-        type Artist = S::Artist;
-        type Id = S::Id;
-        type SongId = S::SongId;
+        type QueuedByDid = Unset;
+        type Position = Unset;
     }
     ///State transition - sets the `title` field to Set
     pub struct SetTitle<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetTitle<S> {}
     impl<S: State> State for SetTitle<S> {
-        type Position = S::Position;
-        type AddedByDid = S::AddedByDid;
         type Title = Set<members::title>;
-        type QueuedByDid = S::QueuedByDid;
         type Artist = S::Artist;
-        type Id = S::Id;
-        type SongId = S::SongId;
-    }
-    ///State transition - sets the `queued_by_did` field to Set
-    pub struct SetQueuedByDid<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetQueuedByDid<S> {}
-    impl<S: State> State for SetQueuedByDid<S> {
-        type Position = S::Position;
         type AddedByDid = S::AddedByDid;
-        type Title = S::Title;
-        type QueuedByDid = Set<members::queued_by_did>;
-        type Artist = S::Artist;
         type Id = S::Id;
         type SongId = S::SongId;
+        type QueuedByDid = S::QueuedByDid;
+        type Position = S::Position;
     }
     ///State transition - sets the `artist` field to Set
     pub struct SetArtist<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetArtist<S> {}
     impl<S: State> State for SetArtist<S> {
-        type Position = S::Position;
-        type AddedByDid = S::AddedByDid;
         type Title = S::Title;
-        type QueuedByDid = S::QueuedByDid;
         type Artist = Set<members::artist>;
+        type AddedByDid = S::AddedByDid;
         type Id = S::Id;
         type SongId = S::SongId;
+        type QueuedByDid = S::QueuedByDid;
+        type Position = S::Position;
+    }
+    ///State transition - sets the `added_by_did` field to Set
+    pub struct SetAddedByDid<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetAddedByDid<S> {}
+    impl<S: State> State for SetAddedByDid<S> {
+        type Title = S::Title;
+        type Artist = S::Artist;
+        type AddedByDid = Set<members::added_by_did>;
+        type Id = S::Id;
+        type SongId = S::SongId;
+        type QueuedByDid = S::QueuedByDid;
+        type Position = S::Position;
     }
     ///State transition - sets the `id` field to Set
     pub struct SetId<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetId<S> {}
     impl<S: State> State for SetId<S> {
-        type Position = S::Position;
-        type AddedByDid = S::AddedByDid;
         type Title = S::Title;
-        type QueuedByDid = S::QueuedByDid;
         type Artist = S::Artist;
+        type AddedByDid = S::AddedByDid;
         type Id = Set<members::id>;
         type SongId = S::SongId;
+        type QueuedByDid = S::QueuedByDid;
+        type Position = S::Position;
     }
     ///State transition - sets the `song_id` field to Set
     pub struct SetSongId<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetSongId<S> {}
     impl<S: State> State for SetSongId<S> {
-        type Position = S::Position;
-        type AddedByDid = S::AddedByDid;
         type Title = S::Title;
-        type QueuedByDid = S::QueuedByDid;
         type Artist = S::Artist;
+        type AddedByDid = S::AddedByDid;
         type Id = S::Id;
         type SongId = Set<members::song_id>;
+        type QueuedByDid = S::QueuedByDid;
+        type Position = S::Position;
+    }
+    ///State transition - sets the `queued_by_did` field to Set
+    pub struct SetQueuedByDid<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetQueuedByDid<S> {}
+    impl<S: State> State for SetQueuedByDid<S> {
+        type Title = S::Title;
+        type Artist = S::Artist;
+        type AddedByDid = S::AddedByDid;
+        type Id = S::Id;
+        type SongId = S::SongId;
+        type QueuedByDid = Set<members::queued_by_did>;
+        type Position = S::Position;
+    }
+    ///State transition - sets the `position` field to Set
+    pub struct SetPosition<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetPosition<S> {}
+    impl<S: State> State for SetPosition<S> {
+        type Title = S::Title;
+        type Artist = S::Artist;
+        type AddedByDid = S::AddedByDid;
+        type Id = S::Id;
+        type SongId = S::SongId;
+        type QueuedByDid = S::QueuedByDid;
+        type Position = Set<members::position>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
-        ///Marker type for the `position` field
-        pub struct position(());
-        ///Marker type for the `added_by_did` field
-        pub struct added_by_did(());
         ///Marker type for the `title` field
         pub struct title(());
-        ///Marker type for the `queued_by_did` field
-        pub struct queued_by_did(());
         ///Marker type for the `artist` field
         pub struct artist(());
+        ///Marker type for the `added_by_did` field
+        pub struct added_by_did(());
         ///Marker type for the `id` field
         pub struct id(());
         ///Marker type for the `song_id` field
         pub struct song_id(());
+        ///Marker type for the `queued_by_did` field
+        pub struct queued_by_did(());
+        ///Marker type for the `position` field
+        pub struct position(());
     }
 }
 
@@ -870,13 +870,13 @@ where
 impl<'a, S> QueueItemBuilder<'a, S>
 where
     S: queue_item_state::State,
-    S::Position: queue_item_state::IsSet,
-    S::AddedByDid: queue_item_state::IsSet,
     S::Title: queue_item_state::IsSet,
-    S::QueuedByDid: queue_item_state::IsSet,
     S::Artist: queue_item_state::IsSet,
+    S::AddedByDid: queue_item_state::IsSet,
     S::Id: queue_item_state::IsSet,
     S::SongId: queue_item_state::IsSet,
+    S::QueuedByDid: queue_item_state::IsSet,
+    S::Position: queue_item_state::IsSet,
 {
     /// Build the final struct
     pub fn build(self) -> QueueItem<'a> {
@@ -1517,37 +1517,37 @@ pub mod radio_state_state {
     }
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
-        type Status;
         type PositionSeconds;
+        type Status;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
-        type Status = Unset;
         type PositionSeconds = Unset;
-    }
-    ///State transition - sets the `status` field to Set
-    pub struct SetStatus<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetStatus<S> {}
-    impl<S: State> State for SetStatus<S> {
-        type Status = Set<members::status>;
-        type PositionSeconds = S::PositionSeconds;
+        type Status = Unset;
     }
     ///State transition - sets the `position_seconds` field to Set
     pub struct SetPositionSeconds<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetPositionSeconds<S> {}
     impl<S: State> State for SetPositionSeconds<S> {
-        type Status = S::Status;
         type PositionSeconds = Set<members::position_seconds>;
+        type Status = S::Status;
+    }
+    ///State transition - sets the `status` field to Set
+    pub struct SetStatus<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetStatus<S> {}
+    impl<S: State> State for SetStatus<S> {
+        type PositionSeconds = S::PositionSeconds;
+        type Status = Set<members::status>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
-        ///Marker type for the `status` field
-        pub struct status(());
         ///Marker type for the `position_seconds` field
         pub struct position_seconds(());
+        ///Marker type for the `status` field
+        pub struct status(());
     }
 }
 
@@ -1676,8 +1676,8 @@ impl<'a, S: radio_state_state::State> RadioStateBuilder<'a, S> {
 impl<'a, S> RadioStateBuilder<'a, S>
 where
     S: radio_state_state::State,
-    S::Status: radio_state_state::IsSet,
     S::PositionSeconds: radio_state_state::IsSet,
+    S::Status: radio_state_state::IsSet,
 {
     /// Build the final struct
     pub fn build(self) -> RadioState<'a> {
@@ -1721,103 +1721,103 @@ pub mod song_state {
     }
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
+        type Title;
         type Artist;
         type AddedByDid;
-        type CreatedAt;
         type HasCover;
-        type Title;
+        type CreatedAt;
         type Id;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
+        type Title = Unset;
         type Artist = Unset;
         type AddedByDid = Unset;
-        type CreatedAt = Unset;
         type HasCover = Unset;
-        type Title = Unset;
+        type CreatedAt = Unset;
         type Id = Unset;
+    }
+    ///State transition - sets the `title` field to Set
+    pub struct SetTitle<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetTitle<S> {}
+    impl<S: State> State for SetTitle<S> {
+        type Title = Set<members::title>;
+        type Artist = S::Artist;
+        type AddedByDid = S::AddedByDid;
+        type HasCover = S::HasCover;
+        type CreatedAt = S::CreatedAt;
+        type Id = S::Id;
     }
     ///State transition - sets the `artist` field to Set
     pub struct SetArtist<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetArtist<S> {}
     impl<S: State> State for SetArtist<S> {
+        type Title = S::Title;
         type Artist = Set<members::artist>;
         type AddedByDid = S::AddedByDid;
-        type CreatedAt = S::CreatedAt;
         type HasCover = S::HasCover;
-        type Title = S::Title;
+        type CreatedAt = S::CreatedAt;
         type Id = S::Id;
     }
     ///State transition - sets the `added_by_did` field to Set
     pub struct SetAddedByDid<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetAddedByDid<S> {}
     impl<S: State> State for SetAddedByDid<S> {
+        type Title = S::Title;
         type Artist = S::Artist;
         type AddedByDid = Set<members::added_by_did>;
+        type HasCover = S::HasCover;
         type CreatedAt = S::CreatedAt;
-        type HasCover = S::HasCover;
-        type Title = S::Title;
-        type Id = S::Id;
-    }
-    ///State transition - sets the `created_at` field to Set
-    pub struct SetCreatedAt<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetCreatedAt<S> {}
-    impl<S: State> State for SetCreatedAt<S> {
-        type Artist = S::Artist;
-        type AddedByDid = S::AddedByDid;
-        type CreatedAt = Set<members::created_at>;
-        type HasCover = S::HasCover;
-        type Title = S::Title;
         type Id = S::Id;
     }
     ///State transition - sets the `has_cover` field to Set
     pub struct SetHasCover<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetHasCover<S> {}
     impl<S: State> State for SetHasCover<S> {
+        type Title = S::Title;
         type Artist = S::Artist;
         type AddedByDid = S::AddedByDid;
-        type CreatedAt = S::CreatedAt;
         type HasCover = Set<members::has_cover>;
-        type Title = S::Title;
+        type CreatedAt = S::CreatedAt;
         type Id = S::Id;
     }
-    ///State transition - sets the `title` field to Set
-    pub struct SetTitle<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetTitle<S> {}
-    impl<S: State> State for SetTitle<S> {
+    ///State transition - sets the `created_at` field to Set
+    pub struct SetCreatedAt<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetCreatedAt<S> {}
+    impl<S: State> State for SetCreatedAt<S> {
+        type Title = S::Title;
         type Artist = S::Artist;
         type AddedByDid = S::AddedByDid;
-        type CreatedAt = S::CreatedAt;
         type HasCover = S::HasCover;
-        type Title = Set<members::title>;
+        type CreatedAt = Set<members::created_at>;
         type Id = S::Id;
     }
     ///State transition - sets the `id` field to Set
     pub struct SetId<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetId<S> {}
     impl<S: State> State for SetId<S> {
+        type Title = S::Title;
         type Artist = S::Artist;
         type AddedByDid = S::AddedByDid;
-        type CreatedAt = S::CreatedAt;
         type HasCover = S::HasCover;
-        type Title = S::Title;
+        type CreatedAt = S::CreatedAt;
         type Id = Set<members::id>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
+        ///Marker type for the `title` field
+        pub struct title(());
         ///Marker type for the `artist` field
         pub struct artist(());
         ///Marker type for the `added_by_did` field
         pub struct added_by_did(());
-        ///Marker type for the `created_at` field
-        pub struct created_at(());
         ///Marker type for the `has_cover` field
         pub struct has_cover(());
-        ///Marker type for the `title` field
-        pub struct title(());
+        ///Marker type for the `created_at` field
+        pub struct created_at(());
         ///Marker type for the `id` field
         pub struct id(());
     }
@@ -2069,11 +2069,11 @@ where
 impl<'a, S> SongBuilder<'a, S>
 where
     S: song_state::State,
+    S::Title: song_state::IsSet,
     S::Artist: song_state::IsSet,
     S::AddedByDid: song_state::IsSet,
-    S::CreatedAt: song_state::IsSet,
     S::HasCover: song_state::IsSet,
-    S::Title: song_state::IsSet,
+    S::CreatedAt: song_state::IsSet,
     S::Id: song_state::IsSet,
 {
     /// Build the final struct

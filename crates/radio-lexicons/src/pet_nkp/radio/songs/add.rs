@@ -31,9 +31,11 @@ pub struct Add<'a> {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
 #[serde(rename_all = "camelCase")]
 pub struct AddOutput<'a> {
+    ///Number of sources accepted and queued for asynchronous download. Imports complete later and surface via the radio websocket / queue.list rather than in this response.
+    pub accepted: i64,
     #[serde(borrow)]
     pub snapshot: RadioSnapshot<'a>,
-    ///Imported or deduplicated songs.
+    ///Imported or deduplicated songs. Empty when imports are still in progress.
     #[serde(borrow)]
     pub songs: Vec<Song<'a>>,
 }

@@ -28,11 +28,16 @@
         "encoding": "application/json",
         "schema": {
           "type": "object",
-          "required": ["songs", "snapshot"],
+          "required": ["accepted", "songs", "snapshot"],
           "properties": {
+            "accepted": {
+              "type": "integer",
+              "description": "Number of sources accepted and queued for asynchronous download. Imports complete later and surface via the radio websocket / queue.list rather than in this response.",
+              "minimum": 0
+            },
             "songs": {
               "type": "array",
-              "description": "Imported or deduplicated songs.",
+              "description": "Imported or deduplicated songs. Empty when imports are still in progress.",
               "items": {
                 "type": "ref",
                 "ref": "pet.nkp.radio#song"

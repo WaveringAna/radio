@@ -1130,6 +1130,7 @@ async fn xrpc_songs_add(
     // as a 502 `UpstreamFailure`. Run the import detached and respond
     // immediately; finished songs reach clients via the radio websocket
     // (`add_song` -> `broadcast_snapshot`) and subsequent `queue.list` calls.
+    let accepted = payloads.len() as i64;
     let import_state = state.clone();
     let importer_did = admin_did.clone();
     tokio::spawn(async move {
@@ -1153,7 +1154,9 @@ async fn xrpc_songs_add(
 
     // `songs` is intentionally empty: imports complete asynchronously and surface
     // via the radio websocket / `queue.list`, not in this immediate response.
+    // `accepted` tells the caller how many sources were queued for download.
     Ok(Json(SongsAddOutput {
+        accepted,
         songs: Vec::new(),
         snapshot: xrpc_radio_snapshot(snapshot),
         extra_data: None,
@@ -2189,6 +2192,25 @@ fn is_ytdlp_url(url: &str) -> bool {
         || url.contains("vimeo.com/")
 }
 
+/// Sentinel carried on the error so the caller can map a permanently-gone
+/// source to a distinct, user-facing code instead of a generic gateway error.
+const SOURCE_UNAVAILABLE_MARKER: &str = "source_unavailable";
+
+/// True when yt-dlp's stderr means the source itself is gone (removed, private,
+/// region-locked, members-only) — i.e. retrying or swapping clients won't help.
+fn is_source_unavailable(stderr: &str) -> bool {
+    let s = stderr.to_ascii_lowercase();
+    s.contains("video unavailable")
+        || s.contains("this video is not available")
+        || s.contains("video is not available")
+        || s.contains("private video")
+        || s.contains("members-only")
+        || s.contains("who has blocked it in your country")
+        || s.contains("video has been removed")
+        || s.contains("account associated with this video has been terminated")
+        || s.contains("no longer available")
+}
+
 struct YtdlpResult {
     bytes: Vec<u8>,
     title: String,
@@ -2216,6 +2238,9 @@ async fn download_with_ytdlp(url: &str) -> anyhow::Result<YtdlpResult> {
 
     if !meta_out.status.success() {
         let stderr = String::from_utf8_lossy(&meta_out.stderr);
+        if is_source_unavailable(&stderr) {
+            return Err(anyhow::anyhow!(SOURCE_UNAVAILABLE_MARKER));
+        }
         return Err(anyhow::anyhow!("yt-dlp metadata failed: {stderr}"));
     }
 
@@ -2256,6 +2281,9 @@ async fn download_with_ytdlp(url: &str) -> anyhow::Result<YtdlpResult> {
 
     if !dl.status.success() {
         let stderr = String::from_utf8_lossy(&dl.stderr);
+        if is_source_unavailable(&stderr) {
+            return Err(anyhow::anyhow!(SOURCE_UNAVAILABLE_MARKER));
+        }
         return Err(anyhow::anyhow!("yt-dlp download failed: {stderr}"));
     }
 
@@ -2308,7 +2336,11 @@ async fn add_song_from_url_source(
     if is_ytdlp_url(&url) {
         let dl = download_with_ytdlp(&url).await.map_err(|error| {
             tracing::warn!(%error, %url, "yt-dlp download failed");
-            api_error(StatusCode::BAD_GATEWAY, "ytdlp_failed")
+            if error.to_string().contains(SOURCE_UNAVAILABLE_MARKER) {
+                api_error(StatusCode::UNPROCESSABLE_ENTITY, "source_unavailable")
+            } else {
+                api_error(StatusCode::BAD_GATEWAY, "ytdlp_failed")
+            }
         })?;
 
         let title = title_override.unwrap_or(dl.title);
