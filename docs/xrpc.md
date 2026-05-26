@@ -26,6 +26,20 @@ A request is accepted only when **both** checks pass:
 | Caller DID not on admin whitelist | `AdminRequired` | `403` |
 | Whitelist lookup failed | `InvalidRequest` | `500` |
 
+Example service-auth request in fish:
+
+```fish
+set pds https://example-pds.test
+set access_jwt "..."
+set service_did did:web:radio.example.com
+set lxm pet.nkp.radio.songs.upload
+
+set service_jwt (curl -sS \
+  -H "authorization: Bearer $access_jwt" \
+  "$pds/xrpc/com.atproto.server.getServiceAuth?aud=$service_did&lxm=$lxm" \
+  | jq -r .token)
+```
+
 ---
 
 ## Queue
@@ -136,6 +150,78 @@ rather than returned here.
 | `DownloadFailed` | Fetching the URL, running `yt-dlp`, or reading a playlist entry failed — including a source that is removed, private, or region-locked. | logged only (async) |
 | `UnsupportedAudio` | The downloaded media is missing, unreadable, or an unsupported format. | logged only (async) |
 
+Example:
+
+```fish
+set lxm pet.nkp.radio.songs.add
+set service_jwt (curl -sS \
+  -H "authorization: Bearer $access_jwt" \
+  "$pds/xrpc/com.atproto.server.getServiceAuth?aud=$service_did&lxm=$lxm" \
+  | jq -r .token)
+
+curl -sS \
+  -H "authorization: Bearer $service_jwt" \
+  -H "content-type: application/json" \
+  -d '{"sources":[{"url":"https://example.com/song.mp3","title":"song title","artist":"artist","album":"album","addToQueue":false}]}' \
+  https://radio.example.com/xrpc/pet.nkp.radio.songs.add
+```
+
+---
+
+### `pet.nkp.radio.songs.upload` 🔒
+
+**procedure** — Upload a local audio file through the backend's multipart uploader.
+This shares the same parsing, metadata enrichment, cover extraction, duplicate
+handling, and optional queueing path as `POST /api/songs`.
+
+**Input** (`multipart/form-data`):
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `file` | file | yes | Audio file to store. Playlist files are rejected; use `songs.add` for playlist imports. |
+| `title` | string | no | Title override. If omitted, embedded tags and filename parsing are used. |
+| `artist` | string | no | Artist override. If omitted, embedded tags and filename parsing are used. |
+| `album` | string | no | Album override. |
+| `genre` | string | no | Genre override. |
+| `durationSeconds` | integer | no | Duration override in seconds. |
+| `addToQueue` | boolean | no | Queue the uploaded song immediately. Default `false`. |
+
+**Response:**
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `songs` | [`song`](#song)[] | Uploaded song, or the existing deduplicated song. |
+| `snapshot` | [`radioSnapshot`](#radiosnapshot) | Snapshot taken after the upload. |
+
+**Errors:** `AuthenticationRequired`, `AdminRequired`, `InvalidRequest`,
+`UnsupportedAudio`.
+
+| Error | When |
+| --- | --- |
+| `InvalidRequest` | Multipart parsing failed, title/artist could not be inferred, or the upload could not be saved. |
+| `UnsupportedAudio` | The file field is missing, unreadable, or a playlist file sent to the single-song upload path. |
+
+Example:
+
+```fish
+set lxm pet.nkp.radio.songs.upload
+set service_jwt (curl -sS \
+  -H "authorization: Bearer $access_jwt" \
+  "$pds/xrpc/com.atproto.server.getServiceAuth?aud=$service_did&lxm=$lxm" \
+  | jq -r .token)
+
+curl -sS \
+  -H "authorization: Bearer $service_jwt" \
+  -F "file=@./song.wav;type=audio/wav" \
+  -F "title=uploaded song" \
+  -F "artist=artist" \
+  -F "album=album" \
+  -F "genre=genre" \
+  -F "durationSeconds=123" \
+  -F "addToQueue=false" \
+  https://radio.example.com/xrpc/pet.nkp.radio.songs.upload
+```
+
 ---
 
 ## Shared Types
@@ -211,6 +297,17 @@ A remote audio source to import through the backend URL importer.
 | `artist` | string | no | Artist override for plain audio URLs. |
 | `album` | string | no | Album override. |
 | `addToQueue` | boolean | no | Queue imported songs immediately. Default `false`. |
+
+---
+
+## Regenerating lexicons
+
+When lexicons change, regenerate the checked-in Rust types:
+
+```bash
+jacquard-codegen --input lexicons --output crates/radio-lexicons/src
+cargo fmt --all
+```
 
 ---
 

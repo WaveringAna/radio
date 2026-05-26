@@ -49,6 +49,10 @@ use radio_lexicons::pet_nkp::radio::{
             ListError as SongsListError, ListOutput as SongsListOutput,
             ListRequest as SongsListRequest,
         },
+        upload::{
+            UploadError as SongsUploadError, UploadOutput as SongsUploadOutput,
+            UploadRequest as SongsUploadRequest,
+        },
     },
 };
 use serde::{Deserialize, Serialize};
@@ -330,6 +334,7 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .merge(QueueModifyRequest::into_router(xrpc_queue_modify))
         .merge(SongsListRequest::into_router(xrpc_songs_list))
         .merge(SongsAddRequest::into_router(xrpc_songs_add))
+        .merge(SongsUploadRequest::into_router(xrpc_songs_upload))
         .layer(cors);
 
     let frontend = ServeDir::new("static").fallback(ServeFile::new("static/index.html"));
@@ -850,6 +855,18 @@ async fn xrpc_admin_did(
     }
 }
 
+fn xrpc_songs_upload_api_error(
+    error: (StatusCode, Json<ErrorResponse>),
+) -> XrpcErrorResponse<SongsUploadError<'static>> {
+    let (status, Json(error)) = error;
+    let typed = match error.error.as_str() {
+        "unsupported_audio" | "missing_audio_file" | "invalid_audio_file" => {
+            SongsUploadError::UnsupportedAudio(Some(CowStr::from(error.error)))
+        }
+        _ => SongsUploadError::InvalidRequest(Some(CowStr::from(error.error))),
+    };
+    xrpc_typed_error(status, typed)
+}
 // This is a parameterless query, so it takes no `ExtractXrpc` request: the
 // generated request type is a unit struct, and jacquard-axum decodes queries
 // with `serde_html_form::from_str("")`, which rejects unit structs ("invalid
@@ -1158,6 +1175,51 @@ async fn xrpc_songs_add(
     Ok(Json(SongsAddOutput {
         accepted,
         songs: Vec::new(),
+        snapshot: xrpc_radio_snapshot(snapshot),
+        extra_data: None,
+    }))
+}
+
+async fn xrpc_songs_upload(
+    State(state): State<AppState>,
+    ExtractServiceAuth(auth): ExtractServiceAuth,
+    multipart: Multipart,
+) -> Result<Json<SongsUploadOutput<'static>>, XrpcErrorResponse<SongsUploadError<'static>>> {
+    if !service_auth_has_lxm(&auth, "pet.nkp.radio.songs.upload") {
+        return Err(xrpc_typed_error(
+            StatusCode::UNAUTHORIZED,
+            SongsUploadError::AuthenticationRequired(xrpc_message(
+                "invalid service auth method binding",
+            )),
+        ));
+    }
+    let admin_did = xrpc_admin_did(&state, &auth, "pet.nkp.radio.songs.upload")
+        .await
+        .map_err(|denied| match denied {
+            AdminDenied::NotAdmin => xrpc_typed_error(
+                StatusCode::FORBIDDEN,
+                SongsUploadError::AdminRequired(xrpc_message("admin privileges required")),
+            ),
+            AdminDenied::Internal => xrpc_typed_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                SongsUploadError::InvalidRequest(xrpc_message("internal server error")),
+            ),
+        })?;
+
+    let song = add_song_from_multipart_upload(&state, &admin_did, multipart)
+        .await
+        .map_err(xrpc_songs_upload_api_error)?;
+
+    let snapshot = state.radio.snapshot().await.map_err(|error| {
+        tracing::error!(?error, "xrpc songs.upload snapshot failed");
+        xrpc_typed_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            SongsUploadError::InvalidRequest(xrpc_message("internal server error")),
+        )
+    })?;
+
+    Ok(Json(SongsUploadOutput {
+        songs: vec![xrpc_song(song)],
         snapshot: xrpc_radio_snapshot(snapshot),
         extra_data: None,
     }))
@@ -1515,7 +1577,25 @@ async fn upload_song(
     multipart: Multipart,
 ) -> Result<Json<crate::radio::Song>, (StatusCode, Json<ErrorResponse>)> {
     let session = admin_session(&state, session_token.0.as_deref()).await?;
-    let mut upload = parse_song_upload(multipart).await?;
+    add_song_from_multipart_upload(&state, &session.account_did, multipart)
+        .await
+        .map(Json)
+}
+
+async fn add_song_from_multipart_upload(
+    state: &AppState,
+    uploader_did: &str,
+    multipart: Multipart,
+) -> Result<crate::radio::Song, (StatusCode, Json<ErrorResponse>)> {
+    let upload = parse_song_upload(multipart).await?;
+    add_song_from_upload(state, uploader_did, upload).await
+}
+
+async fn add_song_from_upload(
+    state: &AppState,
+    uploader_did: &str,
+    mut upload: NewSongUpload,
+) -> Result<crate::radio::Song, (StatusCode, Json<ErrorResponse>)> {
     reject_unsupported_audio_upload(
         upload.filename.as_deref(),
         upload.mime_type.as_deref(),
@@ -1582,7 +1662,7 @@ async fn upload_song(
 
     let mut song = state
         .radio
-        .add_song(upload, &session.account_did)
+        .add_song(upload, uploader_did)
         .await
         .map_err(internal_api_error)?;
 
@@ -1601,7 +1681,7 @@ async fn upload_song(
         }
     }
 
-    Ok(Json(song))
+    Ok(song)
 }
 
 async fn enqueue_song(

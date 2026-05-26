@@ -1,0 +1,40 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.songs.upload",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Upload a local audio file through the existing radio backend uploader.",
+      "input": {
+        "encoding": "multipart/form-data"
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["songs", "snapshot"],
+          "properties": {
+            "songs": {
+              "type": "array",
+              "description": "Uploaded songs.",
+              "items": {
+                "type": "ref",
+                "ref": "pet.nkp.radio#song"
+              }
+            },
+            "snapshot": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#radioSnapshot"
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" },
+        { "name": "UnsupportedAudio" }
+      ]
+    }
+  }
+}
