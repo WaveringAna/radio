@@ -258,9 +258,11 @@ Queue item joined with its song metadata.
 | `position` | integer | no | Queue position; lower values play first (≥ 1). |
 | `queuedByDid` | string | no | DID that queued the song. |
 | `songId` | string | no | Queued song id (1–128 chars). |
+| `song` | [`song`](#song) | no | Full metadata for the queued song. |
 | `title` | string | no | Queued song title (1–512 chars). |
 | `artist` | string | no | Queued song artist (1–512 chars). |
 | `album` | string | yes | Queued song album. |
+| `durationSeconds` | integer | yes | Queued song duration in seconds. |
 | `addedByDid` | string | no | DID that originally uploaded the song. |
 
 ### `radioState`
@@ -284,6 +286,7 @@ Combined radio view returned to clients.
 | --- | --- | --- | --- |
 | `state` | [`radioState`](#radiostate) | no | Current playback state. |
 | `currentSong` | [`song`](#song) | yes | Full metadata for the current song. |
+| `nowPlaying` | [`song`](#song) | yes | Compatibility alias for `currentSong`. |
 | `queue` | [`queueItem`](#queueitem)[] | no | Upcoming queued songs. |
 
 ### `songUrlSource`

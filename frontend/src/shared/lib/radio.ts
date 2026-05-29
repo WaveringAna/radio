@@ -48,9 +48,11 @@ export interface QueueItem {
   position: number
   queuedByDid: string
   songId: string
+  song?: Song
   title: string
   artist: string
   album?: string | null
+  durationSeconds?: number | null
   addedByDid: string
 }
 
@@ -70,6 +72,7 @@ export interface RadioSeek {
 export interface RadioSnapshot {
   state: RadioState
   currentSong?: Song | null
+  nowPlaying?: Song | null
   queue: QueueItem[]
 }
 

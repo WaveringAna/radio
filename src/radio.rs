@@ -103,8 +103,22 @@ pub(crate) struct QueueItem {
     pub(crate) artist: String,
     /// Optional queued song album.
     pub(crate) album: Option<String>,
+    /// Optional queued song genre.
+    pub(crate) genre: Option<String>,
+    /// Optional queued song duration in seconds.
+    pub(crate) duration_seconds: Option<i64>,
+    /// MIME type of the queued song's stored audio file.
+    pub(crate) mime_type: Option<String>,
+    /// Whether the queued song has an uploaded album cover.
+    pub(crate) has_cover: bool,
     /// DID that originally uploaded the queued song.
     pub(crate) added_by_did: String,
+    /// Unix timestamp when the queued song was uploaded.
+    pub(crate) created_at: i64,
+    /// Integrated loudness in LUFS (ITU-R BS.1770 / EBU R128).
+    pub(crate) loudness_lufs: Option<f64>,
+    /// True peak in dBFS.
+    pub(crate) loudness_peak: Option<f64>,
 }
 
 /// Admin-defined album loop metadata.
@@ -264,6 +278,8 @@ impl RadioService {
     /// Returns an error when sqlite queries fail.
     pub(crate) async fn external_snapshot(&self) -> anyhow::Result<RadioSnapshot> {
         auto_advance(&self.db).await?;
+        heal_empty_current_song(&self.db, "system").await?;
+        heal_missing_current_song(&self.db, "system").await?;
         self.snapshot().await
     }
 
@@ -1272,6 +1288,43 @@ async fn heal_empty_current_song(db: &Database, admin_did: &str) -> anyhow::Resu
     }
 }
 
+async fn heal_missing_current_song(db: &Database, admin_did: &str) -> anyhow::Result<()> {
+    let state = radio_state(db).await?;
+    let Some(song_id) = state.current_song_id.as_deref() else {
+        return Ok(());
+    };
+    if find_song(db, song_id).await?.is_some() {
+        return Ok(());
+    }
+
+    tracing::warn!(
+        song_id,
+        status = %state.status,
+        "current song row missing; healing playback state"
+    );
+    match state.status.as_str() {
+        "playing" => skip_to_next(db, admin_did).await,
+        "paused" => set_status(db, "stopped", admin_did).await,
+        _ => {
+            let timestamp = now();
+            sqlx::query(
+                r#"
+                update radio_state
+                set current_song_id = null, position_seconds = 0, updated_by_did = ?,
+                    updated_at = ?
+                where id = 1
+                "#,
+            )
+            .bind(admin_did)
+            .bind(timestamp)
+            .execute(db.pool())
+            .await
+            .context("clearing missing current song")?;
+            Ok(())
+        }
+    }
+}
+
 async fn is_unsupported_audio_file(file_path: &str, mime_type: Option<&str>) -> bool {
     has_playlist_extension(file_path)
         || has_playlist_mime(mime_type)
@@ -1424,7 +1477,7 @@ async fn auto_advance(db: &Database) -> anyhow::Result<()> {
                 from_song_id = current_id,
                 "auto-advance: current song missing"
             );
-            heal_empty_current_song(db, &admin).await?;
+            heal_missing_current_song(db, &admin).await?;
             continue;
         };
         let duration = advance_duration_seconds(&song);
@@ -1534,7 +1587,11 @@ async fn queue_items(db: &Database) -> anyhow::Result<Vec<QueueItem>> {
     sqlx::query_as::<_, QueueItem>(
         r#"
         select radio_queue.id, radio_queue.position, radio_queue.queued_by_did,
-            songs.id as song_id, songs.title, songs.artist, songs.album, songs.added_by_did
+            songs.id as song_id, songs.title, songs.artist, songs.album, songs.genre,
+            songs.duration_seconds, songs.mime_type,
+            songs.cover_path is not null as has_cover,
+            songs.added_by_did, songs.created_at,
+            songs.loudness_lufs, songs.loudness_peak
         from radio_queue
         join songs on songs.id = radio_queue.song_id
         order by radio_queue.position asc, radio_queue.created_at asc
@@ -1612,7 +1669,7 @@ async fn append_queue_item(
 
 async fn play_or_resume(db: &Database, admin_did: &str) -> anyhow::Result<()> {
     let state = radio_state(db).await?;
-    if state.current_song_id.is_none() {
+    if !current_song_is_loadable(db, &state).await? {
         return skip_to_next(db, admin_did).await;
     }
 
@@ -1621,11 +1678,26 @@ async fn play_or_resume(db: &Database, admin_did: &str) -> anyhow::Result<()> {
 
 async fn play_next_if_idle(db: &Database, admin_did: &str) -> anyhow::Result<()> {
     let state = radio_state(db).await?;
-    if state.current_song_id.is_none() {
+    if !current_song_is_loadable(db, &state).await? {
         skip_to_next(db, admin_did).await?;
     }
 
     Ok(())
+}
+
+async fn current_song_is_loadable(db: &Database, state: &RadioState) -> anyhow::Result<bool> {
+    let Some(song_id) = state.current_song_id.as_deref() else {
+        return Ok(false);
+    };
+    let exists = find_song(db, song_id).await?.is_some();
+    if !exists {
+        tracing::warn!(
+            song_id,
+            status = %state.status,
+            "current song row missing; treating radio as idle"
+        );
+    }
+    Ok(exists)
 }
 
 async fn set_status(db: &Database, status: &str, admin_did: &str) -> anyhow::Result<()> {
@@ -1733,7 +1805,11 @@ async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
     let next = sqlx::query_as::<_, QueueItem>(
         r#"
         select radio_queue.id, radio_queue.position, radio_queue.queued_by_did,
-            songs.id as song_id, songs.title, songs.artist, songs.album, songs.added_by_did
+            songs.id as song_id, songs.title, songs.artist, songs.album, songs.genre,
+            songs.duration_seconds, songs.mime_type,
+            songs.cover_path is not null as has_cover,
+            songs.added_by_did, songs.created_at,
+            songs.loudness_lufs, songs.loudness_peak
         from radio_queue
         join songs on songs.id = radio_queue.song_id
         order by radio_queue.position asc, radio_queue.created_at asc
@@ -1894,6 +1970,30 @@ mod tests {
         Ok(())
     }
 
+    async fn set_stale_current_song(
+        db: &Database,
+        song_id: &str,
+        status: &str,
+        started_at: Option<i64>,
+    ) -> anyhow::Result<()> {
+        let mut conn = db.pool().acquire().await?;
+        sqlx::query("pragma foreign_keys = off")
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query(
+            "update radio_state set current_song_id = ?, status = ?, started_at = ? where id = 1",
+        )
+        .bind(song_id)
+        .bind(status)
+        .bind(started_at)
+        .execute(&mut *conn)
+        .await?;
+        sqlx::query("pragma foreign_keys = on")
+            .execute(&mut *conn)
+            .await?;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn skip_pops_next_queue_item_and_starts_it() -> anyhow::Result<()> {
         let (db, _temp_dir) = test_db().await?;
@@ -1917,6 +2017,40 @@ mod tests {
         assert_eq!(state.position_seconds, 0);
         assert_eq!(queue.len(), 1);
         assert_eq!(queue[0].song_id, "song-3");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn enqueue_starts_when_current_song_is_stale() -> anyhow::Result<()> {
+        let (db, _temp_dir) = test_db().await?;
+        insert_song(&db, "song-next", "next").await?;
+        append_queue_item(&db, "song-next", "did:plc:admin").await?;
+        set_stale_current_song(&db, "missing-song", "stopped", None).await?;
+
+        play_next_if_idle(&db, "did:plc:admin").await?;
+        let state = radio_state(&db).await?;
+        let queue = queue_items(&db).await?;
+
+        assert_eq!(state.current_song_id.as_deref(), Some("song-next"));
+        assert_eq!(state.status, "playing");
+        assert!(queue.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn auto_advance_heals_missing_current_song() -> anyhow::Result<()> {
+        let (db, _temp_dir) = test_db().await?;
+        insert_song(&db, "song-next", "next").await?;
+        append_queue_item(&db, "song-next", "did:plc:admin").await?;
+        set_stale_current_song(&db, "missing-song", "playing", Some(now())).await?;
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), auto_advance(&db)).await??;
+        let state = radio_state(&db).await?;
+        let queue = queue_items(&db).await?;
+
+        assert_eq!(state.current_song_id.as_deref(), Some("song-next"));
+        assert_eq!(state.status, "playing");
+        assert!(queue.is_empty());
         Ok(())
     }
 

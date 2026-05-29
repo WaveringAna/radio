@@ -24,12 +24,16 @@ use jacquard_lexicon::schema::LexiconSchema;
 
 #[allow(unused_imports)]
 use jacquard_lexicon::validation::{ConstraintError, ValidationPath};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 /// A singleton preference record for radio UI settings. Volume intentionally stays browser-local.
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
-#[serde(rename_all = "camelCase", rename = "pet.nkp.radio.preferences", tag = "$type")]
+#[serde(
+    rename_all = "camelCase",
+    rename = "pet.nkp.radio.preferences",
+    tag = "$type"
+)]
 pub struct Preferences<'a> {
     ///Preferred accent color token or CSS color value.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -154,9 +158,7 @@ pub struct PreferencesGetRecordOutput<'a> {
 }
 
 impl<'a> Preferences<'a> {
-    pub fn uri(
-        uri: impl Into<CowStr<'a>>,
-    ) -> Result<RecordUri<'a, PreferencesRecord>, UriError> {
+    pub fn uri(uri: impl Into<CowStr<'a>>) -> Result<RecordUri<'a, PreferencesRecord>, UriError> {
         RecordUri::try_from_uri(AtUri::new_cow(uri.into())?)
     }
 }
@@ -216,7 +218,7 @@ impl<'a> LexiconSchema for Preferences<'a> {
 
 pub mod preferences_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -236,7 +238,11 @@ pub mod preferences_state {
 /// Builder for constructing an instance of this type
 pub struct PreferencesBuilder<'a, S: preferences_state::State> {
     _state: PhantomData<fn() -> S>,
-    _fields: (Option<CowStr<'a>>, Option<PreferencesTheme<'a>>, Option<Datetime>),
+    _fields: (
+        Option<CowStr<'a>>,
+        Option<PreferencesTheme<'a>>,
+        Option<Datetime>,
+    ),
     _lifetime: PhantomData<&'a ()>,
 }
 
@@ -328,10 +334,10 @@ where
 }
 
 fn lexicon_doc_pet_nkp_radio_preferences() -> LexiconDoc<'static> {
+    use alloc::collections::BTreeMap;
     #[allow(unused_imports)]
     use jacquard_common::{CowStr, deps::smol_str::SmolStr, types::blob::MimeType};
     use jacquard_lexicon::lexicon::*;
-    use alloc::collections::BTreeMap;
     LexiconDoc {
         lexicon: Lexicon::Lexicon1,
         id: CowStr::new_static("pet.nkp.radio.preferences"),

@@ -778,14 +778,31 @@ fn xrpc_song(song: crate::radio::Song) -> XrpcSong<'static> {
 }
 
 fn xrpc_queue_item(item: crate::radio::QueueItem) -> XrpcQueueItem<'static> {
+    let song = xrpc_song(crate::radio::Song {
+        id: item.song_id.clone(),
+        title: item.title.clone(),
+        artist: item.artist.clone(),
+        album: item.album.clone(),
+        genre: item.genre.clone(),
+        duration_seconds: item.duration_seconds,
+        mime_type: item.mime_type.clone(),
+        has_cover: item.has_cover,
+        added_by_did: item.added_by_did.clone(),
+        created_at: item.created_at,
+        loudness_lufs: item.loudness_lufs,
+        loudness_peak: item.loudness_peak,
+    });
+
     XrpcQueueItem::new()
         .id(item.id)
         .position(item.position)
         .queued_by_did(item.queued_by_did)
         .song_id(item.song_id)
+        .song(song)
         .title(item.title)
         .artist(item.artist)
         .maybe_album(optional_xrpc_cow(item.album))
+        .maybe_duration_seconds(item.duration_seconds)
         .added_by_did(item.added_by_did)
         .build()
 }
@@ -811,9 +828,11 @@ fn xrpc_radio_state(state: crate::radio::RadioState) -> XrpcRadioState<'static> 
 }
 
 fn xrpc_radio_snapshot(snapshot: crate::radio::RadioSnapshot) -> XrpcRadioSnapshot<'static> {
+    let current_song = snapshot.current_song.map(xrpc_song);
     XrpcRadioSnapshot::new()
         .state(xrpc_radio_state(snapshot.state))
-        .maybe_current_song(snapshot.current_song.map(xrpc_song))
+        .maybe_current_song(current_song.clone())
+        .maybe_now_playing(current_song)
         .queue(
             snapshot
                 .queue
@@ -3361,8 +3380,9 @@ fn internal_api_error(error: Error) -> (StatusCode, Json<ErrorResponse>) {
 mod tests {
     use super::{
         has_m3u_header, is_playlist_upload, parse_byte_range, parse_m3u, playlist_entry_url,
-        reject_unsupported_audio_upload,
+        reject_unsupported_audio_upload, xrpc_radio_snapshot,
     };
+    use crate::radio::{QueueItem, RadioSnapshot, RadioState, Song};
 
     #[test]
     fn parses_open_ended_byte_range() {
@@ -3455,5 +3475,58 @@ mod tests {
         assert!(
             playlist_entry_url(&base, "https://user:pass@music.example.test/private.mp3").is_err()
         );
+    }
+
+    #[test]
+    fn xrpc_snapshot_includes_queue_song_duration_and_now_playing_alias() {
+        let song = Song {
+            id: "song-1".into(),
+            title: "title".into(),
+            artist: "artist".into(),
+            album: Some("album".into()),
+            genre: Some("genre".into()),
+            duration_seconds: Some(123),
+            mime_type: Some("audio/mpeg".into()),
+            has_cover: true,
+            added_by_did: "did:plc:uploader".into(),
+            created_at: 42,
+            loudness_lufs: Some(-14.0),
+            loudness_peak: Some(-1.5),
+        };
+        let snapshot = RadioSnapshot {
+            state: RadioState {
+                current_song_id: Some(song.id.clone()),
+                status: "playing".into(),
+                started_at: Some(100),
+                paused_at: None,
+                position_seconds: 0,
+                updated_by_did: Some("did:plc:admin".into()),
+            },
+            current_song: Some(song.clone()),
+            queue: vec![QueueItem {
+                id: "queue-1".into(),
+                position: 1,
+                queued_by_did: "did:plc:admin".into(),
+                song_id: song.id.clone(),
+                title: song.title.clone(),
+                artist: song.artist.clone(),
+                album: song.album.clone(),
+                genre: song.genre.clone(),
+                duration_seconds: song.duration_seconds,
+                mime_type: song.mime_type.clone(),
+                has_cover: song.has_cover,
+                added_by_did: song.added_by_did.clone(),
+                created_at: song.created_at,
+                loudness_lufs: song.loudness_lufs,
+                loudness_peak: song.loudness_peak,
+            }],
+        };
+
+        let value = serde_json::to_value(xrpc_radio_snapshot(snapshot)).unwrap();
+
+        assert_eq!(value["nowPlaying"]["title"], "title");
+        assert_eq!(value["queue"][0]["title"], "title");
+        assert_eq!(value["queue"][0]["durationSeconds"], 123);
+        assert_eq!(value["queue"][0]["song"]["durationSeconds"], 123);
     }
 }

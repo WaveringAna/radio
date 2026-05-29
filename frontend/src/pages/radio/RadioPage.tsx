@@ -272,13 +272,13 @@ export default function RadioPage() {
     (songs() ?? []).find((song) => song.id === id) ?? null
 
   const queueItemAsSong = (item: QueueItem): Song =>
-    lookupSong(item.songId) ?? {
+    lookupSong(item.songId) ?? item.song ?? {
       id: item.songId,
       title: item.title,
       artist: item.artist,
       album: item.album ?? null,
       genre: null,
-      durationSeconds: null,
+      durationSeconds: item.durationSeconds ?? null,
       mimeType: null,
       hasCover: false,
       addedByDid: item.addedByDid,
@@ -338,6 +338,7 @@ export default function RadioPage() {
         prev.title === item.title &&
         prev.artist === item.artist &&
         prev.album === item.album &&
+        prev.durationSeconds === item.durationSeconds &&
         prev.addedByDid === item.addedByDid
       ) {
         return prev
