@@ -1,222 +1,14 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, anyhow};
-use axum::extract::ws::Message;
-use serde::Serialize;
 use sqlx::FromRow;
-use time::OffsetDateTime;
-use tokio::{io::AsyncReadExt, sync::broadcast};
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::{chat::ChatService, db::Database, loudness, metadata};
-
-const UNKNOWN_DURATION_ADVANCE_AFTER_SECONDS: i64 = 30 * 60;
-
-/// Radio playback status persisted by the backend.
-#[derive(Clone, Debug, Serialize, FromRow)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RadioState {
-    /// Currently active song id, when one is selected.
-    pub(crate) current_song_id: Option<String>,
-    /// Current playback status.
-    pub(crate) status: String,
-    /// Unix timestamp when playback was last started.
-    pub(crate) started_at: Option<i64>,
-    /// Unix timestamp when playback was last paused.
-    pub(crate) paused_at: Option<i64>,
-    /// Stored playback offset in seconds.
-    pub(crate) position_seconds: i64,
-    /// DID of the last admin to update radio state.
-    pub(crate) updated_by_did: Option<String>,
-}
-
-/// Song metadata stored by the backend.
-#[derive(Clone, Debug, Serialize, FromRow)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Song {
-    /// Stable song id.
-    pub(crate) id: String,
-    /// Song title.
-    pub(crate) title: String,
-    /// Song artist.
-    pub(crate) artist: String,
-    /// Optional album title.
-    pub(crate) album: Option<String>,
-    /// Optional genre.
-    pub(crate) genre: Option<String>,
-    /// Optional duration in seconds.
-    pub(crate) duration_seconds: Option<i64>,
-    /// MIME type of the stored audio file.
-    pub(crate) mime_type: Option<String>,
-    /// Whether the song has an uploaded album cover.
-    pub(crate) has_cover: bool,
-    /// DID that uploaded the song.
-    pub(crate) added_by_did: String,
-    /// Unix timestamp when the song was uploaded.
-    pub(crate) created_at: i64,
-    /// Integrated loudness in LUFS (ITU-R BS.1770 / EBU R128).
-    pub(crate) loudness_lufs: Option<f64>,
-    /// True peak in dBFS.
-    pub(crate) loudness_peak: Option<f64>,
-}
-
-#[derive(Clone, Debug, FromRow)]
-pub(crate) struct SongFile {
-    /// Local path to the stored file.
-    pub(crate) file_path: String,
-    /// Stored file MIME type.
-    pub(crate) mime_type: Option<String>,
-}
-
-#[derive(Clone, Debug, FromRow)]
-struct StoredAudioFile {
-    id: String,
-    title: String,
-    artist: String,
-    file_path: String,
-    mime_type: Option<String>,
-}
-
-#[derive(Clone, Debug, FromRow)]
-struct MissingGenreSong {
-    id: String,
-    title: String,
-    artist: String,
-    album: Option<String>,
-}
-
-/// Queue item joined with song metadata.
-#[derive(Clone, Debug, Serialize, FromRow)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct QueueItem {
-    /// Stable queue item id.
-    pub(crate) id: String,
-    /// Queue position, lower values play first.
-    pub(crate) position: i64,
-    /// DID that queued the song.
-    pub(crate) queued_by_did: String,
-    /// Queued song id.
-    pub(crate) song_id: String,
-    /// Queued song title.
-    pub(crate) title: String,
-    /// Queued song artist.
-    pub(crate) artist: String,
-    /// Optional queued song album.
-    pub(crate) album: Option<String>,
-    /// Optional queued song genre.
-    pub(crate) genre: Option<String>,
-    /// Optional queued song duration in seconds.
-    pub(crate) duration_seconds: Option<i64>,
-    /// MIME type of the queued song's stored audio file.
-    pub(crate) mime_type: Option<String>,
-    /// Whether the queued song has an uploaded album cover.
-    pub(crate) has_cover: bool,
-    /// DID that originally uploaded the queued song.
-    pub(crate) added_by_did: String,
-    /// Unix timestamp when the queued song was uploaded.
-    pub(crate) created_at: i64,
-    /// Integrated loudness in LUFS (ITU-R BS.1770 / EBU R128).
-    pub(crate) loudness_lufs: Option<f64>,
-    /// True peak in dBFS.
-    pub(crate) loudness_peak: Option<f64>,
-}
-
-/// Admin-defined album loop metadata.
-#[derive(Clone, Debug, Serialize, FromRow)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RadioAlbum {
-    /// Stable album id.
-    pub(crate) id: String,
-    /// Album title shown in admin tools.
-    pub(crate) title: String,
-    /// Loop ordering, lower values play first.
-    pub(crate) position: i64,
-    /// Whether this album participates in fallback looping.
-    pub(crate) is_enabled: bool,
-    /// Songs in album playback order.
-    #[sqlx(skip)]
-    pub(crate) tracks: Vec<Song>,
-}
-
-/// Combined radio view returned to clients.
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RadioSnapshot {
-    /// Current radio playback state.
-    pub(crate) state: RadioState,
-    /// Current song metadata, when selected.
-    pub(crate) current_song: Option<Song>,
-    /// Upcoming queued songs.
-    pub(crate) queue: Vec<QueueItem>,
-}
-
-/// Live seek position returned by the backend.
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RadioSeek {
-    /// Current playback offset in seconds.
-    pub(crate) position_seconds: i64,
-}
-
-/// Realtime events broadcast to websocket clients.
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
-pub(crate) enum RadioEvent {
-    /// Radio snapshot changed.
-    SnapshotChanged { snapshot: RadioSnapshot },
-    /// Live viewer count changed.
-    ViewerCountChanged {
-        viewer_count: usize,
-        #[serde(default)]
-        listener_dids: Vec<String>,
-    },
-    /// Backend keepalive request for viewer sockets.
-    ViewerKeepalive,
-}
-
-/// Uploaded song input after multipart parsing.
-pub(crate) struct NewRadioAlbum {
-    /// Album title shown in admin tools.
-    pub(crate) title: String,
-    /// Ordered songs to loop for this album.
-    pub(crate) song_ids: Vec<String>,
-}
-
-/// Uploaded song input after multipart parsing.
-pub(crate) struct NewSongUpload {
-    /// Original uploaded filename.
-    pub(crate) filename: Option<String>,
-    /// Uploaded audio MIME type.
-    pub(crate) mime_type: Option<String>,
-    /// Uploaded audio bytes.
-    pub(crate) bytes: Vec<u8>,
-    /// Song title supplied by the admin.
-    pub(crate) title: String,
-    /// Song artist supplied by the admin.
-    pub(crate) artist: String,
-    /// Optional album supplied by the admin.
-    pub(crate) album: Option<String>,
-    /// Optional genre from tags or the admin.
-    pub(crate) genre: Option<String>,
-    /// Optional duration in seconds extracted from the audio file.
-    pub(crate) duration_seconds: Option<i64>,
-    /// Whether the song should be queued immediately.
-    pub(crate) add_to_queue: bool,
-}
-
-/// Editable song metadata.
-pub(crate) struct SongMetadataUpdate {
-    /// Song title.
-    pub(crate) title: String,
-    /// Song artist.
-    pub(crate) artist: String,
-    /// Optional album title.
-    pub(crate) album: Option<String>,
-    /// Optional genre.
-    pub(crate) genre: Option<String>,
-    /// Optional duration in seconds.
-    pub(crate) duration_seconds: Option<i64>,
-}
+use super::types::*;
+use super::events::advance_duration_seconds;
+use super::helpers::{extension, file_extension, is_unsupported_audio_file as is_unsupported_by_ext, now};
 
 /// Service for radio state, queue, song storage, and realtime broadcasts.
 #[derive(Clone)]
@@ -240,13 +32,6 @@ impl RadioService {
         let cover_dir = data_dir.join("covers");
         let thumb_dir = data_dir.join("thumbs");
 
-        // Background task: keeps backend state truthful in real time by
-        // advancing the current song when its duration elapses. Wakes on any
-        // admin action (via the broadcast channel) to recompute its sleep.
-        // Does not broadcast on natural song-end — frontends self-advance
-        // locally and drift is accepted. The chat service is passed in so the
-        // loop can announce now-playing breadcrumbs without going through the
-        // radio events channel.
         tokio::spawn(advance_loop(db.clone(), events.clone(), chat.clone()));
 
         Self {
@@ -260,22 +45,11 @@ impl RadioService {
     }
 
     /// Loads the current public radio snapshot without auto-advancing.
-    /// Used for broadcasts after mutations — broadcasts shouldn't carry
-    /// a silent advance that frontends would mistake for an admin action.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite queries fail.
     pub(crate) async fn snapshot(&self) -> anyhow::Result<RadioSnapshot> {
         snapshot_from_db(&self.db).await
     }
 
-    /// Loads the snapshot for a fresh external observer (HTTP fetch / WS
-    /// connect). Runs lazy auto-advance first so the returned `currentSong`
-    /// and `positionSeconds` are truthful even if time has passed since the
-    /// last admin action.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite queries fail.
+    /// Loads the snapshot for a fresh external observer.
     pub(crate) async fn external_snapshot(&self) -> anyhow::Result<RadioSnapshot> {
         auto_advance(&self.db).await?;
         heal_empty_current_song(&self.db, "system").await?;
@@ -284,9 +58,6 @@ impl RadioService {
     }
 
     /// Loads the current live seek position with auto-advance applied.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite queries fail.
     pub(crate) async fn seek(&self) -> anyhow::Result<RadioSeek> {
         auto_advance(&self.db).await?;
         let state = radio_state(&self.db).await?;
@@ -296,9 +67,6 @@ impl RadioService {
     }
 
     /// Lists all uploaded songs.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite queries fail.
     pub(crate) async fn songs(&self) -> anyhow::Result<Vec<Song>> {
         sqlx::query_as::<_, Song>(
             r#"
@@ -315,9 +83,6 @@ impl RadioService {
     }
 
     /// Removes non-audio playlist files that were previously accepted as songs.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite cleanup or recovery updates fail.
     pub(crate) async fn cleanup_unsupported_audio_on_boot(&self) -> anyhow::Result<usize> {
         let removed = cleanup_unsupported_audio(&self.db).await?;
         if removed > 0 {
@@ -328,9 +93,6 @@ impl RadioService {
     }
 
     /// Fetches and stores genres for songs where genre is currently empty.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite queries fail.
     pub(crate) async fn backfill_missing_genres_on_boot(&self) -> anyhow::Result<usize> {
         let missing = sqlx::query_as::<_, MissingGenreSong>(
             r#"
@@ -373,12 +135,7 @@ impl RadioService {
         Ok(updated)
     }
 
-    /// Measures and stores loudness for every song missing a `loudness_lufs`
-    /// value. Designed to run as a background task at boot so existing songs
-    /// catch up without blocking the listener.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite queries fail.
+    /// Measures and stores loudness for every song missing a `loudness_lufs` value.
     pub(crate) async fn backfill_missing_loudness_on_boot(&self) -> anyhow::Result<usize> {
         #[derive(FromRow)]
         struct MissingLoudness {
@@ -417,17 +174,11 @@ impl RadioService {
     }
 
     /// Lists admin-defined album loops.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite queries fail.
     pub(crate) async fn albums(&self) -> anyhow::Result<Vec<RadioAlbum>> {
         album_loops(&self.db).await
     }
 
     /// Creates an album loop from explicit song ids.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite persistence fails or no songs are supplied.
     pub(crate) async fn create_album(&self, album: NewRadioAlbum) -> anyhow::Result<RadioAlbum> {
         let song_ids: Vec<String> = album
             .song_ids
@@ -486,9 +237,6 @@ impl RadioService {
     }
 
     /// Creates an album loop from songs with matching metadata album.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite persistence fails or no songs match.
     pub(crate) async fn create_album_from_metadata(
         &self,
         album_title: &str,
@@ -516,9 +264,6 @@ impl RadioService {
     }
 
     /// Deletes an album loop.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite deletion fails.
     pub(crate) async fn delete_album(&self, album_id: &str) -> anyhow::Result<Vec<RadioAlbum>> {
         sqlx::query("delete from radio_albums where id = ?")
             .bind(album_id)
@@ -529,10 +274,7 @@ impl RadioService {
         self.albums().await
     }
 
-    /// Appends songs to an existing album loop, skipping any already present.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite queries fail or the album is not found.
+    /// Appends songs to an existing album loop.
     pub(crate) async fn add_songs_to_album(
         &self,
         album_id: &str,
@@ -587,9 +329,6 @@ impl RadioService {
     }
 
     /// Enables or disables an album loop.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite update fails.
     pub(crate) async fn set_album_enabled(
         &self,
         album_id: &str,
@@ -605,9 +344,6 @@ impl RadioService {
     }
 
     /// Loads the local file backing a song.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite lookup fails.
     pub(crate) async fn song_file(&self, song_id: &str) -> anyhow::Result<Option<SongFile>> {
         sqlx::query_as::<_, SongFile>("select file_path, mime_type from songs where id = ?")
             .bind(song_id)
@@ -617,22 +353,17 @@ impl RadioService {
     }
 
     /// Loads the local cover file backing a song.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite lookup fails.
     pub(crate) async fn cover_file(&self, song_id: &str) -> anyhow::Result<Option<SongFile>> {
-        sqlx::query_as::<_, SongFile>("select cover_path as file_path, cover_mime_type as mime_type from songs where id = ? and cover_path is not null")
-            .bind(song_id)
-            .fetch_optional(self.db.pool())
-            .await
-            .context("loading song cover")
+        sqlx::query_as::<_, SongFile>(
+            "select cover_path as file_path, cover_mime_type as mime_type from songs where id = ? and cover_path is not null",
+        )
+        .bind(song_id)
+        .fetch_optional(self.db.pool())
+        .await
+        .context("loading song cover")
     }
 
-    /// Returns the path to a 128×128 JPEG thumbnail for a song cover,
-    /// generating and caching it on disk the first time it is requested.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite lookup, disk I/O, or image decoding fails.
+    /// Returns the path to a 128×128 JPEG thumbnail for a song cover.
     pub(crate) async fn cover_thumbnail(&self, song_id: &str) -> anyhow::Result<Option<PathBuf>> {
         let cover = self.cover_file(song_id).await?;
         let Some(cover) = cover else {
@@ -667,9 +398,6 @@ impl RadioService {
     }
 
     /// Updates editable metadata for an existing song.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite persistence fails or the song does not exist.
     pub(crate) async fn update_song_metadata(
         &self,
         song_id: &str,
@@ -721,9 +449,6 @@ impl RadioService {
     }
 
     /// Stores an uploaded cover for a song.
-    ///
-    /// # Errors
-    /// Returns an error when file storage or sqlite persistence fails.
     pub(crate) async fn set_song_cover(
         &self,
         song_id: &str,
@@ -762,9 +487,6 @@ impl RadioService {
     }
 
     /// Deletes a song and its queue entries.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite deletion fails.
     pub(crate) async fn delete_song(&self, song_id: &str) -> anyhow::Result<RadioSnapshot> {
         sqlx::query("delete from songs where id = ?")
             .bind(song_id)
@@ -780,13 +502,6 @@ impl RadioService {
     }
 
     /// Stores an uploaded song and optionally appends it to the queue.
-    /// If a song with the same title + artist + album already exists in the
-    /// library, returns the existing record without writing a new file or
-    /// row. The upload's `add_to_queue` flag still applies to the existing
-    /// song in that case.
-    ///
-    /// # Errors
-    /// Returns an error when file storage or sqlite persistence fails.
     pub(crate) async fn add_song(
         &self,
         upload: NewSongUpload,
@@ -849,8 +564,8 @@ impl RadioService {
         let created_at = now();
         let file_path_string = file_path.to_string_lossy().into_owned();
         let album = upload.album.filter(|value| !value.trim().is_empty());
-
         let genre = upload.genre.filter(|g| !g.trim().is_empty());
+
         sqlx::query(
             r#"
             insert into songs (id, title, artist, album, genre, duration_seconds, file_path, mime_type, added_by_did, created_at)
@@ -890,8 +605,6 @@ impl RadioService {
         );
         self.broadcast_snapshot().await;
 
-        // Measure loudness in the background so uploads stay snappy; first
-        // listeners may get unity gain until this lands.
         tokio::spawn(measure_and_store_loudness(
             self.db.clone(),
             id,
@@ -902,9 +615,6 @@ impl RadioService {
     }
 
     /// Adds an existing song to the bottom of the queue.
-    ///
-    /// # Errors
-    /// Returns an error when the song does not exist or sqlite persistence fails.
     pub(crate) async fn enqueue_song(
         &self,
         song_id: &str,
@@ -922,9 +632,6 @@ impl RadioService {
     }
 
     /// Appends multiple songs to the queue in order with a single broadcast.
-    ///
-    /// # Errors
-    /// Returns an error when any song is not found or sqlite persistence fails.
     pub(crate) async fn enqueue_songs(
         &self,
         song_ids: &[String],
@@ -965,9 +672,6 @@ impl RadioService {
     }
 
     /// Removes an item from the queue.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite deletion fails.
     pub(crate) async fn remove_queue_item(&self, queue_id: &str) -> anyhow::Result<RadioSnapshot> {
         sqlx::query("delete from radio_queue where id = ?")
             .bind(queue_id)
@@ -984,9 +688,6 @@ impl RadioService {
     }
 
     /// Removes all queued items.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite deletion fails.
     pub(crate) async fn clear_queue(&self) -> anyhow::Result<RadioSnapshot> {
         let removed = sqlx::query("delete from radio_queue")
             .execute(self.db.pool())
@@ -1003,11 +704,6 @@ impl RadioService {
     }
 
     /// Reorders the queue based on the supplied ordered list of queue ids.
-    /// The frontend is expected to send the full set of current queue ids in
-    /// the desired order.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite persistence fails.
     pub(crate) async fn reorder_queue(
         &self,
         queue_ids: &[String],
@@ -1038,9 +734,6 @@ impl RadioService {
     }
 
     /// Updates playback status or advances the queue.
-    ///
-    /// # Errors
-    /// Returns an error when sqlite updates fail.
     pub(crate) async fn control(
         &self,
         action: RadioControlAction,
@@ -1092,24 +785,7 @@ impl RadioService {
     }
 }
 
-/// Admin radio control actions.
-pub(crate) enum RadioControlAction {
-    /// Start or resume playback.
-    Play,
-    /// Pause playback.
-    Pause,
-    /// Stop playback.
-    Stop,
-    /// Advance to the next queued song.
-    Skip,
-    /// Reset the current song to the beginning.
-    Previous,
-}
-
-/// Serializes a radio event into a websocket text message.
-pub(crate) fn event_message(event: &RadioEvent) -> anyhow::Result<Message> {
-    Ok(Message::Text(serde_json::to_string(event)?.into()))
-}
+// ── Internal helper functions ──
 
 async fn radio_state(db: &Database) -> anyhow::Result<RadioState> {
     let mut state = sqlx::query_as::<_, RadioState>(
@@ -1153,10 +829,6 @@ async fn advance_loop(db: Database, events: broadcast::Sender<RadioEvent>, chat:
                 }
                 let after = current_song_id(&db).await.ok().flatten();
                 if before != after {
-                    // Intentionally does NOT broadcast SnapshotChanged on natural
-                    // song-end: a forced advance from the server is jarring to
-                    // listeners. Frontends self-advance locally and drift is
-                    // accepted. We only send the now-playing chat breadcrumb.
                     if let Some(song_id) = after {
                         spawn_now_playing_announcement(db.clone(), chat.clone(), song_id);
                     }
@@ -1326,51 +998,8 @@ async fn heal_missing_current_song(db: &Database, admin_did: &str) -> anyhow::Re
 }
 
 async fn is_unsupported_audio_file(file_path: &str, mime_type: Option<&str>) -> bool {
-    has_playlist_extension(file_path)
-        || has_playlist_mime(mime_type)
-        || file_starts_with_extm3u(file_path).await
-}
-
-fn has_playlist_extension(file_path: &str) -> bool {
-    file_path
-        .rsplit_once('.')
-        .map(|(_, extension)| extension.to_ascii_lowercase())
-        .is_some_and(|extension| matches!(extension.as_str(), "m3u" | "m3u8" | "pls" | "xspf"))
-}
-
-fn has_playlist_mime(mime_type: Option<&str>) -> bool {
-    mime_type
-        .and_then(|mime| mime.split(';').next())
-        .map(|mime| mime.trim().to_ascii_lowercase())
-        .is_some_and(|mime| {
-            matches!(
-                mime.as_str(),
-                "application/vnd.apple.mpegurl"
-                    | "application/x-mpegurl"
-                    | "audio/mpegurl"
-                    | "audio/x-mpegurl"
-                    | "audio/m3u"
-                    | "audio/x-m3u"
-                    | "application/pls+xml"
-            )
-        })
-}
-
-async fn file_starts_with_extm3u(file_path: &str) -> bool {
-    let mut file = match tokio::fs::File::open(file_path).await {
-        Ok(file) => file,
-        Err(_) => return false,
-    };
-    let mut buffer = [0_u8; 256];
-    let read = match file.read(&mut buffer).await {
-        Ok(read) => read,
-        Err(_) => return false,
-    };
-
-    String::from_utf8_lossy(&buffer[..read])
-        .trim_start_matches('\u{feff}')
-        .trim_start()
-        .starts_with("#EXTM3U")
+    is_unsupported_by_ext(file_path, mime_type)
+        || super::helpers::file_starts_with_extm3u(file_path).await
 }
 
 async fn current_song_id(db: &Database) -> anyhow::Result<Option<String>> {
@@ -1382,9 +1011,6 @@ async fn current_song_id(db: &Database) -> anyhow::Result<Option<String>> {
     Ok(row.and_then(|(id,)| id))
 }
 
-// Posts a now-playing breadcrumb after a short delay. Spawned and forgotten —
-// rapid skips simply queue multiple posts, which accurately reflects the
-// listening history even if every track was momentary.
 fn spawn_now_playing_announcement(db: Database, chat: ChatService, song_id: String) {
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
@@ -1435,12 +1061,6 @@ async fn next_advance_in(db: &Database) -> anyhow::Result<Option<std::time::Dura
     let elapsed = raw.position_seconds + now().saturating_sub(started_at);
     let remaining = duration.saturating_sub(elapsed).max(1);
     Ok(Some(std::time::Duration::from_secs(remaining as u64)))
-}
-
-fn advance_duration_seconds(song: &Song) -> i64 {
-    song.duration_seconds
-        .filter(|duration| *duration > 0)
-        .unwrap_or(UNKNOWN_DURATION_ADVANCE_AFTER_SECONDS)
 }
 
 async fn auto_advance(db: &Database) -> anyhow::Result<()> {
@@ -1520,14 +1140,10 @@ async fn auto_advance(db: &Database) -> anyhow::Result<()> {
     }
 }
 
-/// Spawned per-upload entry point — drops errors after logging.
 async fn measure_and_store_loudness(db: Database, song_id: String, file_path: PathBuf) {
     store_loudness(&db, &song_id, file_path).await;
 }
 
-/// Runs ffmpeg, writes `loudness_lufs` + `loudness_peak`. Returns true on
-/// success. Errors are logged, not propagated, since the caller treats this
-/// as best-effort.
 async fn store_loudness(db: &Database, song_id: &str, file_path: PathBuf) -> bool {
     let started = std::time::Instant::now();
     let measurement = match loudness::measure(&file_path).await {
@@ -1703,8 +1319,6 @@ async fn current_song_is_loadable(db: &Database, state: &RadioState) -> anyhow::
 async fn set_status(db: &Database, status: &str, admin_did: &str) -> anyhow::Result<()> {
     let state = radio_state(db).await?;
     if state.status == status {
-        // Already in this state — don't rewrite started_at/paused_at, which
-        // would invalidate the snapshot's playbackKey for in-sync listeners.
         return Ok(());
     }
 
@@ -1927,238 +1541,7 @@ async fn reset_current(db: &Database, admin_did: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn extension(upload: &NewSongUpload) -> String {
-    file_extension(upload.filename.as_deref(), ".audio")
-}
-
-fn file_extension(filename: Option<&str>, fallback: &str) -> String {
-    filename
-        .and_then(|filename| filename.rsplit_once('.').map(|(_, extension)| extension))
-        .filter(|extension| !extension.contains('/'))
-        .map(|extension| format!(".{extension}"))
-        .unwrap_or_else(|| fallback.into())
-}
-
-fn now() -> i64 {
-    OffsetDateTime::now_utc().unix_timestamp()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    async fn test_db() -> anyhow::Result<(Database, tempfile::TempDir)> {
-        let temp_dir = tempfile::tempdir()?;
-        let db_path = temp_dir.path().join("test.db");
-        let db = Database::connect(&format!("sqlite://{}", db_path.display())).await?;
-        db.prepare().await?;
-        Ok((db, temp_dir))
-    }
-
-    async fn insert_song(db: &Database, id: &str, title: &str) -> anyhow::Result<()> {
-        sqlx::query(
-            r#"
-            insert into songs (id, title, artist, file_path, added_by_did)
-            values (?, ?, 'artist', '/tmp/test.mp3', 'did:plc:uploader')
-            "#,
-        )
-        .bind(id)
-        .bind(title)
-        .execute(db.pool())
-        .await?;
-
-        Ok(())
-    }
-
-    async fn set_stale_current_song(
-        db: &Database,
-        song_id: &str,
-        status: &str,
-        started_at: Option<i64>,
-    ) -> anyhow::Result<()> {
-        let mut conn = db.pool().acquire().await?;
-        sqlx::query("pragma foreign_keys = off")
-            .execute(&mut *conn)
-            .await?;
-        sqlx::query(
-            "update radio_state set current_song_id = ?, status = ?, started_at = ? where id = 1",
-        )
-        .bind(song_id)
-        .bind(status)
-        .bind(started_at)
-        .execute(&mut *conn)
-        .await?;
-        sqlx::query("pragma foreign_keys = on")
-            .execute(&mut *conn)
-            .await?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn skip_pops_next_queue_item_and_starts_it() -> anyhow::Result<()> {
-        let (db, _temp_dir) = test_db().await?;
-        insert_song(&db, "song-1", "first").await?;
-        insert_song(&db, "song-2", "second").await?;
-        insert_song(&db, "song-3", "third").await?;
-        append_queue_item(&db, "song-2", "did:plc:admin").await?;
-        append_queue_item(&db, "song-3", "did:plc:admin").await?;
-        sqlx::query(
-            "update radio_state set current_song_id = 'song-1', status = 'playing' where id = 1",
-        )
-        .execute(db.pool())
-        .await?;
-
-        skip_to_next(&db, "did:plc:admin").await?;
-        let state = radio_state(&db).await?;
-        let queue = queue_items(&db).await?;
-
-        assert_eq!(state.current_song_id.as_deref(), Some("song-2"));
-        assert_eq!(state.status, "playing");
-        assert_eq!(state.position_seconds, 0);
-        assert_eq!(queue.len(), 1);
-        assert_eq!(queue[0].song_id, "song-3");
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn enqueue_starts_when_current_song_is_stale() -> anyhow::Result<()> {
-        let (db, _temp_dir) = test_db().await?;
-        insert_song(&db, "song-next", "next").await?;
-        append_queue_item(&db, "song-next", "did:plc:admin").await?;
-        set_stale_current_song(&db, "missing-song", "stopped", None).await?;
-
-        play_next_if_idle(&db, "did:plc:admin").await?;
-        let state = radio_state(&db).await?;
-        let queue = queue_items(&db).await?;
-
-        assert_eq!(state.current_song_id.as_deref(), Some("song-next"));
-        assert_eq!(state.status, "playing");
-        assert!(queue.is_empty());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn auto_advance_heals_missing_current_song() -> anyhow::Result<()> {
-        let (db, _temp_dir) = test_db().await?;
-        insert_song(&db, "song-next", "next").await?;
-        append_queue_item(&db, "song-next", "did:plc:admin").await?;
-        set_stale_current_song(&db, "missing-song", "playing", Some(now())).await?;
-
-        tokio::time::timeout(std::time::Duration::from_secs(1), auto_advance(&db)).await??;
-        let state = radio_state(&db).await?;
-        let queue = queue_items(&db).await?;
-
-        assert_eq!(state.current_song_id.as_deref(), Some("song-next"));
-        assert_eq!(state.status, "playing");
-        assert!(queue.is_empty());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn skip_uses_album_loop_when_queue_is_empty() -> anyhow::Result<()> {
-        let (db, _temp_dir) = test_db().await?;
-        insert_song(&db, "song-1", "first").await?;
-        insert_song(&db, "song-2", "second").await?;
-        insert_song(&db, "song-3", "third").await?;
-        sqlx::query("insert into radio_albums (id, title, position) values ('album-1', 'loop', 1)")
-            .execute(db.pool())
-            .await?;
-        sqlx::query(
-            "insert into radio_album_tracks (album_id, song_id, position) values ('album-1', 'song-2', 1), ('album-1', 'song-3', 2)",
-        )
-        .execute(db.pool())
-        .await?;
-        sqlx::query(
-            "update radio_state set current_song_id = 'song-1', status = 'playing' where id = 1",
-        )
-        .execute(db.pool())
-        .await?;
-
-        skip_to_next(&db, "did:plc:admin").await?;
-        let state = radio_state(&db).await?;
-        assert_eq!(state.current_song_id.as_deref(), Some("song-2"));
-
-        skip_to_next(&db, "did:plc:admin").await?;
-        let state = radio_state(&db).await?;
-        assert_eq!(state.current_song_id.as_deref(), Some("song-3"));
-
-        skip_to_next(&db, "did:plc:admin").await?;
-        let state = radio_state(&db).await?;
-        assert_eq!(state.current_song_id.as_deref(), Some("song-2"));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn skip_stops_when_queue_is_empty() -> anyhow::Result<()> {
-        let (db, _temp_dir) = test_db().await?;
-        insert_song(&db, "song-1", "first").await?;
-        sqlx::query(
-            "update radio_state set current_song_id = 'song-1', status = 'playing' where id = 1",
-        )
-        .execute(db.pool())
-        .await?;
-
-        skip_to_next(&db, "did:plc:admin").await?;
-        let state = radio_state(&db).await?;
-
-        assert_eq!(state.current_song_id, None);
-        assert_eq!(state.status, "stopped");
-        assert_eq!(state.position_seconds, 0);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn cleanup_removes_playlist_song_and_heals_current() -> anyhow::Result<()> {
-        let (db, temp_dir) = test_db().await?;
-        let poison_path = temp_dir.path().join("poison.m3u8");
-        tokio::fs::write(&poison_path, "#EXTM3U\n#EXTINF:1,bad\nbad.flac\n").await?;
-        insert_song(&db, "song-next", "next").await?;
-        sqlx::query(
-            r#"
-            insert into songs (id, title, artist, file_path, mime_type, added_by_did)
-            values ('song-poison', 'poison', 'artist', ?, 'audio/x-mpegurl', 'did:plc:uploader')
-            "#,
-        )
-        .bind(poison_path.to_string_lossy().as_ref())
-        .execute(db.pool())
-        .await?;
-        append_queue_item(&db, "song-next", "did:plc:admin").await?;
-        sqlx::query(
-            "update radio_state set current_song_id = 'song-poison', status = 'playing', started_at = ? where id = 1",
-        )
-        .bind(now())
-        .execute(db.pool())
-        .await?;
-
-        let removed = cleanup_unsupported_audio(&db).await?;
-        heal_empty_current_song(&db, "system").await?;
-        let state = radio_state(&db).await?;
-
-        assert_eq!(removed, 1);
-        assert_eq!(state.current_song_id.as_deref(), Some("song-next"));
-        assert!(!poison_path.exists());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn paused_state_persists_elapsed_position() -> anyhow::Result<()> {
-        let (db, _temp_dir) = test_db().await?;
-        insert_song(&db, "song-1", "first").await?;
-        let started_at = now() - 540;
-        sqlx::query(
-            "update radio_state set current_song_id = 'song-1', status = 'playing', started_at = ?, position_seconds = 0 where id = 1",
-        )
-        .bind(started_at)
-        .execute(db.pool())
-        .await?;
-
-        set_status(&db, "paused", "did:plc:admin").await?;
-        let state = radio_state(&db).await?;
-
-        assert_eq!(state.status, "paused");
-        assert!(state.position_seconds >= 540);
-        assert!(state.started_at.is_none());
-        assert!(state.paused_at.is_some());
-        Ok(())
-    }
+    // Tests moved to tests module
 }
