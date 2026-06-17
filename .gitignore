@@ -10,5 +10,4 @@ node_modules
 /frontend/node_modules
 **/data
 **/AnalogMonoPlus.ttf
-**/AnalogMonoPlus-subset.woff2
 **/analogmono_glyphs.txt

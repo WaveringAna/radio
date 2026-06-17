@@ -253,6 +253,7 @@ export default function RadioPage() {
   const [localQueue, setLocalQueue] = createSignal<QueueItem[]>([])
   let consumedQueueIds = new Set<string>()
   let lastPlaybackKey: string | null = null
+  let emptyQueueEndSyncTimer: number | null = null
   let audioRef: HTMLAudioElement | undefined
   const onMobile = isMobileDevice()
   const equalizer = createEqualizerController(() => audioRef)
@@ -560,7 +561,9 @@ export default function RadioPage() {
 
   const currentSong = () => localCurrentSong()
   const currentSongTitle = () => currentSong()?.title ?? 'nothing playing yet'
-  const shouldMarqueeTitle = () => currentSongTitle().length > 25
+  const currentSongArtist = () => currentSong()?.artist ?? 'queue something lovely'
+  const artistAlbumLine = () => currentSong()?.album ? `${currentSongArtist()} · ${currentSong()?.album}` : currentSongArtist()
+  const shouldMarqueeTitle = () => currentSongTitle().length > 38
   const viewerCountValue = () => viewerCount() ?? 0
   const viewerCountLabel = () => viewerCountValue().toString()
 
@@ -757,7 +760,36 @@ export default function RadioPage() {
     }, 0)
   }
 
-  const handleAudioEnded = () => advanceLocally()
+  const syncEndedAutoplay = async (endedSongId: string | null, attempt = 0): Promise<void> => {
+    if (localQueue().length > 0) {
+      advanceLocally()
+      return
+    }
+
+    const refreshed = await refetch()
+    if (!refreshed) return
+
+    const refreshedSongId = refreshed.currentSong?.id ?? null
+    if (refreshedSongId === null || refreshed.state.status === 'stopped') {
+      setLocalCurrentSong(null)
+      return
+    }
+
+    if (refreshedSongId !== endedSongId || attempt >= 5) return
+
+    emptyQueueEndSyncTimer = window.setTimeout(() => {
+      emptyQueueEndSyncTimer = null
+      void syncEndedAutoplay(endedSongId, attempt + 1)
+    }, 1000)
+  }
+
+  const handleAudioEnded = () => {
+    if (localQueue().length > 0) {
+      advanceLocally()
+      return
+    }
+    void syncEndedAutoplay(localCurrentSong()?.id ?? null)
+  }
 
   // If we ran out of songs and admin later adds one, kick playback again.
   createEffect(() => {
@@ -848,6 +880,7 @@ export default function RadioPage() {
     volumeOverlayTimeout = setTimeout(() => setVolumeOverlayActive(false), 1400)
   })
   onCleanup(() => {
+    if (emptyQueueEndSyncTimer !== null) window.clearTimeout(emptyQueueEndSyncTimer)
     if (volumeOverlayTimeout) clearTimeout(volumeOverlayTimeout)
   })
 
@@ -890,109 +923,101 @@ export default function RadioPage() {
             {(bar) => <span style={`--wave: ${bar()}`} />}
           </Index>
         </div>
-        <p class="eyebrow">now playing // live rite</p>
-        <h1 classList={{ marquee: shouldMarqueeTitle() }} title={currentSongTitle()}>
-          <Show
-            when={shouldMarqueeTitle()}
-            fallback={currentSongTitle()}
-          >
-            <span class="marquee-track">
-              <span>{currentSongTitle()}</span>
-              <span aria-hidden="true">{currentSongTitle()}</span>
-            </span>
-          </Show>
-        </h1>
-        <p class="subtitle">{currentSong()?.artist ?? 'queue something lovely'}</p>
-        <Show when={currentSong()?.album}>{(album) => <p class="muted">{album()}</p>}</Show>
-        <audio
-          ref={audioRef}
-          class="radio-audio"
-          crossOrigin="anonymous"
-          src={currentAudioUrl() ?? ''}
-          preload="auto"
-          onPlay={() => setIsAudioPlaying(true)}
-          onPause={() => setIsAudioPlaying(false)}
-          onEnded={handleAudioEnded}
-        />
-        <Show when={nextAudioUrl()}>
-          {(url) => <audio src={url()} preload="auto" crossOrigin="anonymous" aria-hidden="true" style="display:none" />}
-        </Show>
-        <div class="listener-controls">
-          <div class="live-viewer-counter" aria-live="polite">
-            <Eye size={16} />
-            <span>{viewerCountLabel()}</span>
-            <span>{viewerCountValue() === 1 ? 'listener' : 'listeners'}</span>
-            <Show when={listenerDids().length > 0}>
-              <ul class="listener-avatars" aria-label="listeners">
-                <For each={visibleListenerDids()}>
-                  {(did) => {
-                    const profile = () => profileFor(did)
-                    return (
-                      <li>
-                        <a
-                          href={`https://bsky.app/profile/${profile().handle}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          data-handle={`@${profile().handle}`}
-                        >
-                          <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
-                        </a>
-                      </li>
-                    )
-                  }}
-                </For>
-                <Show when={overflowListenerDids().length > 0}>
-                  <li>
-                    <button
-                      type="button"
-                      class="listener-avatar-more"
-                      aria-expanded={listenerOverflowOpen()}
-                      aria-label={`show ${overflowListenerDids().length} more listeners`}
-                      data-handle={`+${overflowListenerDids().length} more`}
-                      onClick={() => setListenerOverflowOpen((open) => !open)}
-                    >
-                      +{overflowListenerDids().length}
-                    </button>
-                  </li>
-                  <Show when={listenerOverflowOpen()}>
-                    <ul class="listener-avatars-overflow" aria-label="more listeners">
-                      <For each={overflowListenerDids()}>
-                        {(did) => {
-                          const profile = () => profileFor(did)
-                          return (
-                            <li>
-                              <a
-                                href={`https://bsky.app/profile/${profile().handle}`}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
-                                <span>{profile().displayName || `@${profile().handle}`}</span>
-                              </a>
-                            </li>
-                          )
-                        }}
-                      </For>
-                    </ul>
-                  </Show>
-                </Show>
-              </ul>
-            </Show>
-          </div>
-          <div class="listen-attribution-row">
+        <section class="nowplaying-details" aria-label="now playing">
+          <div class="nowplaying-title-row">
+            <h1 classList={{ marquee: shouldMarqueeTitle() }} title={currentSongTitle()}>
+              <Show
+                when={shouldMarqueeTitle()}
+                fallback={currentSongTitle()}
+              >
+                <span class="marquee-track">
+                  <span>{currentSongTitle()}</span>
+                  <span aria-hidden="true">{currentSongTitle()}</span>
+                </span>
+              </Show>
+            </h1>
             <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
-              <button class="listen-button" type="button" onClick={() => void startListening()}>
-                {isAudioPlaying() ? 'listening live' : 'tap to listen'}
+              <button
+                class="listen-icon-button"
+                type="button"
+                onClick={() => void startListening()}
+                aria-label={isAudioPlaying() ? 'listening live' : 'listen live'}
+                title={isAudioPlaying() ? 'listening live' : 'listen live'}
+              >
+                {isAudioPlaying() ? '•' : '▷'}
               </button>
             </Show>
+          </div>
+          <p class="subtitle nowplaying-artist-album" title={artistAlbumLine()}>{artistAlbumLine()}</p>
+          <div class="nowplaying-meta-row">
+            <div class="live-viewer-counter compact-viewer-counter" aria-live="polite">
+              <Eye size={16} />
+              <span>{viewerCountLabel()}</span>
+              <Show when={listenerDids().length > 0}>
+                <ul class="listener-avatars" aria-label="listeners">
+                  <For each={visibleListenerDids()}>
+                    {(did) => {
+                      const profile = () => profileFor(did)
+                      return (
+                        <li>
+                          <a
+                            href={`https://bsky.app/profile/${profile().handle}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            data-handle={`@${profile().handle}`}
+                          >
+                            <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
+                          </a>
+                        </li>
+                      )
+                    }}
+                  </For>
+                  <Show when={overflowListenerDids().length > 0}>
+                    <li>
+                      <button
+                        type="button"
+                        class="listener-avatar-more"
+                        aria-expanded={listenerOverflowOpen()}
+                        aria-label={`show ${overflowListenerDids().length} more listeners`}
+                        data-handle={`+${overflowListenerDids().length} more`}
+                        onClick={() => setListenerOverflowOpen((open) => !open)}
+                      >
+                        +{overflowListenerDids().length}
+                      </button>
+                    </li>
+                    <Show when={listenerOverflowOpen()}>
+                      <ul class="listener-avatars-overflow" aria-label="more listeners">
+                        <For each={overflowListenerDids()}>
+                          {(did) => {
+                            const profile = () => profileFor(did)
+                            return (
+                              <li>
+                                <a
+                                  href={`https://bsky.app/profile/${profile().handle}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
+                                  <span>{profile().displayName || `@${profile().handle}`}</span>
+                                </a>
+                              </li>
+                            )
+                          }}
+                        </For>
+                      </ul>
+                    </Show>
+                  </Show>
+                </ul>
+              </Show>
+            </div>
             <Show when={currentSong()}>
               {(song) => {
                 const profile = () => profileFor(song().addedByDid)
                 return (
-                  <a class="track-attribution" href={`https://bsky.app/profile/${profile().handle}`} target="_blank" rel="noreferrer">
+                  <a class="track-attribution" href={`https://bsky.app/profile/${profile().handle}`} target="_blank" rel="noreferrer" title={`uploaded by @${profile().handle}`}>
                     <ProfileAvatar profile={profile()} class="track-attribution-avatar" title={`@${profile().handle}`} />
                     <span>
-                      uploaded by <strong>{profile().displayName || `@${profile().handle}`}</strong>
+                      uploaded by <strong>@{profile().handle}</strong>
                     </span>
                   </a>
                 )
@@ -1018,7 +1043,20 @@ export default function RadioPage() {
               }}
             />
           </label>
-        </div>
+        </section>
+        <audio
+          ref={audioRef}
+          class="radio-audio"
+          crossOrigin="anonymous"
+          src={currentAudioUrl() ?? ''}
+          preload="auto"
+          onPlay={() => setIsAudioPlaying(true)}
+          onPause={() => setIsAudioPlaying(false)}
+          onEnded={handleAudioEnded}
+        />
+        <Show when={nextAudioUrl()}>
+          {(url) => <audio src={url()} preload="auto" crossOrigin="anonymous" aria-hidden="true" style="display:none" />}
+        </Show>
         {onMobile && chatCard()}
       </div>
 
