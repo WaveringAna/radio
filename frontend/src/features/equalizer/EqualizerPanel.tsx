@@ -195,6 +195,7 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
   let currentLoudness: { lufs: number | null; peak: number | null } = { lufs: null, peak: null }
   let persistenceTimer: number | null = null
   let visualizerFrame: number | null = null
+  let lastVisualizerUpdate = 0
 
   const scheduleEqualizerPersistence = (bands: EqualizerBand[]) => {
     if (persistenceTimer !== null) window.clearTimeout(persistenceTimer)
@@ -253,6 +254,19 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
 
   const updateVisualizer = () => {
     if (!analyser) return
+    const audioElement = getAudioElement()
+    if (!audioElement || audioElement.paused || audioElement.ended) {
+      visualizerFrame = null
+      return
+    }
+    visualizerFrame = window.requestAnimationFrame(updateVisualizer)
+
+    const now = Date.now()
+    if (now - lastVisualizerUpdate < 33) {
+      return
+    }
+    lastVisualizerUpdate = now
+
     const samples = new Uint8Array(analyser.fftSize)
     analyser.getByteTimeDomainData(samples)
     const bucketSize = Math.floor(samples.length / VISUALIZER_BAR_COUNT)
@@ -265,12 +279,18 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
       }
       return previous * 0.32 + Math.max(0.025, Math.min(1, peak * 4.2)) * 0.68
     }))
-    visualizerFrame = window.requestAnimationFrame(updateVisualizer)
   }
 
   const startVisualizer = () => {
     if (visualizerFrame === null) {
       visualizerFrame = window.requestAnimationFrame(updateVisualizer)
+    }
+  }
+
+  const stopVisualizer = () => {
+    if (visualizerFrame !== null) {
+      window.cancelAnimationFrame(visualizerFrame)
+      visualizerFrame = null
     }
   }
 
@@ -297,6 +317,10 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
       })
       const chain = [audioSource, ...equalizerFilters, normalizationGain, outputGain, analyser, audioContext.destination]
       chain.slice(0, -1).forEach((node, index) => node.connect(chain[index + 1]))
+
+      audioElement.addEventListener('play', startVisualizer)
+      audioElement.addEventListener('pause', stopVisualizer)
+      audioElement.addEventListener('ended', stopVisualizer)
     }
     if (audioContext.state === 'suspended') {
       await audioContext.resume().catch(() => undefined)
@@ -381,6 +405,12 @@ export function createEqualizerController(getAudioElement: () => HTMLAudioElemen
   onCleanup(() => {
     if (persistenceTimer !== null) window.clearTimeout(persistenceTimer)
     if (visualizerFrame !== null) window.cancelAnimationFrame(visualizerFrame)
+    const audioElement = getAudioElement()
+    if (audioElement) {
+      audioElement.removeEventListener('play', startVisualizer)
+      audioElement.removeEventListener('pause', stopVisualizer)
+      audioElement.removeEventListener('ended', stopVisualizer)
+    }
     writeEqualizerBands(equalizerBands())
     equalizerFilters.forEach((filter) => filter.disconnect())
     normalizationGain?.disconnect()

@@ -303,19 +303,11 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .route("/api/admin/permissions", get(admin::get_admin_permissions))
         .route("/api/admin/dids", post(admin::add_admin_did))
         .route("/api/admin/dids/{did}", delete(admin::remove_admin_did))
-        .route("/api/radio/albums", get(songs::get_albums).post(songs::create_album))
-        .route(
-            "/api/radio/albums/from-metadata",
-            post(songs::create_album_from_metadata),
-        )
+        .route("/api/radio/albums", get(songs::get_albums))
         .route("/api/radio/albums/{album_id}", delete(songs::delete_album))
         .route(
             "/api/radio/albums/{album_id}/enabled",
             put(songs::set_album_enabled),
-        )
-        .route(
-            "/api/radio/albums/{album_id}/songs",
-            post(songs::add_songs_to_album),
         )
         .route("/api/radio/state", get(radio::get_radio_state))
         .route("/api/radio/seek", get(radio::get_radio_seek))
@@ -334,6 +326,9 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .route("/api/radio/queue/album", post(queue::enqueue_album))
         .route("/api/radio/queue/reorder", post(queue::reorder_queue))
         .route("/api/radio/queue/{queue_id}", delete(queue::remove_queue_item))
+        .route("/api/radio/playlists", get(queue::get_playlists).post(queue::create_playlist))
+        .route("/api/radio/playlists/{playlist_id}", delete(queue::delete_playlist))
+        .route("/api/radio/playlists/{playlist_id}/load", post(queue::load_playlist))
         .route("/api/radio/control/{action}", post(radio::control_radio))
         .route("/api/songs", get(songs::get_songs).post(songs::upload_song))
         .route("/api/songs/from-url", post(upload::upload_song_from_url))

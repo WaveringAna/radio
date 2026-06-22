@@ -93,3 +93,73 @@ pub(crate) async fn reorder_queue(
         .map(Json)
         .map_err(internal_api_error)
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CreatePlaylistRequest {
+    pub(crate) name: String,
+    pub(crate) song_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LoadPlaylistRequest {
+    pub(crate) replace: bool,
+}
+
+pub(crate) async fn get_playlists(
+    State(state): State<AppState>,
+    session_token: SessionToken,
+) -> Result<Json<Vec<crate::radio::Playlist>>, (StatusCode, Json<ErrorResponse>)> {
+    let _session = admin_session(&state, session_token.0.as_deref()).await?;
+    state
+        .radio
+        .playlists()
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
+pub(crate) async fn create_playlist(
+    State(state): State<AppState>,
+    session_token: SessionToken,
+    Json(payload): Json<CreatePlaylistRequest>,
+) -> Result<Json<crate::radio::Playlist>, (StatusCode, Json<ErrorResponse>)> {
+    let _session = admin_session(&state, session_token.0.as_deref()).await?;
+    state
+        .radio
+        .create_playlist(&payload.name, &payload.song_ids)
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
+pub(crate) async fn delete_playlist(
+    State(state): State<AppState>,
+    session_token: SessionToken,
+    Path(playlist_id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let _session = admin_session(&state, session_token.0.as_deref()).await?;
+    state
+        .radio
+        .delete_playlist(&playlist_id)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(internal_api_error)
+}
+
+pub(crate) async fn load_playlist(
+    State(state): State<AppState>,
+    session_token: SessionToken,
+    Path(playlist_id): Path<String>,
+    Json(payload): Json<LoadPlaylistRequest>,
+) -> Result<Json<crate::radio::RadioSnapshot>, (StatusCode, Json<ErrorResponse>)> {
+    let session = admin_session(&state, session_token.0.as_deref()).await?;
+    state
+        .radio
+        .load_playlist(&playlist_id, payload.replace, &session.account_did)
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+

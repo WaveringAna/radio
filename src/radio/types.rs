@@ -118,12 +118,6 @@ pub(crate) enum RadioEvent {
     ViewerKeepalive,
 }
 
-/// Input for creating a new album.
-pub(crate) struct NewRadioAlbum {
-    pub(crate) title: String,
-    pub(crate) song_ids: Vec<String>,
-}
-
 /// Uploaded song input after multipart parsing.
 pub(crate) struct NewSongUpload {
     pub(crate) filename: Option<String>,
@@ -154,3 +148,15 @@ pub(crate) enum RadioControlAction {
     Skip,
     Previous,
 }
+
+/// A saved playlist/set of songs.
+#[derive(Clone, Debug, Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Playlist {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) created_at: i64,
+    #[sqlx(skip)]
+    pub(crate) tracks: Vec<Song>,
+}
+

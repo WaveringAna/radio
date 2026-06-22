@@ -20,6 +20,10 @@ import {
   reorderQueue,
   updateSongMetadata,
   uploadSongCover,
+  fetchPlaylists,
+  createPlaylist,
+  deletePlaylist,
+  loadPlaylist,
   type QueueItem,
   type RadioEvent,
   type Song,
@@ -30,7 +34,7 @@ interface QueueControlPageProps {
   isAdmin: boolean
 }
 
-type SearchMode = 'songs' | 'albums'
+type SearchMode = 'songs' | 'albums' | 'playlists'
 type LibraryAction = 'queue' | 'edit'
 
 function fallbackProfile(did: string): AtprotoProfile {
@@ -53,6 +57,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const [snapshot, { mutate, refetch }] = createResource(() => props.isAdmin, (enabled) => (enabled ? fetchRadioSnapshot() : undefined))
   const [songs, { refetch: refetchSongs }] = createResource(() => props.isAdmin, (enabled) => (enabled ? fetchSongs() : []))
   const [albums, { refetch: refetchAlbums }] = createResource(() => props.isAdmin, (enabled) => (enabled ? fetchAlbums() : []))
+  const [playlists, { refetch: refetchPlaylists }] = createResource(() => props.isAdmin, (enabled) => (enabled ? fetchPlaylists() : []))
   const [profiles, setProfiles] = createSignal<Record<string, AtprotoProfile>>({})
   const [pageError, setPageError] = createSignal<string | null>(null)
   const [songFilterTitle, setSongFilterTitle] = createSignal('')
@@ -72,6 +77,9 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const [draggingQueueId, setDraggingQueueId] = createSignal<string | null>(null)
   const [clock, setClock] = createSignal(Date.now())
   const [snapshotSyncedAt, setSnapshotSyncedAt] = createSignal(Date.now())
+  const [savingQueue, setSavingQueue] = createSignal(false)
+  const [savingSelection, setSavingSelection] = createSignal(false)
+  const [newPlaylistName, setNewPlaylistName] = createSignal('')
   const inFlightDids = new Set<string>()
   const pageSize = 8
 
@@ -169,6 +177,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const queuePaging = createPagedList(() => snapshot()?.queue ?? [], pageSize)
   const songsPaging = createPagedList(filteredSongs, pageSize)
   const albumsPaging = createPagedList(filteredAlbums, pageSize)
+  const playlistsPaging = createPagedList(() => playlists() ?? [], pageSize)
 
   createEffect(() => {
     void songFilterTitle()
@@ -226,6 +235,114 @@ export default function QueueControlPage(props: QueueControlPageProps) {
       setSelectedSongIds([])
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'multi add faceplanted.')
+    }
+  }
+
+  const genres = createMemo(() => {
+    const list = (songs() ?? [])
+      .map((song) => song.genre?.trim())
+      .filter((genre): genre is string => !!genre)
+    return [...new Set(list)].sort()
+  })
+
+  const artists = createMemo(() => {
+    const list = (songs() ?? [])
+      .map((song) => song.artist?.trim())
+      .filter((artist): artist is string => !!artist)
+    return [...new Set(list)].sort()
+  })
+
+  const shuffleLibraryByGenre = async (genre: string, replace: boolean) => {
+    if (!genre) return
+    const matchingSongIds = (songs() ?? [])
+      .filter((song) => song.genre?.toLowerCase() === genre.toLowerCase())
+      .map((song) => song.id)
+    if (matchingSongIds.length === 0) return
+
+    const shuffled = [...matchingSongIds].sort(() => Math.random() - 0.5)
+
+    try {
+      setPageError(null)
+      if (replace) {
+        await clearQueue()
+      }
+      mutate(await enqueueAlbum(shuffled))
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'shuffle genre failed')
+    }
+  }
+
+  const shuffleLibraryByArtist = async (artist: string, replace: boolean) => {
+    if (!artist) return
+    const matchingSongIds = (songs() ?? [])
+      .filter((song) => song.artist?.toLowerCase() === artist.toLowerCase())
+      .map((song) => song.id)
+    if (matchingSongIds.length === 0) return
+
+    const shuffled = [...matchingSongIds].sort(() => Math.random() - 0.5)
+
+    try {
+      setPageError(null)
+      if (replace) {
+        await clearQueue()
+      }
+      mutate(await enqueueAlbum(shuffled))
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'shuffle artist failed')
+    }
+  }
+
+  const saveQueueAsPlaylist = async () => {
+    const name = newPlaylistName().trim()
+    if (!name) return
+    const songIds = (snapshot()?.queue ?? []).map((item) => item.songId)
+    if (songIds.length === 0) return
+
+    try {
+      setPageError(null)
+      await createPlaylist(name, songIds)
+      setNewPlaylistName('')
+      setSavingQueue(false)
+      await refetchPlaylists()
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'failed to save queue as set')
+    }
+  }
+
+  const saveSelectionAsPlaylist = async () => {
+    const name = newPlaylistName().trim()
+    if (!name) return
+    const songIds = selectedSongIds()
+    if (songIds.length === 0) return
+
+    try {
+      setPageError(null)
+      await createPlaylist(name, songIds)
+      setNewPlaylistName('')
+      setSavingSelection(false)
+      setSelectedSongIds([])
+      await refetchPlaylists()
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'failed to save selection as set')
+    }
+  }
+
+  const removePlaylist = async (id: string) => {
+    try {
+      setPageError(null)
+      await deletePlaylist(id)
+      await refetchPlaylists()
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'failed to delete set')
+    }
+  }
+
+  const loadPlaylistToQueue = async (id: string, replace: boolean) => {
+    try {
+      setPageError(null)
+      mutate(await loadPlaylist(id, replace))
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'failed to load set')
     }
   }
 
@@ -425,11 +542,33 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                   when={(snapshot()?.queue.length ?? 0) > 0}
                   fallback={<span class="qc-clear-spacer" aria-hidden="true" />}
                 >
-                  <button class="pill-button subtle qc-clear" type="button" onClick={() => void clearTheQueue()}>
-                    clear ({snapshot()?.queue.length})
-                  </button>
+                  <div class="queue-action-buttons">
+                    <button class="pill-button subtle" type="button" onClick={() => { setSavingQueue(!savingQueue()); setNewPlaylistName(''); }}>
+                      {savingQueue() ? 'cancel' : 'save set'}
+                    </button>
+                    <button class="pill-button subtle qc-clear" type="button" onClick={() => void clearTheQueue()}>
+                      clear ({snapshot()?.queue.length})
+                    </button>
+                  </div>
                 </Show>
               </div>
+
+              <Show when={savingQueue()}>
+                <div class="playlist-save-inline">
+                  <input
+                    type="text"
+                    placeholder="name your playlist/set"
+                    value={newPlaylistName()}
+                    onInput={(event) => setNewPlaylistName(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void saveQueueAsPlaylist()
+                    }}
+                  />
+                  <button class="pill-button" type="button" disabled={!newPlaylistName().trim()} onClick={() => void saveQueueAsPlaylist()}>
+                    save
+                  </button>
+                </div>
+              </Show>
             </section>
 
             <section class="qc-queue">
@@ -457,7 +596,9 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
             <section class="library-control-card">
               <div class="section-heading">
-                <p class="eyebrow">library · {searchMode() === 'songs' ? filteredSongs().length : filteredAlbums().length}</p>
+                <p class="eyebrow">
+                  library · {searchMode() === 'songs' ? filteredSongs().length : searchMode() === 'albums' ? filteredAlbums().length : (playlists() ?? []).length}
+                </p>
                 <div class="upload-mode-tabs library-tabs" role="tablist" aria-label="library search mode">
                   <button class="pill-button" classList={{ subtle: searchMode() !== 'songs' }} type="button" role="tab" aria-selected={searchMode() === 'songs'} onClick={() => setSearchMode('songs')}>
                     songs
@@ -472,6 +613,17 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                     onClick={() => setSearchMode('albums')}
                   >
                     albums
+                  </button>
+                  <button
+                    class="pill-button"
+                    classList={{ subtle: searchMode() !== 'playlists' }}
+                    type="button"
+                    role="tab"
+                    aria-selected={searchMode() === 'playlists'}
+                    disabled={libraryAction() === 'edit'}
+                    onClick={() => setSearchMode('playlists')}
+                  >
+                    sets
                   </button>
                   <button
                     class="pill-button"
@@ -491,6 +643,39 @@ export default function QueueControlPage(props: QueueControlPageProps) {
               </div>
 
               <Show when={searchMode() === 'songs'}>
+                <div class="qc-shuffle-bar">
+                  <div class="qc-shuffle-select-wrapper">
+                    <label>shuffle genre</label>
+                    <select onChange={(event) => {
+                      const val = event.currentTarget.value
+                      if (val) {
+                        void shuffleLibraryByGenre(val, true)
+                        event.currentTarget.value = ''
+                      }
+                    }}>
+                      <option value="">select genre...</option>
+                      <For each={genres()}>
+                        {(genre) => <option value={genre}>{genre}</option>}
+                      </For>
+                    </select>
+                  </div>
+                  <div class="qc-shuffle-select-wrapper">
+                    <label>shuffle artist</label>
+                    <select onChange={(event) => {
+                      const val = event.currentTarget.value
+                      if (val) {
+                        void shuffleLibraryByArtist(val, true)
+                        event.currentTarget.value = ''
+                      }
+                    }}>
+                      <option value="">select artist...</option>
+                      <For each={artists()}>
+                        {(artist) => <option value={artist}>{artist}</option>}
+                      </For>
+                    </select>
+                  </div>
+                </div>
+
                 <div class="song-filters song-filters-wide">
                   <input placeholder="title" value={songFilterTitle()} onInput={(event) => setSongFilterTitle(event.currentTarget.value)} />
                   <input placeholder="artist" value={songFilterArtist()} onInput={(event) => setSongFilterArtist(event.currentTarget.value)} />
@@ -502,10 +687,29 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                     <button class="pill-button" type="button" onClick={() => void addSelectedToQueue()}>
                       add {selectedSongIds().length} to queue
                     </button>
+                    <button class="pill-button subtle" type="button" onClick={() => { setSavingSelection(!savingSelection()); setNewPlaylistName(''); }}>
+                      {savingSelection() ? 'cancel' : 'save as set'}
+                    </button>
                     <button class="pill-button subtle" type="button" onClick={() => setSelectedSongIds([])}>
-                      clear selection
+                      clear
                     </button>
                   </div>
+                  <Show when={savingSelection()}>
+                    <div class="playlist-save-inline">
+                      <input
+                        type="text"
+                        placeholder="name your set"
+                        value={newPlaylistName()}
+                        onInput={(event) => setNewPlaylistName(event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') void saveSelectionAsPlaylist()
+                        }}
+                      />
+                      <button class="pill-button" type="button" disabled={!newPlaylistName().trim()} onClick={() => void saveSelectionAsPlaylist()}>
+                        save
+                      </button>
+                    </div>
+                  </Show>
                 </Show>
                 <Show when={!songs.loading} fallback={<p class="list-empty">loading songs...</p>}>
                   <ul class="song-list" classList={{ 'library-edit-list': libraryAction() === 'edit' }}>
@@ -611,6 +815,50 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                   </ul>
                   <Show when={albumsPaging.pageCount() > 1}>
                     <PaginationRow page={albumsPaging.page()} pageCount={albumsPaging.pageCount()} onPageChange={albumsPaging.setPage} />
+                  </Show>
+                </Show>
+              </Show>
+
+              <Show when={searchMode() === 'playlists'}>
+                <Show when={!playlists.loading} fallback={<p class="list-empty">loading sets...</p>}>
+                  <ul class="playlist-list">
+                    <For each={playlistsPaging.paged()} fallback={<li class="list-empty">no sets saved yet</li>}>
+                      {(playlist) => (
+                        <li class="playlist-card-item">
+                          <div class="playlist-item-header">
+                            <span class="playlist-item-title">{playlist.name}</span>
+                            <div class="playlist-item-actions">
+                              <button class="pill-button subtle" type="button" onClick={() => void loadPlaylistToQueue(playlist.id, true)}>
+                                play
+                              </button>
+                              <button class="pill-button subtle" type="button" onClick={() => void loadPlaylistToQueue(playlist.id, false)}>
+                                append
+                              </button>
+                              <button class="pill-button subtle danger-button" type="button" aria-label="delete playlist" onClick={() => void removePlaylist(playlist.id)}>
+                                delete
+                              </button>
+                            </div>
+                          </div>
+                          <div class="playlist-item-meta">
+                            <small class="playlist-track-count">{playlist.tracks.length} tracks</small>
+                          </div>
+                          <div class="playlist-track-list">
+                            <For each={playlist.tracks}>
+                              {(track, idx) => (
+                                <div class="playlist-track-item">
+                                  <span class="track-num">{idx() + 1}</span>
+                                  <span class="track-title" title={track.title}>{track.title}</span>
+                                  <span class="track-artist" title={track.artist}>{track.artist}</span>
+                                </div>
+                              )}
+                            </For>
+                          </div>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                  <Show when={playlistsPaging.pageCount() > 1}>
+                    <PaginationRow page={playlistsPaging.page()} pageCount={playlistsPaging.pageCount()} onPageChange={playlistsPaging.setPage} />
                   </Show>
                 </Show>
               </Show>

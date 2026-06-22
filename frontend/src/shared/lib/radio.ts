@@ -744,3 +744,56 @@ export async function controlRadio(
 
   return (await response.json()) as RadioSnapshot
 }
+
+export interface Playlist {
+  id: string
+  name: string
+  createdAt: number
+  tracks: Song[]
+}
+
+export async function fetchPlaylists(): Promise<Playlist[]> {
+  const response = await fetch(`${API_BASE}/api/radio/playlists`, { credentials: 'include', headers: authHeaders() })
+  if (!response.ok) {
+    throw new Error('failed to load playlists')
+  }
+  return (await response.json()) as Playlist[]
+}
+
+export async function createPlaylist(name: string, songIds: string[]): Promise<Playlist> {
+  const response = await fetch(`${API_BASE}/api/radio/playlists`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    credentials: 'include',
+    body: JSON.stringify({ name, songIds }),
+  })
+  if (!response.ok) {
+    throw new Error('failed to create playlist')
+  }
+  return (await response.json()) as Playlist
+}
+
+export async function deletePlaylist(playlistId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/radio/playlists/${playlistId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+    headers: authHeaders(),
+  })
+  if (!response.ok) {
+    throw new Error('failed to delete playlist')
+  }
+}
+
+export async function loadPlaylist(playlistId: string, replace: boolean): Promise<RadioSnapshot> {
+  const response = await fetch(`${API_BASE}/api/radio/playlists/${playlistId}/load`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    credentials: 'include',
+    body: JSON.stringify({ replace }),
+  })
+  if (!response.ok) {
+    throw new Error('failed to load playlist into queue')
+  }
+  return (await response.json()) as RadioSnapshot
+}
+

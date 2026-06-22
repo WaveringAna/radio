@@ -219,10 +219,6 @@ export function FileUploadForm(props: FileUploadFormProps) {
         uploadedSongIds.push(song.id)
       }
 
-      if (uploadKind() === 'album') {
-        await createAlbum({ title: albumLoopTitle || 'album upload', songIds: uploadedSongIds })
-      }
-
       setTitle('')
       setArtist('')
       setAlbumTitle('')

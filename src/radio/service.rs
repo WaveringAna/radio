@@ -135,6 +135,136 @@ impl RadioService {
         Ok(updated)
     }
 
+    /// Automatically generates or updates album loops from song metadata.
+    pub(crate) async fn auto_sync_albums(&self) -> anyhow::Result<()> {
+        #[derive(FromRow)]
+        struct AlbumSongInfo {
+            id: String,
+            album: Option<String>,
+        }
+
+        let songs = sqlx::query_as::<_, AlbumSongInfo>(
+            r#"
+            select id, album
+            from songs
+            where album is not null and trim(album) != ''
+            order by created_at asc, title asc
+            "#,
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .context("loading all songs with albums for sync")?;
+
+        let mut grouped: std::collections::HashMap<String, (String, Vec<String>)> = std::collections::HashMap::new();
+        for song in songs {
+            if let Some(album) = song.album {
+                let album_name = album.trim().to_owned();
+                if !album_name.is_empty() {
+                    let key = album_name.to_lowercase();
+                    let entry = grouped.entry(key).or_insert_with(|| (album_name.clone(), Vec::new()));
+                    entry.1.push(song.id);
+                }
+            }
+        }
+
+        let mut tx = self
+            .db
+            .pool()
+            .begin()
+            .await
+            .context("starting auto-sync transaction")?;
+
+        for (key, (album_name, song_ids)) in grouped {
+            // Check if an album with this title exists (case-insensitively).
+            #[derive(FromRow)]
+            struct ExistingAlbum {
+                id: String,
+            }
+            let existing = sqlx::query_as::<_, ExistingAlbum>(
+                "select id from radio_albums where lower(title) = ? limit 1"
+            )
+            .bind(&key)
+            .fetch_optional(&mut *tx)
+            .await
+            .context("checking for existing album")?;
+
+            let album_id = if let Some(row) = existing {
+                // Keep the existing ID but update the title/casing if needed.
+                sqlx::query("update radio_albums set title = ? where id = ?")
+                    .bind(&album_name)
+                    .bind(&row.id)
+                    .execute(&mut *tx)
+                    .await
+                    .context("updating existing album title")?;
+                row.id
+            } else {
+                let id = Uuid::new_v4().to_string();
+                let position = sqlx::query_scalar::<_, Option<i64>>(
+                    "select max(position) from radio_albums"
+                )
+                .fetch_one(&mut *tx)
+                .await
+                .context("loading max album position")?
+                .unwrap_or(0)
+                + 1;
+
+                sqlx::query("insert into radio_albums (id, title, position) values (?, ?, ?)")
+                    .bind(&id)
+                    .bind(&album_name)
+                    .bind(position)
+                    .execute(&mut *tx)
+                    .await
+                    .context("inserting new auto-generated album")?;
+                id
+            };
+
+            // Sync tracks for this album.
+            sqlx::query("delete from radio_album_tracks where album_id = ?")
+                .bind(&album_id)
+                .execute(&mut *tx)
+                .await
+                .context("clearing album tracks for sync")?;
+
+            for (index, song_id) in song_ids.iter().enumerate() {
+                sqlx::query(
+                    "insert into radio_album_tracks (album_id, song_id, position) values (?, ?, ?)"
+                )
+                .bind(&album_id)
+                .bind(song_id)
+                .bind(index as i64 + 1)
+                .execute(&mut *tx)
+                .await
+                .context("inserting album track")?;
+            }
+        }
+
+        // Delete any empty albums.
+        sqlx::query(
+            "delete from radio_albums where id not in (select distinct album_id from radio_album_tracks)"
+        )
+        .execute(&mut *tx)
+        .await
+        .context("deleting empty albums")?;
+
+        // Clean up radio_loop_state if its cursor points to a deleted album.
+        sqlx::query(
+            r#"
+            update radio_loop_state
+            set last_album_id = null, last_track_position = 0
+            where last_album_id is not null
+              and last_album_id not in (select id from radio_albums)
+            "#
+        )
+        .execute(&mut *tx)
+        .await
+        .context("cleaning up invalid radio_loop_state cursor")?;
+
+        tx.commit().await.context("committing auto-sync transaction")?;
+
+        Ok(())
+    }
+
+
     /// Measures and stores loudness for every song missing a `loudness_lufs` value.
     pub(crate) async fn backfill_missing_loudness_on_boot(&self) -> anyhow::Result<usize> {
         #[derive(FromRow)]
@@ -178,155 +308,173 @@ impl RadioService {
         album_loops(&self.db).await
     }
 
-    /// Creates an album loop from explicit song ids.
-    pub(crate) async fn create_album(&self, album: NewRadioAlbum) -> anyhow::Result<RadioAlbum> {
-        let song_ids: Vec<String> = album
-            .song_ids
-            .into_iter()
+
+    /// Lists all saved playlists.
+    pub(crate) async fn playlists(&self) -> anyhow::Result<Vec<Playlist>> {
+        let mut playlists = sqlx::query_as::<_, Playlist>(
+            r#"
+            select id, name, created_at
+            from playlists
+            order by created_at desc
+            "#,
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .context("listing playlists")?;
+
+        for playlist in &mut playlists {
+            let tracks = sqlx::query_as::<_, Song>(
+                r#"
+                select s.id, s.title, s.artist, s.album, s.genre, s.duration_seconds, s.mime_type,
+                    s.cover_path is not null as has_cover, s.added_by_did, s.created_at,
+                    s.loudness_lufs, s.loudness_peak
+                from playlist_tracks pt
+                join songs s on s.id = pt.song_id
+                where pt.playlist_id = ?
+                order by pt.position asc
+                "#,
+            )
+            .bind(&playlist.id)
+            .fetch_all(self.db.pool())
+            .await
+            .context("loading playlist tracks")?;
+            playlist.tracks = tracks;
+        }
+
+        Ok(playlists)
+    }
+
+    /// Creates a new playlist from explicit song ids.
+    pub(crate) async fn create_playlist(&self, name: &str, song_ids: &[String]) -> anyhow::Result<Playlist> {
+        let song_ids: Vec<String> = song_ids
+            .iter()
             .map(|song_id| song_id.trim().to_owned())
             .filter(|song_id| !song_id.is_empty())
             .collect();
         if song_ids.is_empty() {
-            return Err(anyhow!("album needs at least one song"));
+            return Err(anyhow!("playlist needs at least one song"));
+        }
+
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(anyhow!("playlist name is required"));
         }
 
         let id = Uuid::new_v4().to_string();
-        let position =
-            sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_albums")
-                .fetch_one(self.db.pool())
-                .await
-                .context("loading max album position")?
-                .unwrap_or(0)
-                + 1;
-        let title = album.title.trim();
-        if title.is_empty() {
-            return Err(anyhow!("album title is required"));
-        }
-
         let mut tx = self
             .db
             .pool()
             .begin()
             .await
-            .context("starting album transaction")?;
-        sqlx::query("insert into radio_albums (id, title, position) values (?, ?, ?)")
+            .context("starting playlist transaction")?;
+
+        sqlx::query("insert into playlists (id, name) values (?, ?)")
             .bind(&id)
-            .bind(title)
-            .bind(position)
+            .bind(name)
             .execute(&mut *tx)
             .await
-            .context("creating album")?;
+            .context("creating playlist")?;
+
         for (index, song_id) in song_ids.iter().enumerate() {
             sqlx::query(
-                "insert into radio_album_tracks (album_id, song_id, position) values (?, ?, ?)",
+                "insert into playlist_tracks (playlist_id, song_id, position) values (?, ?, ?)",
             )
             .bind(&id)
             .bind(song_id)
             .bind(index as i64 + 1)
             .execute(&mut *tx)
             .await
-            .context("adding album track")?;
+            .context("adding playlist track")?;
         }
-        tx.commit().await.context("committing album")?;
-        tracing::info!(album_id = %id, title, song_count = song_ids.len(), "album created");
-        self.albums()
+
+        tx.commit().await.context("committing playlist")?;
+        tracing::info!(playlist_id = %id, name, song_count = song_ids.len(), "playlist created");
+
+        self.playlists()
             .await?
             .into_iter()
-            .find(|album| album.id == id)
-            .ok_or_else(|| anyhow!("created album disappeared"))
+            .find(|pl| pl.id == id)
+            .ok_or_else(|| anyhow!("created playlist disappeared"))
     }
 
-    /// Creates an album loop from songs with matching metadata album.
-    pub(crate) async fn create_album_from_metadata(
-        &self,
-        album_title: &str,
-    ) -> anyhow::Result<RadioAlbum> {
-        let songs = sqlx::query_as::<_, Song>(
-            r#"
-            select id, title, artist, album, genre, duration_seconds, mime_type,
-                cover_path is not null as has_cover, added_by_did, created_at,
-                loudness_lufs, loudness_peak
-            from songs
-            where album = ?
-            order by created_at asc, title asc
-            "#,
-        )
-        .bind(album_title)
-        .fetch_all(self.db.pool())
-        .await
-        .context("loading metadata album songs")?;
-
-        self.create_album(NewRadioAlbum {
-            title: album_title.to_owned(),
-            song_ids: songs.into_iter().map(|song| song.id).collect(),
-        })
-        .await
-    }
-
-    /// Deletes an album loop.
-    pub(crate) async fn delete_album(&self, album_id: &str) -> anyhow::Result<Vec<RadioAlbum>> {
-        sqlx::query("delete from radio_albums where id = ?")
-            .bind(album_id)
+    /// Deletes a playlist.
+    pub(crate) async fn delete_playlist(&self, id: &str) -> anyhow::Result<()> {
+        sqlx::query("delete from playlists where id = ?")
+            .bind(id)
             .execute(self.db.pool())
             .await
+            .context("deleting playlist")?;
+        tracing::info!(playlist_id = %id, "playlist deleted");
+        Ok(())
+    }
+
+    /// Loads playlist tracks into the queue.
+    pub(crate) async fn load_playlist(
+        &self,
+        id: &str,
+        replace: bool,
+        admin_did: &str,
+    ) -> anyhow::Result<RadioSnapshot> {
+        let song_ids = sqlx::query_scalar::<_, String>(
+            "select song_id from playlist_tracks where playlist_id = ? order by position asc"
+        )
+        .bind(id)
+        .fetch_all(self.db.pool())
+        .await
+        .context("loading playlist track IDs")?;
+
+        if song_ids.is_empty() {
+            return Err(anyhow!("playlist is empty or not found"));
+        }
+
+        if replace {
+            sqlx::query("delete from radio_queue")
+                .execute(self.db.pool())
+                .await
+                .context("clearing queue for playlist load")?;
+        }
+
+        self.enqueue_songs(&song_ids, admin_did).await
+    }
+
+
+
+    /// Deletes an album loop and clears the album field from associated songs.
+    pub(crate) async fn delete_album(&self, album_id: &str) -> anyhow::Result<Vec<RadioAlbum>> {
+        let mut tx = self
+            .db
+            .pool()
+            .begin()
+            .await
+            .context("starting delete_album transaction")?;
+
+        let album_title: Option<String> = sqlx::query_scalar("select title from radio_albums where id = ?")
+            .bind(album_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .context("finding album title for delete")?;
+
+        if let Some(title) = album_title {
+            sqlx::query("update songs set album = null where trim(album) = ? or lower(album) = ?")
+                .bind(&title)
+                .bind(title.to_lowercase())
+                .execute(&mut *tx)
+                .await
+                .context("clearing album tag from songs")?;
+        }
+
+        sqlx::query("delete from radio_albums where id = ?")
+            .bind(album_id)
+            .execute(&mut *tx)
+            .await
             .context("deleting album")?;
-        tracing::info!(album_id, "album deleted");
+
+        tx.commit().await.context("committing delete_album transaction")?;
+
+        tracing::info!(album_id, "album deleted and associated songs' album tags cleared");
         self.albums().await
     }
 
-    /// Appends songs to an existing album loop.
-    pub(crate) async fn add_songs_to_album(
-        &self,
-        album_id: &str,
-        song_ids: Vec<String>,
-    ) -> anyhow::Result<RadioAlbum> {
-        let song_ids: Vec<String> = song_ids
-            .into_iter()
-            .map(|id| id.trim().to_owned())
-            .filter(|id| !id.is_empty())
-            .collect();
-        if song_ids.is_empty() {
-            return Err(anyhow!("no songs supplied"));
-        }
-
-        let existing_ids: Vec<String> =
-            sqlx::query_scalar("select song_id from radio_album_tracks where album_id = ?")
-                .bind(album_id)
-                .fetch_all(self.db.pool())
-                .await
-                .context("loading existing tracks")?;
-
-        let max_pos: i64 = sqlx::query_scalar(
-            "select coalesce(max(position), 0) from radio_album_tracks where album_id = ?",
-        )
-        .bind(album_id)
-        .fetch_one(self.db.pool())
-        .await
-        .context("loading max track position")?;
-
-        let new_ids: Vec<String> = song_ids
-            .into_iter()
-            .filter(|id| !existing_ids.contains(id))
-            .collect();
-
-        for (offset, song_id) in new_ids.iter().enumerate() {
-            sqlx::query(
-                "insert into radio_album_tracks (album_id, song_id, position) values (?, ?, ?)",
-            )
-            .bind(album_id)
-            .bind(song_id)
-            .bind(max_pos + offset as i64 + 1)
-            .execute(self.db.pool())
-            .await
-            .context("adding track")?;
-        }
-
-        self.albums()
-            .await?
-            .into_iter()
-            .find(|a| a.id == album_id)
-            .ok_or_else(|| anyhow!("album not found"))
-    }
 
     /// Enables or disables an album loop.
     pub(crate) async fn set_album_enabled(
@@ -444,6 +592,7 @@ impl RadioService {
         let song = find_song(&self.db, song_id)
             .await?
             .ok_or_else(|| anyhow!("song not found"))?;
+        self.auto_sync_albums().await?;
         self.broadcast_snapshot().await;
         Ok(song)
     }
@@ -494,6 +643,7 @@ impl RadioService {
             .await
             .context("deleting song")?;
         tracing::info!(song_id, "song deleted");
+        self.auto_sync_albums().await?;
         let snapshot = self.snapshot().await?;
         let _ = self.events.send(RadioEvent::SnapshotChanged {
             snapshot: snapshot.clone(),
@@ -603,6 +753,7 @@ impl RadioService {
             added_to_queue = upload.add_to_queue,
             "song uploaded"
         );
+        self.auto_sync_albums().await?;
         self.broadcast_snapshot().await;
 
         tokio::spawn(measure_and_store_loudness(

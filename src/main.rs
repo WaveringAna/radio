@@ -118,6 +118,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    match radio.auto_sync_albums().await {
+        Ok(()) => tracing::info!("auto-synced album loops on boot"),
+        Err(error) => tracing::warn!(%error, "failed to auto-sync album loops on boot"),
+    }
+
     // Genre backfill hits an online metadata service per missing song, so run
     // it in the background to keep the HTTP listener responsive at boot.
     let genre_radio = radio.clone();

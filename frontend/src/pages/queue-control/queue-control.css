@@ -669,3 +669,196 @@
   outline: none;
   border-color: rgb(var(--accent-rgb) / 60%);
 }
+
+/* Playlists & Shuffle controls styling */
+.qc-shuffle-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding: 0.8rem;
+  border: 1px solid var(--hairline);
+  border-radius: 0.35rem;
+  background: rgb(var(--accent-rgb) / 3%);
+}
+
+.qc-shuffle-select-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.qc-shuffle-select-wrapper label {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  text-transform: lowercase;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.qc-shuffle-select-wrapper select {
+  height: 2.2rem;
+  padding: 0 0.5rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.qc-shuffle-select-wrapper select:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+
+.playlist-save-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--hairline);
+  border-radius: 0.35rem;
+  background: rgb(var(--accent-rgb) / 3%);
+  margin-top: 0.5rem;
+}
+
+.playlist-save-inline input {
+  flex: 1;
+  height: 2rem;
+  border: 0;
+  border-bottom: 1px solid var(--line) !important;
+  background: transparent !important;
+  color: var(--text);
+  font-size: 0.82rem;
+  padding: 0 0.4rem;
+}
+
+.playlist-save-inline input:focus {
+  outline: none;
+  border-bottom-color: var(--accent) !important;
+}
+
+.playlist-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.playlist-list li.playlist-card-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.playlist-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.playlist-item-title {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--text);
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+}
+
+.playlist-item-meta {
+  margin-top: -0.25rem;
+}
+
+.playlist-track-count {
+  font-family: var(--mono);
+  color: var(--accent);
+  font-size: 0.74rem;
+  text-transform: lowercase;
+  opacity: 0.85;
+}
+
+.playlist-track-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.6rem;
+  padding-left: 0.6rem;
+  border-left: 1px solid color-mix(in srgb, var(--accent) 30%, var(--hairline));
+}
+
+.playlist-track-item {
+  display: grid;
+  grid-template-columns: 1.5rem 1.4fr 1fr;
+  gap: 0.8rem;
+  align-items: center;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.playlist-track-item .track-num {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  opacity: 0.5;
+}
+
+.playlist-track-item .track-title {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playlist-track-item .track-artist {
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  text-align: right;
+}
+
+.playlist-item-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.playlist-item-actions .pill-button {
+  font-family: var(--mono);
+  font-size: 0.76rem !important;
+  min-height: 1.75rem !important;
+  padding: 0 0.6rem !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 0.2rem !important;
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  transition: all 0.15s ease !important;
+  cursor: pointer;
+}
+
+.playlist-item-actions .pill-button:hover {
+  border-color: var(--accent-line) !important;
+  background: rgb(var(--accent-rgb) / 6%) !important;
+  color: var(--accent) !important;
+}
+
+.playlist-item-actions .danger-button {
+  color: var(--danger) !important;
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--line)) !important;
+}
+
+.playlist-item-actions .danger-button:hover {
+  border-color: var(--danger) !important;
+  background: rgb(from var(--danger) r g b / 6%) !important;
+  color: var(--danger) !important;
+}
+
+.queue-action-buttons {
+  display: flex;
+  gap: 0.4rem;
+  justify-self: end;
+}
+

@@ -15,30 +15,11 @@ use super::helpers::{
     parse_filename_metadata, reject_unsupported_audio_upload,
 };
 use crate::metadata::fetch_online_metadata;
-use crate::radio::{NewRadioAlbum, NewSongUpload, SongFile, SongMetadataUpdate};
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct AlbumRequest {
-    pub(crate) title: String,
-    pub(crate) song_ids: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct MetadataAlbumRequest {
-    pub(crate) album: String,
-}
+use crate::radio::{NewSongUpload, SongFile, SongMetadataUpdate};
 
 #[derive(Deserialize)]
 pub(crate) struct AlbumEnabledRequest {
     pub(crate) enabled: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct AddAlbumSongsRequest {
-    pub(crate) song_ids: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -61,37 +42,6 @@ pub(crate) async fn get_albums(
     state
         .radio
         .albums()
-        .await
-        .map(Json)
-        .map_err(internal_api_error)
-}
-
-pub(crate) async fn create_album(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Json(payload): Json<AlbumRequest>,
-) -> Result<Json<crate::radio::RadioAlbum>, (StatusCode, Json<ErrorResponse>)> {
-    let _session = admin_session(&state, session_token.0.as_deref()).await?;
-    state
-        .radio
-        .create_album(NewRadioAlbum {
-            title: payload.title,
-            song_ids: payload.song_ids,
-        })
-        .await
-        .map(Json)
-        .map_err(internal_api_error)
-}
-
-pub(crate) async fn create_album_from_metadata(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Json(payload): Json<MetadataAlbumRequest>,
-) -> Result<Json<crate::radio::RadioAlbum>, (StatusCode, Json<ErrorResponse>)> {
-    let _session = admin_session(&state, session_token.0.as_deref()).await?;
-    state
-        .radio
-        .create_album_from_metadata(payload.album.trim())
         .await
         .map(Json)
         .map_err(internal_api_error)
@@ -121,21 +71,6 @@ pub(crate) async fn set_album_enabled(
     state
         .radio
         .set_album_enabled(&album_id, payload.enabled)
-        .await
-        .map(Json)
-        .map_err(internal_api_error)
-}
-
-pub(crate) async fn add_songs_to_album(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Path(album_id): Path<String>,
-    Json(payload): Json<AddAlbumSongsRequest>,
-) -> Result<Json<crate::radio::RadioAlbum>, (StatusCode, Json<ErrorResponse>)> {
-    let _session = admin_session(&state, session_token.0.as_deref()).await?;
-    state
-        .radio
-        .add_songs_to_album(&album_id, payload.song_ids)
         .await
         .map(Json)
         .map_err(internal_api_error)
