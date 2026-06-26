@@ -1,7 +1,7 @@
 import { createSignal, Show } from 'solid-js'
 import { CloudUpload } from 'lucide-solid'
 import { extractAudioMetadata, type ExtractedAudioMetadata } from '../../shared/lib/audioMetadata'
-import { createAlbum, uploadSong } from '../../shared/lib/radio'
+import { uploadSong } from '../../shared/lib/radio'
 
 interface FileUploadFormProps {
   onSongAdded: () => void

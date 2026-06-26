@@ -89,11 +89,6 @@ export type RadioEvent = {
   type: 'viewerKeepalive'
 }
 
-export interface AlbumInput {
-  title: string
-  songIds: string[]
-}
-
 export interface SongUploadInput {
   file: File
   title: string
@@ -303,45 +298,6 @@ export async function fetchAlbums(): Promise<RadioAlbum[]> {
   return (await response.json()) as RadioAlbum[]
 }
 
-/**
- * Creates an album loop from selected songs.
- * @param input Album title and ordered song ids.
- * @returns The created album loop.
- * @throws Error When the backend request fails.
- */
-export async function createAlbum(input: AlbumInput): Promise<RadioAlbum> {
-  const response = await fetch(`${API_BASE}/api/radio/albums`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify(input),
-  })
-  if (!response.ok) {
-    throw new Error('failed to create album loop')
-  }
-
-  return (await response.json()) as RadioAlbum
-}
-
-/**
- * Creates an album loop from matching song metadata.
- * @param album Album metadata value to import.
- * @returns The created album loop.
- * @throws Error When the backend request fails.
- */
-export async function createAlbumFromMetadata(album: string): Promise<RadioAlbum> {
-  const response = await fetch(`${API_BASE}/api/radio/albums/from-metadata`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify({ album }),
-  })
-  if (!response.ok) {
-    throw new Error('failed to mass add album')
-  }
-
-  return (await response.json()) as RadioAlbum
-}
 
 /**
  * Deletes an album loop.
