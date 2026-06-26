@@ -676,10 +676,9 @@
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
   margin-bottom: 1.5rem;
-  padding: 0.8rem;
-  border: 1px solid var(--hairline);
-  border-radius: 0.35rem;
-  background: rgb(var(--accent-rgb) / 3%);
+  padding: 0.8rem 0;
+  border: none;
+  background: transparent;
 }
 
 .qc-shuffle-select-wrapper {
@@ -696,19 +695,93 @@
   letter-spacing: 0.04em;
 }
 
-.qc-shuffle-select-wrapper select {
+/* Custom Searchable Dropdown styles */
+.searchable-dropdown-container {
+  position: relative;
+  width: 100%;
+}
+
+.searchable-dropdown-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.searchable-dropdown-input {
+  width: 100%;
   height: 2.2rem;
-  padding: 0 0.5rem;
+  padding: 0 1.5rem 0 0.5rem;
   border: 0;
   border-bottom: 1px solid var(--line);
   background: transparent;
   color: var(--text);
   font-size: 0.85rem;
+  font-family: inherit;
 }
 
-.qc-shuffle-select-wrapper select:focus {
+.searchable-dropdown-input:focus {
   outline: none;
   border-bottom-color: var(--accent);
+  background: rgb(var(--accent-rgb) / 4%);
+}
+
+.searchable-dropdown-arrow {
+  position: absolute;
+  right: 0.5rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  pointer-events: none;
+}
+
+.searchable-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  margin: 0.2rem 0 0 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 0.35rem;
+  max-height: 250px;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.searchable-dropdown-item {
+  padding: 0.45rem 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.searchable-dropdown-item:hover,
+.searchable-dropdown-item.active {
+  background: rgb(var(--accent-rgb) / 12%);
+  color: var(--accent);
+}
+
+.searchable-dropdown-item-muted {
+  padding: 0.45rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-style: italic;
+  border-top: 1px dashed var(--hairline);
+  background: transparent;
+}
+
+.searchable-dropdown-item-empty {
+  padding: 0.6rem 0.75rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  text-align: center;
+  font-style: italic;
 }
 
 .playlist-save-inline {

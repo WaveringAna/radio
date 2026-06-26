@@ -4,6 +4,7 @@ import { AdminUploadPanel } from '../../features/upload/AdminUploadPanel'
 import { ChatModerationPanel } from './ChatModerationPanel'
 import { PaginationRow } from '../../shared/components/PaginationRow'
 import { ProfileAvatar } from '../../shared/components/ProfileAvatar'
+import { SearchableDropdown } from '../../shared/components/SearchableDropdown'
 import { resolveAtprotoProfile, type AtprotoProfile } from '../../shared/lib/atproto'
 import {
   API_BASE,
@@ -646,33 +647,19 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                 <div class="qc-shuffle-bar">
                   <div class="qc-shuffle-select-wrapper">
                     <label>shuffle genre</label>
-                    <select onChange={(event) => {
-                      const val = event.currentTarget.value
-                      if (val) {
-                        void shuffleLibraryByGenre(val, true)
-                        event.currentTarget.value = ''
-                      }
-                    }}>
-                      <option value="">select genre...</option>
-                      <For each={genres()}>
-                        {(genre) => <option value={genre}>{genre}</option>}
-                      </For>
-                    </select>
+                    <SearchableDropdown
+                      options={genres()}
+                      placeholder="select genre..."
+                      onSelect={(val) => void shuffleLibraryByGenre(val, true)}
+                    />
                   </div>
                   <div class="qc-shuffle-select-wrapper">
                     <label>shuffle artist</label>
-                    <select onChange={(event) => {
-                      const val = event.currentTarget.value
-                      if (val) {
-                        void shuffleLibraryByArtist(val, true)
-                        event.currentTarget.value = ''
-                      }
-                    }}>
-                      <option value="">select artist...</option>
-                      <For each={artists()}>
-                        {(artist) => <option value={artist}>{artist}</option>}
-                      </For>
-                    </select>
+                    <SearchableDropdown
+                      options={artists()}
+                      placeholder="select artist..."
+                      onSelect={(val) => void shuffleLibraryByArtist(val, true)}
+                    />
                   </div>
                 </div>
 
