@@ -1,0 +1,38 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.station",
+  "description": "Public sister-radio station advertisement record served by the embedded read-only PDS.",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Singleton station advertisement for discovery.",
+      "key": "literal:self",
+      "record": {
+        "type": "object",
+        "required": ["url", "name", "updatedAt"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Public backend URL for the radio station."
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Human-readable station name."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1024,
+            "description": "Optional short station description."
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Server-declared timestamp for the current station record value."
+          }
+        }
+      }
+    }
+  }
+}

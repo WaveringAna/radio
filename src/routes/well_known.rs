@@ -1,4 +1,10 @@
-use axum::{Json, extract::State, http::header, http::StatusCode, response::{IntoResponse, Response}};
+use axum::{
+    Json,
+    extract::State,
+    http::StatusCode,
+    http::header,
+    response::{IntoResponse, Response},
+};
 
 use super::AppState;
 
@@ -39,9 +45,22 @@ pub(crate) async fn atproto_did(State(state): State<AppState>) -> Response {
 }
 
 pub(crate) async fn did_json(State(state): State<AppState>) -> Response {
-    let services: Vec<_> = state
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/did+json"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        Json(did_document(&state)),
+    )
+        .into_response()
+}
+
+pub(crate) fn did_document(state: &AppState) -> serde_json::Value {
+    let mut services: Vec<_> = state
         .service_ids
         .iter()
+        .filter(|id| id.as_str() != "#atproto_pds")
         .map(|id| {
             serde_json::json!({
                 "id": id,
@@ -51,19 +70,26 @@ pub(crate) async fn did_json(State(state): State<AppState>) -> Response {
         })
         .collect();
 
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "application/did+json"),
-            (header::CACHE_CONTROL, "no-store"),
+    services.push(serde_json::json!({
+        "id": "#atproto_pds",
+        "type": "AtprotoPersonalDataServer",
+        "serviceEndpoint": state.service_endpoint.as_str(),
+    }));
+
+    serde_json::json!({
+        "@context": [
+            "https://www.w3.org/ns/did/v1",
+            "https://w3id.org/security/multikey/v1",
         ],
-        Json(serde_json::json!({
-            "@context": ["https://www.w3.org/ns/did/v1"],
-            "id": state.service_did.as_str(),
-            "service": services,
-        })),
-    )
-        .into_response()
+        "id": state.service_did.as_str(),
+        "verificationMethod": [{
+            "id": format!("{}#atproto", state.service_did.as_str()),
+            "type": "Multikey",
+            "controller": state.service_did.as_str(),
+            "publicKeyMultibase": state.pds.public_key_multibase(),
+        }],
+        "service": services,
+    })
 }
 
 pub(crate) async fn oauth_protected_resource(

@@ -316,6 +316,18 @@ cargo fmt --all
 
 ## Related records
 
+### `pet.nkp.radio.station`
+
+Served by the embedded read-only PDS at
+`at://{SERVICE_DID}/pet.nkp.radio.station/self`. The backend exposes this
+record through unauthenticated `com.atproto.repo.describeRepo`,
+`com.atproto.repo.getRecord`, and `com.atproto.repo.listRecords` handlers.
+It also publishes a signed atproto repo through `com.atproto.sync.getRepo`,
+`com.atproto.sync.listRepos`, and replay-only `com.atproto.sync.subscribeRepos`.
+
+The record advertises `url`, `name`, optional `description`, and `updatedAt`.
+It intentionally does not publish the full song catalog.
+
 ### `pet.nkp.radio.preferences`
 
 Not an XRPC endpoint — a singleton AT Protocol record holding radio UI settings

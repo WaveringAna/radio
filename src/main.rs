@@ -32,6 +32,9 @@ struct AppConfig {
     service_did: Did<'static>,
     service_endpoint: String,
     service_ids: Vec<String>,
+    station_url: String,
+    station_name: String,
+    station_description: Option<String>,
     audio_dir: PathBuf,
 }
 
@@ -62,6 +65,13 @@ impl AppConfig {
         let service_endpoint = std::env::var("SERVICE_ENDPOINT")
             .unwrap_or_else(|_| default_service_endpoint(&app_url));
         let service_ids = service_ids_from_env();
+        let station_url = std::env::var("STATION_URL")
+            .unwrap_or_else(|_| service_endpoint.trim_end_matches('/').to_owned());
+        let station_name = std::env::var("STATION_NAME").unwrap_or_else(|_| "radio".into());
+        let station_description = std::env::var("STATION_DESCRIPTION")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
         let audio_dir = std::env::var("AUDIO_DIR").unwrap_or_else(|_| "data/audio".into());
 
         Ok(Self {
@@ -77,6 +87,9 @@ impl AppConfig {
             service_did,
             service_endpoint: service_endpoint.trim_end_matches('/').to_owned(),
             service_ids,
+            station_url: station_url.trim_end_matches('/').to_owned(),
+            station_name,
+            station_description,
             audio_dir: PathBuf::from(audio_dir),
         })
     }
@@ -106,9 +119,28 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig::from_env()?;
     let db = Database::connect(&config.database_url).await?;
     db.prepare().await?;
+    let pds_signing_key = routes::pds::load_or_create_signing_key(db.pool()).await?;
     let auth = AuthService::new(config.auth_config(), db.clone())?;
     let chat = ChatService::new(db.clone());
+    let station_updated_at = routes::pds::load_or_update_station_updated_at(
+        db.pool(),
+        &config.station_url,
+        &config.station_name,
+        config.station_description.as_deref(),
+        &rfc3339_now(),
+    )
+    .await?;
     let radio = RadioService::new(db, config.audio_dir.clone(), chat.clone());
+    let pds = routes::pds::EmbeddedPds::new(
+        &config.service_did,
+        &config.station_url,
+        &config.station_name,
+        config.station_description.as_deref(),
+        &station_updated_at,
+        &pds_signing_key,
+    )
+    .await
+    .context("initializing embedded pds repository")?;
 
     match radio.cleanup_unsupported_audio_on_boot().await {
         Ok(0) => {}
@@ -155,6 +187,8 @@ async fn main() -> anyhow::Result<()> {
             config.service_did.clone(),
             config.service_endpoint.clone(),
             config.service_ids.clone(),
+            pds,
+            config.station_url.clone(),
         ),
         &config.cors_origin,
     )
@@ -172,6 +206,8 @@ async fn main() -> anyhow::Result<()> {
         service_did = %config.service_did.as_str(),
         service_endpoint = %config.service_endpoint,
         service_ids = ?config.service_ids,
+        station_url = %config.station_url,
+        station_name = %config.station_name,
         "radio backend listening"
     );
 
@@ -214,6 +250,19 @@ fn service_ids_from_env() -> Vec<String> {
     } else {
         ids
     }
+}
+
+fn rfc3339_now() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    )
 }
 
 fn init_tracing() {

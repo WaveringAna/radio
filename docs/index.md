@@ -21,6 +21,10 @@ edit `.env` for your local url, database, admin dids, and audio directory.
 | `SERVICE_DID` | `did:web:localhost` | service DID expected as the service-auth JWT audience |
 | `SERVICE_IDS` | `#radio_xrpc` | comma-separated DID document service ids; quote values starting with `#` in `.env` |
 | `SERVICE_ENDPOINT` | `APP_URL` with `http://` rewritten to `https://` | endpoint published in `/.well-known/did.json` for PDS proxy service routing |
+| `STATION_URL` | `SERVICE_ENDPOINT` | public radio backend URL advertised by the embedded read-only PDS |
+| `STATION_NAME` | `radio` | station name advertised by the embedded read-only PDS |
+| `STATION_DESCRIPTION` | empty | optional station description advertised by the embedded read-only PDS |
+| `PDS_SIGNING_KEY_HEX` | generated and stored in sqlite | optional 32-byte secp256k1 private key hex for signing the embedded PDS repo |
 | `OAUTH_AUTHORIZATION_SERVER` | `https://bsky.social` | authorization server advertised by `/.well-known/oauth-protected-resource` |
 | `CORS_ORIGIN` | `http://127.0.0.1:5173` | allowed browser origin in dev; also used as the frontend redirect base |
 | `DATABASE_URL` | `sqlite://radio.db` | sqlite database url |

@@ -2,6 +2,7 @@ mod admin;
 mod auth;
 mod chat;
 mod helpers;
+pub(crate) mod pds;
 mod queue;
 mod radio;
 mod songs;
@@ -67,6 +68,8 @@ pub(crate) struct AppState {
     pub(crate) service_did: Did<'static>,
     pub(crate) service_endpoint: String,
     pub(crate) service_ids: Vec<String>,
+    pub(crate) pds: Arc<pds::EmbeddedPds>,
+    pub(crate) station_url: String,
     service_auth_resolver: JacquardResolver,
     viewers: ViewerTracker,
 }
@@ -80,6 +83,8 @@ impl AppState {
         service_did: Did<'static>,
         service_endpoint: String,
         service_ids: Vec<String>,
+        pds: pds::EmbeddedPds,
+        station_url: String,
     ) -> Self {
         Self {
             auth: Arc::new(auth),
@@ -88,6 +93,8 @@ impl AppState {
             service_did,
             service_endpoint,
             service_ids,
+            pds: Arc::new(pds),
+            station_url,
             service_auth_resolver: JacquardResolver::new(
                 reqwest::Client::new(),
                 ResolverOptions::default(),
@@ -300,6 +307,22 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .route("/api/oauth/start", get(auth::start_oauth))
         .route("/api/oauth/callback", get(auth::oauth_callback))
         .route("/api/session", get(auth::get_session))
+        .route(
+            "/xrpc/com.atproto.server.describeServer",
+            get(pds::describe_server),
+        )
+        .route(
+            "/xrpc/com.atproto.repo.describeRepo",
+            get(pds::describe_repo),
+        )
+        .route("/xrpc/com.atproto.repo.getRecord", get(pds::get_record))
+        .route("/xrpc/com.atproto.repo.listRecords", get(pds::list_records))
+        .route("/xrpc/com.atproto.sync.getRepo", get(pds::get_repo))
+        .route("/xrpc/com.atproto.sync.listRepos", get(pds::list_repos))
+        .route(
+            "/xrpc/com.atproto.sync.subscribeRepos",
+            get(pds::subscribe_repos),
+        )
         .route("/api/admin/permissions", get(admin::get_admin_permissions))
         .route("/api/admin/dids", post(admin::add_admin_did))
         .route("/api/admin/dids/{did}", delete(admin::remove_admin_did))
