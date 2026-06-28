@@ -1,0 +1,5 @@
+/.env
+/.env.local
+/target
+/syndication-hydrant.db
+/syndication-hydrant.db-*
