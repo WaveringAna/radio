@@ -158,6 +158,15 @@ pub(crate) struct GetRepoParams {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct SyncGetRecordParams {
+    did: String,
+    #[allow(dead_code)]
+    collection: String,
+    #[allow(dead_code)]
+    rkey: String,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct ListReposParams {
     #[allow(dead_code)]
     cursor: Option<String>,
@@ -423,6 +432,20 @@ pub(crate) async fn get_repo(
         .into_response())
 }
 
+pub(crate) async fn sync_get_record(
+    State(state): State<AppState>,
+    Query(params): Query<SyncGetRecordParams>,
+) -> XrpcResponseResult {
+    ensure_repo(&state, &params.did)?;
+
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/vnd.ipld.car")],
+        state.pds.repo_car.clone(),
+    )
+        .into_response())
+}
+
 pub(crate) async fn list_repos(
     State(state): State<AppState>,
     Query(params): Query<ListReposParams>,
@@ -497,6 +520,14 @@ fn ensure_repo(state: &AppState, repo: &str) -> Result<(), (StatusCode, Json<Xrp
             "repo not found",
         ))
     }
+}
+
+pub(crate) async fn xrpc_not_found() -> (StatusCode, Json<XrpcError>) {
+    xrpc_error(
+        StatusCode::NOT_FOUND,
+        "MethodNotFound",
+        "xrpc method not found",
+    )
 }
 
 fn station_record_map(

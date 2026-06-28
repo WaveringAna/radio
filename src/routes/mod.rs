@@ -22,21 +22,17 @@ use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, FromRequestParts},
     http::{HeaderValue, Method, StatusCode, header, request::Parts},
-    routing::{delete, get, post, put},
+    routing::{any, delete, get, post, put},
 };
 use axum_extra::extract::cookie::CookieJar;
 use jacquard::{
     identity::{JacquardResolver, resolver::ResolverOptions},
     types::did::Did,
 };
-use jacquard_axum::{
-    IntoRouter,
-    service_auth::ServiceAuth,
-};
+use jacquard_axum::{IntoRouter, service_auth::ServiceAuth};
 use radio_lexicons::pet_nkp::radio::{
     queue::list::ListRequest as QueueListRequest,
-    queue::modify::ModifyRequest as QueueModifyRequest,
-    songs::add::AddRequest as SongsAddRequest,
+    queue::modify::ModifyRequest as QueueModifyRequest, songs::add::AddRequest as SongsAddRequest,
     songs::list::ListRequest as SongsListRequest,
     songs::upload::UploadRequest as SongsUploadRequest,
 };
@@ -317,12 +313,17 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         )
         .route("/xrpc/com.atproto.repo.getRecord", get(pds::get_record))
         .route("/xrpc/com.atproto.repo.listRecords", get(pds::list_records))
+        .route(
+            "/xrpc/com.atproto.sync.getRecord",
+            get(pds::sync_get_record),
+        )
         .route("/xrpc/com.atproto.sync.getRepo", get(pds::get_repo))
         .route("/xrpc/com.atproto.sync.listRepos", get(pds::list_repos))
         .route(
             "/xrpc/com.atproto.sync.subscribeRepos",
             get(pds::subscribe_repos),
         )
+        .route("/xrpc/{*path}", any(pds::xrpc_not_found))
         .route("/api/admin/permissions", get(admin::get_admin_permissions))
         .route("/api/admin/dids", post(admin::add_admin_did))
         .route("/api/admin/dids/{did}", delete(admin::remove_admin_did))
@@ -345,23 +346,47 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
             get(chat::list_chat_bans).post(chat::create_chat_ban),
         )
         .route("/api/radio/chat/bans/{did}", delete(chat::remove_chat_ban))
-        .route("/api/radio/queue", post(queue::enqueue_song).delete(queue::clear_queue))
+        .route(
+            "/api/radio/queue",
+            post(queue::enqueue_song).delete(queue::clear_queue),
+        )
         .route("/api/radio/queue/album", post(queue::enqueue_album))
         .route("/api/radio/queue/reorder", post(queue::reorder_queue))
-        .route("/api/radio/queue/{queue_id}", delete(queue::remove_queue_item))
-        .route("/api/radio/playlists", get(queue::get_playlists).post(queue::create_playlist))
-        .route("/api/radio/playlists/{playlist_id}", delete(queue::delete_playlist))
-        .route("/api/radio/playlists/{playlist_id}/load", post(queue::load_playlist))
+        .route(
+            "/api/radio/queue/{queue_id}",
+            delete(queue::remove_queue_item),
+        )
+        .route(
+            "/api/radio/playlists",
+            get(queue::get_playlists).post(queue::create_playlist),
+        )
+        .route(
+            "/api/radio/playlists/{playlist_id}",
+            delete(queue::delete_playlist),
+        )
+        .route(
+            "/api/radio/playlists/{playlist_id}/load",
+            post(queue::load_playlist),
+        )
         .route("/api/radio/control/{action}", post(radio::control_radio))
         .route("/api/songs", get(songs::get_songs).post(songs::upload_song))
         .route("/api/songs/from-url", post(upload::upload_song_from_url))
-        .route("/api/songs/from-subsonic", post(subsonic_import::import_from_subsonic))
+        .route(
+            "/api/songs/from-subsonic",
+            post(subsonic_import::import_from_subsonic),
+        )
         .route(
             "/api/songs/from-subsonic-share",
             post(subsonic_import::import_from_subsonic_share),
         )
-        .route("/api/subsonic/search", post(subsonic_import::subsonic_search))
-        .route("/api/songs/{song_id}", put(songs::update_song).delete(songs::delete_song))
+        .route(
+            "/api/subsonic/search",
+            post(subsonic_import::subsonic_search),
+        )
+        .route(
+            "/api/songs/{song_id}",
+            put(songs::update_song).delete(songs::delete_song),
+        )
         .route("/api/songs/{song_id}/audio", get(songs::song_audio))
         .route(
             "/api/songs/{song_id}/cover",
@@ -421,10 +446,7 @@ pub(crate) async fn admin_session(
     Ok(session)
 }
 
-pub(crate) fn api_error(
-    status: StatusCode,
-    error: &str,
-) -> (StatusCode, Json<ErrorResponse>) {
+pub(crate) fn api_error(status: StatusCode, error: &str) -> (StatusCode, Json<ErrorResponse>) {
     (
         status,
         Json(ErrorResponse {
