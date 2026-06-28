@@ -298,11 +298,9 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
         .allow_credentials(true);
 
-    let api = Router::new()
-        .route("/api/health", get(well_known::health))
-        .route("/api/oauth/start", get(auth::start_oauth))
-        .route("/api/oauth/callback", get(auth::oauth_callback))
-        .route("/api/session", get(auth::get_session))
+    let xrpc_cors = CorsLayer::permissive();
+
+    let xrpc_routes = Router::new()
         .route(
             "/xrpc/com.atproto.server.describeServer",
             get(pds::describe_server),
@@ -324,6 +322,18 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
             get(pds::subscribe_repos),
         )
         .route("/xrpc/{*path}", any(pds::xrpc_not_found))
+        .merge(QueueListRequest::into_router(xrpc::xrpc_queue_list))
+        .merge(QueueModifyRequest::into_router(xrpc::xrpc_queue_modify))
+        .merge(SongsListRequest::into_router(xrpc::xrpc_songs_list))
+        .merge(SongsAddRequest::into_router(xrpc::xrpc_songs_add))
+        .merge(SongsUploadRequest::into_router(xrpc::xrpc_songs_upload))
+        .layer(xrpc_cors);
+
+    let api = Router::new()
+        .route("/api/health", get(well_known::health))
+        .route("/api/oauth/start", get(auth::start_oauth))
+        .route("/api/oauth/callback", get(auth::oauth_callback))
+        .route("/api/session", get(auth::get_session))
         .route("/api/admin/permissions", get(admin::get_admin_permissions))
         .route("/api/admin/dids", post(admin::add_admin_did))
         .route("/api/admin/dids/{did}", delete(admin::remove_admin_did))
@@ -397,11 +407,6 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
             get(songs::song_cover_thumbnail),
         )
         .route("/api/logout", post(auth::logout))
-        .merge(QueueListRequest::into_router(xrpc::xrpc_queue_list))
-        .merge(QueueModifyRequest::into_router(xrpc::xrpc_queue_modify))
-        .merge(SongsListRequest::into_router(xrpc::xrpc_songs_list))
-        .merge(SongsAddRequest::into_router(xrpc::xrpc_songs_add))
-        .merge(SongsUploadRequest::into_router(xrpc::xrpc_songs_upload))
         .layer(cors);
 
     let frontend = ServeDir::new("static").fallback(ServeFile::new("static/index.html"));
@@ -416,6 +421,7 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         )
         .nest("/rest", crate::subsonic::router())
         .merge(api)
+        .merge(xrpc_routes)
         .fallback_service(frontend)
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
         .with_state(state)
