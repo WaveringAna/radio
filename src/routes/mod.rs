@@ -298,7 +298,7 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
         .allow_credentials(true);
 
-    let xrpc_cors = CorsLayer::permissive();
+    let public_cors = CorsLayer::permissive();
 
     let xrpc_routes = Router::new()
         .route(
@@ -326,8 +326,18 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .merge(QueueModifyRequest::into_router(xrpc::xrpc_queue_modify))
         .merge(SongsListRequest::into_router(xrpc::xrpc_songs_list))
         .merge(SongsAddRequest::into_router(xrpc::xrpc_songs_add))
-        .merge(SongsUploadRequest::into_router(xrpc::xrpc_songs_upload))
-        .layer(xrpc_cors);
+        .merge(SongsUploadRequest::into_router(xrpc::xrpc_songs_upload));
+
+    let public_routes = Router::new()
+        .route("/client-metadata.json", get(well_known::client_metadata))
+        .route("/.well-known/atproto-did", get(well_known::atproto_did))
+        .route("/.well-known/did.json", get(well_known::did_json))
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(well_known::oauth_protected_resource),
+        )
+        .merge(xrpc_routes)
+        .layer(public_cors);
 
     let api = Router::new()
         .route("/api/health", get(well_known::health))
@@ -412,16 +422,9 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
     let frontend = ServeDir::new("static").fallback(ServeFile::new("static/index.html"));
 
     Router::new()
-        .route("/client-metadata.json", get(well_known::client_metadata))
-        .route("/.well-known/atproto-did", get(well_known::atproto_did))
-        .route("/.well-known/did.json", get(well_known::did_json))
-        .route(
-            "/.well-known/oauth-protected-resource",
-            get(well_known::oauth_protected_resource),
-        )
         .nest("/rest", crate::subsonic::router())
         .merge(api)
-        .merge(xrpc_routes)
+        .merge(public_routes)
         .fallback_service(frontend)
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
         .with_state(state)
