@@ -48,7 +48,7 @@ pub(crate) async fn did_json(State(state): State<AppState>) -> Response {
     (
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, "application/did+json"),
+            (header::CONTENT_TYPE, "application/json"),
             (header::CACHE_CONTROL, "no-store"),
         ],
         Json(did_document(&state)),
