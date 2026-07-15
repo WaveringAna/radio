@@ -1385,7 +1385,7 @@
   }
 }
 
-/* Redesigned UI mockup styles */
+/* Redesigned UI mockup styles using the radio page design system variables */
 
 :root {
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -1397,11 +1397,11 @@
   align-items: center;
   justify-content: space-between;
   padding: 0.5rem 1rem;
-  background: #181818;
-  border: 1px solid #282828;
+  background: var(--surface-soft);
+  border: 1px solid var(--hairline);
   border-radius: 8px;
   margin-bottom: 1rem;
-  color: #a0a0a0;
+  color: var(--muted);
   font-size: 0.8rem;
   font-family: var(--mono);
 }
@@ -1413,7 +1413,7 @@
 }
 
 .qc-station-identity-new strong {
-  color: #ffffff;
+  color: var(--text);
 }
 
 .qc-live-mark-new {
@@ -1445,17 +1445,16 @@
   width: 100%;
 }
 
-/* Now Playing Card (Top Banner) */
+/* Now Playing Card (Top Banner) - Frameless style */
 .qc-now-new {
   display: grid;
   grid-template-columns: 140px 1fr auto;
   gap: 2rem;
   align-items: center;
-  background: #181818;
-  border: 1px solid #282828;
-  border-radius: 16px;
-  padding: 24px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  padding: 1.5rem 0 2rem;
 }
 
 .qc-art-new {
@@ -1463,11 +1462,11 @@
   height: 140px;
   border-radius: 12px;
   overflow: hidden;
-  background: #242424;
+  background: var(--surface-soft);
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #333333;
+  border: 1px solid var(--line);
 }
 
 .qc-art-cover-new {
@@ -1479,7 +1478,7 @@
 .qc-art-glow-new {
   font-family: var(--mono);
   font-size: 0.8rem;
-  color: #555555;
+  color: var(--muted);
   letter-spacing: 0.1em;
 }
 
@@ -1494,7 +1493,7 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: #a0a0a0;
+  color: var(--muted);
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -1514,7 +1513,7 @@
   font-weight: 800;
   line-height: 1.1;
   letter-spacing: -0.025em;
-  color: #ffffff;
+  color: var(--text);
   margin: 0 0 0.25rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1524,13 +1523,13 @@
 .qc-now-title-empty {
   font-size: 2rem;
   font-weight: 700;
-  color: #555555;
+  color: var(--muted);
   margin: 0;
 }
 
 .qc-now-meta {
   font-size: 1.1rem;
-  color: #a0a0a0;
+  color: var(--muted);
   margin: 0 0 1.25rem;
 }
 
@@ -1545,15 +1544,16 @@
 .qc-now-progress-track {
   width: 100%;
   height: 6px;
-  background: #333333;
+  background: var(--surface-soft);
   border-radius: 3px;
   overflow: hidden;
+  border: 1px solid var(--hairline);
 }
 
 .qc-now-progress-track span {
   display: block;
   height: 100%;
-  background: #ffffff;
+  background: var(--text);
   border-radius: 3px;
   transition: width 250ms linear;
 }
@@ -1561,7 +1561,7 @@
 .qc-now-time-row {
   display: flex;
   justify-content: space-between;
-  color: #707070;
+  color: var(--muted);
   font-size: 0.8rem;
   font-family: var(--mono);
 }
@@ -1584,7 +1584,7 @@
 .qc-control-btn {
   background: transparent;
   border: none;
-  color: #a0a0a0;
+  color: var(--muted);
   cursor: pointer;
   padding: 8px;
   display: flex;
@@ -1594,7 +1594,7 @@
 }
 
 .qc-control-btn:hover {
-  color: #ffffff;
+  color: var(--accent);
   transform: scale(1.08);
 }
 
@@ -1603,16 +1603,18 @@
 }
 
 .qc-control-btn.play-circle-btn {
-  background: #ffffff;
-  color: #000000;
+  background: var(--surface-soft);
+  border: 1px solid var(--accent);
+  color: var(--accent);
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  box-shadow: 0 4px 12px rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.15);
 }
 
 .qc-control-btn.play-circle-btn:hover {
   transform: scale(1.05);
+  background: rgba(var(--accent-rgb), 0.1);
 }
 
 .qc-control-btn.play-circle-btn:active {
@@ -1626,28 +1628,29 @@
 }
 
 .qc-volume-icon {
-  color: #a0a0a0;
+  color: var(--muted);
 }
 
 .qc-volume-track {
   width: 80px;
   height: 4px;
-  background: #333333;
+  background: var(--surface-soft);
+  border: 1px solid var(--hairline);
   border-radius: 2px;
   overflow: hidden;
 }
 
 .qc-volume-fill {
   height: 100%;
-  background: #ffffff;
+  background: var(--accent);
   border-radius: 2px;
 }
 
 .qc-end-broadcast-btn {
   background: transparent;
-  border: 1px solid #333333;
+  border: 1px solid var(--line);
   border-radius: 20px;
-  color: #ffffff;
+  color: var(--accent);
   font-weight: 700;
   padding: 8px 16px;
   font-size: 0.85rem;
@@ -1656,8 +1659,8 @@
 }
 
 .qc-end-broadcast-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: #555555;
+  background: var(--surface-soft);
+  border-color: var(--accent);
   transform: scale(1.02);
 }
 
@@ -1665,22 +1668,22 @@
   transform: scale(0.97);
 }
 
-/* Two-Column container below Now Playing banner */
+/* Two-Column container below Now Playing banner - Frameless */
 .qc-columns-container {
   display: grid;
   grid-template-columns: minmax(0, 1.62fr) minmax(0, 1fr);
   gap: 2rem;
   width: 100%;
   align-items: start;
+  margin-top: 1rem;
 }
 
 .qc-column-left,
 .qc-column-right {
-  background: #181818;
-  border: 1px solid #282828;
-  border-radius: 16px;
-  padding: 24px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  box-shadow: none;
 }
 
 .qc-column-header {
@@ -1700,7 +1703,7 @@
   font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
-  color: #a0a0a0;
+  color: var(--muted);
   letter-spacing: 0.05em;
   margin: 0;
 }
@@ -1709,13 +1712,14 @@
   font-size: 1.8rem;
   font-weight: 800;
   letter-spacing: -0.02em;
-  color: #ffffff;
+  color: var(--text);
   margin: 0;
 }
 
 .qc-column-stats {
   font-size: 0.85rem;
-  color: #707070;
+  color: var(--muted);
+  font-family: var(--mono);
 }
 
 /* Search input row */
@@ -1733,24 +1737,24 @@
   left: 14px;
   top: 50%;
   transform: translateY(-50%);
-  color: #707070;
+  color: var(--muted);
 }
 
 .qc-search-input-wrapper input {
   width: 100%;
-  background: #242424;
-  border: 1px solid #333333;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px 16px 10px 42px;
-  color: #ffffff;
+  color: var(--text);
   font-size: 0.95rem;
   outline: none;
   transition: border-color 150ms var(--ease-out), background 150ms var(--ease-out);
 }
 
 .qc-search-input-wrapper input:focus {
-  border-color: #555555;
-  background: #2a2a2a;
+  border-color: var(--accent);
+  background: var(--surface);
 }
 
 /* Filter tabs row */
@@ -1763,9 +1767,9 @@
 }
 
 .qc-tab-btn {
-  background: #242424;
-  color: #a0a0a0;
-  border: 1px solid transparent;
+  background: var(--surface-soft);
+  color: var(--muted);
+  border: 1px solid var(--hairline);
   border-radius: 20px;
   padding: 8px 16px;
   font-size: 0.85rem;
@@ -1775,8 +1779,9 @@
 }
 
 .qc-tab-btn:hover {
-  background: #2a2a2a;
-  color: #ffffff;
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--line);
 }
 
 .qc-tab-btn:active {
@@ -1784,14 +1789,16 @@
 }
 
 .qc-tab-btn.active {
-  background: #ffffff;
-  color: #000000;
+  background: var(--accent);
+  color: var(--bg);
   font-weight: 700;
+  border-color: var(--accent);
 }
 
 .qc-tab-btn.add-tab-btn {
   margin-left: auto;
-  border-color: rgba(255, 255, 255, 0.15);
+  border-color: var(--accent-line);
+  color: var(--accent);
 }
 
 /* Songs List inside Left Column */
@@ -1808,7 +1815,7 @@
   align-items: center;
   gap: 1.25rem;
   padding: 12px 0;
-  border-bottom: 1px solid #282828;
+  border-bottom: 1px solid var(--hairline);
 }
 
 .qc-song-item:last-child {
@@ -1820,8 +1827,8 @@
   height: 48px;
   border-radius: 6px;
   overflow: hidden;
-  background: #242424;
-  border: 1px solid #333333;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
   flex-shrink: 0;
 }
 
@@ -1839,8 +1846,8 @@
   justify-content: center;
   font-size: 0.65rem;
   font-family: var(--mono);
-  color: #555555;
-  background: #242424;
+  color: var(--muted);
+  background: var(--surface-soft);
 }
 
 .qc-song-info {
@@ -1852,7 +1859,7 @@
 
 .qc-song-title {
   font-weight: 700;
-  color: #ffffff;
+  color: var(--text);
   font-size: 0.95rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1861,17 +1868,17 @@
 
 .qc-song-meta-line {
   font-size: 0.85rem;
-  color: #a0a0a0;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .qc-song-genre-pill {
-  background: #242424;
-  border: 1px solid #333333;
+  background: var(--surface-soft);
+  border: 1px solid var(--hairline);
   border-radius: 6px;
-  color: #a0a0a0;
+  color: var(--muted);
   font-size: 0.8rem;
   padding: 4px 10px;
   flex-shrink: 0;
@@ -1880,26 +1887,27 @@
 
 .qc-song-duration {
   font-size: 0.9rem;
-  color: #707070;
+  color: var(--muted);
   flex-shrink: 0;
   font-family: var(--mono);
 }
 
 .qc-add-btn {
-  background: #ffffff;
-  color: #000000;
+  background: var(--accent);
+  color: var(--bg);
   font-weight: 700;
   border: none;
   border-radius: 20px;
   padding: 6px 16px;
   font-size: 0.85rem;
   cursor: pointer;
-  transition: transform 120ms var(--ease-out);
+  transition: transform 120ms var(--ease-out), opacity 120ms var(--ease-out);
   flex-shrink: 0;
 }
 
 .qc-add-btn:hover {
   transform: scale(1.05);
+  opacity: 0.9;
 }
 
 .qc-add-btn:active {
@@ -1907,7 +1915,7 @@
 }
 
 .qc-queued-label {
-  color: #707070;
+  color: var(--muted);
   font-size: 0.85rem;
   font-weight: 600;
   flex-shrink: 0;
@@ -1916,7 +1924,7 @@
 .qc-more-btn {
   background: transparent;
   border: none;
-  color: #707070;
+  color: var(--muted);
   cursor: pointer;
   padding: 4px;
   font-size: 1.2rem;
@@ -1926,7 +1934,7 @@
 }
 
 .qc-more-btn:hover {
-  color: #ffffff;
+  color: var(--text);
 }
 
 /* Queue List inside Right Column */
@@ -1942,34 +1950,34 @@
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: #242424;
-  border: 1px solid #333333;
+  background: var(--surface-soft);
+  border: 1px solid var(--hairline);
   border-radius: 8px;
   padding: 12px;
   margin-bottom: 0.75rem;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
   transition: transform 150ms var(--ease-out), border-color 150ms var(--ease-out);
 }
 
 .qc-queue-item:hover {
-  border-color: #444444;
+  border-color: var(--line);
 }
 
 .qc-queue-grip {
-  color: #555555;
+  color: var(--muted);
   cursor: grab;
 }
 
 .qc-queue-index {
   width: 24px;
   height: 24px;
-  border: 1px solid #444444;
+  border: 1px solid var(--line);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 0.8rem;
-  color: #a0a0a0;
+  color: var(--muted);
   font-weight: 700;
 }
 
@@ -1982,13 +1990,13 @@
 
 .qc-queue-title {
   font-weight: 700;
-  color: #ffffff;
+  color: var(--text);
   font-size: 0.95rem;
 }
 
 .qc-queue-artist {
   font-size: 0.85rem;
-  color: #a0a0a0;
+  color: var(--muted);
 }
 
 .qc-queue-actions {
@@ -2000,7 +2008,7 @@
 .qc-arrow-btn {
   background: transparent;
   border: none;
-  color: #555555;
+  color: var(--muted);
   cursor: pointer;
   padding: 4px;
   display: flex;
@@ -2010,13 +2018,13 @@
 }
 
 .qc-arrow-btn:hover {
-  color: #ffffff;
+  color: var(--accent);
 }
 
 .qc-delete-btn {
   background: transparent;
   border: none;
-  color: #555555;
+  color: var(--muted);
   cursor: pointer;
   padding: 4px;
   display: flex;
@@ -2026,7 +2034,7 @@
 }
 
 .qc-delete-btn:hover {
-  color: #ff3333;
+  color: var(--danger);
 }
 
 /* Estimated End row */
@@ -2034,7 +2042,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-top: 1px solid #282828;
+  border-top: 1px solid var(--hairline);
   padding-top: 16px;
   margin-top: 1rem;
 }
@@ -2042,20 +2050,20 @@
 .qc-est-label {
   display: flex;
   align-items: center;
-  color: #a0a0a0;
+  color: var(--muted);
   font-size: 0.9rem;
 }
 
 .qc-est-time {
   font-size: 1.25rem;
   font-weight: 800;
-  color: #ffffff;
+  color: var(--text);
 }
 
 .qc-clear-btn {
   background: transparent;
   border: none;
-  color: #e0e0e0;
+  color: var(--muted);
   cursor: pointer;
   font-size: 0.85rem;
   font-weight: 600;
@@ -2065,7 +2073,7 @@
 }
 
 .qc-clear-btn:hover {
-  color: #ff3333;
+  color: var(--danger);
 }
 
 .qc-intake-wrapper {
