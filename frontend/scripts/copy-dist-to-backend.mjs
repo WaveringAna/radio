@@ -8,6 +8,11 @@ const frontendRoot = resolve(scriptDir, '..')
 const workspaceRoot = resolve(frontendRoot, '..')
 const destination = resolve(workspaceRoot, 'static')
 
+if (process.env.VITE_STANDALONE === 'true') {
+  console.log('standalone build detected: skipping copying files to backend static/ directory.')
+  process.exit(0)
+}
+
 // The bundle served by the Rust backend at /static must use relative URLs so it
 // works on any host. If the outer `vite build` baked in a VITE_API_BASE (e.g.
 // for an external deploy at https://radio.nekomimi.pet), redo the build here
