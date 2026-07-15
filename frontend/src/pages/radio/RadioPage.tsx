@@ -663,7 +663,23 @@ export default function RadioPage(props: RadioPageProps) {
   const currentSongTitle = () => currentSong()?.title ?? 'nothing playing yet'
   const currentSongArtist = () => currentSong()?.artist ?? 'queue something lovely'
   const artistAlbumLine = () => currentSong()?.album ? `${currentSongArtist()} · ${currentSong()?.album}` : currentSongArtist()
-  const shouldMarqueeTitle = () => currentSongTitle().length > 38
+  // Marquee only when the rendered title actually overflows its container;
+  // character counts misjudge proportional glyph widths and viewport size.
+  const [titleHeadingEl, setTitleHeadingEl] = createSignal<HTMLHeadingElement>()
+  const [titleTextEl, setTitleTextEl] = createSignal<HTMLSpanElement>()
+  const [shouldMarqueeTitle, setShouldMarqueeTitle] = createSignal(false)
+  createEffect(() => {
+    const heading = titleHeadingEl()
+    const text = titleTextEl()
+    currentSongTitle()
+    if (!heading || !text) return
+    const measure = () => setShouldMarqueeTitle(text.scrollWidth > heading.clientWidth + 1)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(heading)
+    observer.observe(text)
+    onCleanup(() => observer.disconnect())
+  })
   const viewerCountValue = () => viewerCount() ?? 0
   const viewerCountLabel = () => viewerCountValue().toString()
 
@@ -1180,16 +1196,13 @@ export default function RadioPage(props: RadioPageProps) {
         </div>
         <section class="nowplaying-details" aria-label="now playing">
           <div class="nowplaying-title-row">
-            <h1 classList={{ marquee: shouldMarqueeTitle() }} title={currentSongTitle()}>
-              <Show
-                when={shouldMarqueeTitle()}
-                fallback={currentSongTitle()}
-              >
-                <span class="marquee-track">
-                  <span>{currentSongTitle()}</span>
+            <h1 ref={setTitleHeadingEl} classList={{ marquee: shouldMarqueeTitle() }} title={currentSongTitle()}>
+              <span class="marquee-track">
+                <span ref={setTitleTextEl}>{currentSongTitle()}</span>
+                <Show when={shouldMarqueeTitle()}>
                   <span aria-hidden="true">{currentSongTitle()}</span>
-                </span>
-              </Show>
+                </Show>
+              </span>
             </h1>
             <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
               <button

@@ -358,6 +358,9 @@
   display: inline-flex;
   width: max-content;
   gap: 2.5rem;
+}
+
+h1.marquee .marquee-track {
   will-change: transform;
   animation: title-marquee 14s linear infinite;
 }
