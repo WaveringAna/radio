@@ -79,6 +79,25 @@ cargo run --release
 
 `npm --prefix frontend run build` writes the normal vite output to `frontend/dist`, then copies it into the backend `static/` directory. the rust backend serves `static/` and falls back to `static/index.html` for frontend routes.
 
+## standalone frontend build
+
+To build a standalone frontend client (e.g., to host on a static hosting provider like Wisp or Netlify without running a local backend):
+
+1. Run the build command with the standalone environment variables set:
+   ```bash
+   VITE_STANDALONE=true \
+   VITE_BASE_URL=https://radio.yourdomain.com \
+   VITE_SYNDICATION_WORKER_BASE=https://syndication.sharkgirl.pet \
+   npm --prefix frontend run build
+   ```
+
+2. Upload the output directory `frontend/dist/` to your static host.
+
+### Standalone Build Variables
+
+* `VITE_STANDALONE`: Set to `true` to enable standalone mode. This disables the local station entry and enables querying syndicated stations from the worker. It also prevents the build script from copying files into the backend `/static` directory.
+* `VITE_BASE_URL`: The public URL where this client is hosted (e.g., `https://radio.wisp.place`). Used to generate the static OAuth `client-metadata.json`.
+* `VITE_SYNDICATION_WORKER_BASE`: The HTTP base URL of the active syndication directory worker (e.g., `https://syndication.sharkgirl.pet`) to fetch live stations.
 ## useful paths
 
 - `src/` rust backend
