@@ -2,12 +2,13 @@ import { createSignal, Show } from 'solid-js'
 import { FileUploadForm } from './FileUploadForm'
 import { UrlUploadForm } from './UrlUploadForm'
 import { SubsonicPane } from './SubsonicPane'
+import type { RadioTarget } from '../../shared/lib/radio'
 
 type UploadMode = 'file' | 'url' | 'subsonic'
 
 interface AdminUploadPanelProps {
+  target?: RadioTarget
   onSongAdded: () => void
-  error: string | null
   onError: (message: string | null) => void
 }
 
@@ -20,12 +21,7 @@ export function AdminUploadPanel(props: AdminUploadPanelProps) {
   const [mode, setMode] = createSignal<UploadMode>('file')
 
   return (
-    <section class="glass-card admin-controls">
-      <div class="section-heading">
-        <p class="eyebrow">upload flow</p>
-        <span>library intake</span>
-      </div>
-
+    <section class="admin-controls">
       <div class="upload-mode-tabs">
         <button class="pill-button" classList={{ subtle: mode() !== 'file' }} type="button" onClick={() => setMode('file')}>file</button>
         <button class="pill-button" classList={{ subtle: mode() !== 'url' }} type="button" onClick={() => setMode('url')}>url</button>
@@ -33,16 +29,14 @@ export function AdminUploadPanel(props: AdminUploadPanelProps) {
       </div>
 
       <Show when={mode() === 'file'}>
-        <FileUploadForm onSongAdded={props.onSongAdded} onError={props.onError} />
+        <FileUploadForm target={props.target} onSongAdded={props.onSongAdded} onError={props.onError} />
       </Show>
       <Show when={mode() === 'url'}>
-        <UrlUploadForm onSongAdded={props.onSongAdded} onError={props.onError} />
+        <UrlUploadForm target={props.target} onSongAdded={props.onSongAdded} onError={props.onError} />
       </Show>
       <Show when={mode() === 'subsonic'}>
-        <SubsonicPane onSongAdded={props.onSongAdded} onError={props.onError} />
+        <SubsonicPane target={props.target} onSongAdded={props.onSongAdded} onError={props.onError} />
       </Show>
-
-      <Show when={props.error}>{(message) => <p class="error-copy">{message()}</p>}</Show>
     </section>
   )
 }

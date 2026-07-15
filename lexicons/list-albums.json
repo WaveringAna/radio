@@ -1,0 +1,31 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.albums.list",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "List admin-defined album loops.",
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["albums"],
+          "properties": {
+            "albums": {
+              "type": "array",
+              "items": {
+                "type": "ref",
+                "ref": "pet.nkp.radio#radioAlbum"
+              }
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" }
+      ]
+    }
+  }
+}

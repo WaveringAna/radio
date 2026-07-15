@@ -1,12 +1,11 @@
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Json, http::StatusCode};
 use serde::Deserialize;
 
-use super::{AppState, ErrorResponse, SessionToken, admin_session, api_error, internal_api_error};
 use super::helpers::{
-    extract_embedded_metadata as extract_embedded_metadata_inner,
-    is_playlist_upload, parse_filename_metadata, parse_m3u, playlist_entry_url,
-    reject_unsupported_audio_upload,
+    extract_embedded_metadata as extract_embedded_metadata_inner, is_playlist_upload,
+    parse_filename_metadata, parse_m3u, playlist_entry_url, reject_unsupported_audio_upload,
 };
+use super::{AppState, ErrorResponse, api_error, internal_api_error};
 use crate::metadata::fetch_online_metadata;
 
 #[derive(Deserialize)]
@@ -135,17 +134,6 @@ pub(crate) async fn download_with_ytdlp(url: &str) -> anyhow::Result<YtdlpResult
         duration_seconds,
         thumbnail_url,
     })
-}
-
-pub(crate) async fn upload_song_from_url(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Json(payload): Json<UrlSongRequest>,
-) -> Result<Json<crate::radio::Song>, (StatusCode, Json<ErrorResponse>)> {
-    let session = admin_session(&state, session_token.0.as_deref()).await?;
-    add_song_from_url_source(&state, &session.account_did, payload)
-        .await
-        .map(Json)
 }
 
 pub(crate) async fn add_song_from_url_source(

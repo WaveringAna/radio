@@ -1,9 +1,7 @@
 mod admin;
-mod auth;
 mod chat;
 mod helpers;
 pub(crate) mod pds;
-mod queue;
 mod radio;
 mod songs;
 mod subsonic_import;
@@ -20,34 +18,45 @@ use std::{
 use anyhow::Error;
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, FromRequestParts},
-    http::{HeaderValue, Method, StatusCode, header, request::Parts},
-    routing::{any, delete, get, post, put},
+    extract::DefaultBodyLimit,
+    http::StatusCode,
+    routing::{any, get, post},
 };
-use axum_extra::extract::cookie::CookieJar;
+use bytes::Bytes;
 use jacquard::{
     identity::{JacquardResolver, resolver::ResolverOptions},
     types::did::Did,
 };
 use jacquard_axum::{IntoRouter, service_auth::ServiceAuth};
+use k256::ecdsa::SigningKey;
 use radio_lexicons::pet_nkp::radio::{
+    admin::modify::ModifyRequest as AdminModifyRequest,
+    admin::permissions::PermissionsRequest as AdminPermissionsRequest,
+    albums::list::ListRequest as AlbumsListRequest,
+    albums::modify::ModifyRequest as AlbumsModifyRequest,
+    chat::bans::list::ListRequest as ChatBansListRequest,
+    chat::bans::modify::ModifyRequest as ChatBansModifyRequest,
+    chat::messages::modify::ModifyRequest as ChatMessagesModifyRequest,
+    chat::send::SendRequest as ChatSendRequest, control::ControlRequest,
+    playlists::list::ListRequest as PlaylistsListRequest,
+    playlists::modify::ModifyRequest as PlaylistsModifyRequest,
     queue::list::ListRequest as QueueListRequest,
     queue::modify::ModifyRequest as QueueModifyRequest, songs::add::AddRequest as SongsAddRequest,
-    songs::list::ListRequest as SongsListRequest,
+    songs::cover::CoverRequest as SongsCoverRequest, songs::list::ListRequest as SongsListRequest,
+    songs::modify::ModifyRequest as SongsModifyRequest,
     songs::upload::UploadRequest as SongsUploadRequest,
+    subsonic::import::ImportRequest as SubsonicImportRequest,
+    subsonic::search::SearchRequest as SubsonicSearchRequest,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use sqlx::SqlitePool;
+use tokio::sync::{RwLock, broadcast};
 use tower_http::{
     cors::CorsLayer,
     services::{ServeDir, ServeFile},
 };
 
-use crate::{
-    auth::{AppSession, AuthService},
-    chat::ChatService,
-    radio::RadioService,
-};
+use crate::{auth::AuthService, chat::ChatService, radio::RadioService};
 
 pub(crate) const VIEWER_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
 pub(crate) const VIEWER_KEEPALIVE_GRACE: Duration = Duration::from_secs(10);
@@ -64,8 +73,15 @@ pub(crate) struct AppState {
     pub(crate) service_did: Did<'static>,
     pub(crate) service_endpoint: String,
     pub(crate) service_ids: Vec<String>,
-    pub(crate) pds: Arc<pds::EmbeddedPds>,
+    pub(crate) station_announce_relays: Vec<String>,
+    pub(crate) pds: Arc<RwLock<pds::EmbeddedPds>>,
+    pub(crate) pds_events: broadcast::Sender<Bytes>,
+    pub(crate) pds_pool: SqlitePool,
+    pub(crate) pds_public_key_multibase: String,
+    pub(crate) pds_signing_key: Arc<SigningKey>,
     pub(crate) station_url: String,
+    pub(crate) station_name: String,
+    pub(crate) station_description: Option<String>,
     service_auth_resolver: JacquardResolver,
     viewers: ViewerTracker,
 }
@@ -79,9 +95,16 @@ impl AppState {
         service_did: Did<'static>,
         service_endpoint: String,
         service_ids: Vec<String>,
+        station_announce_relays: Vec<String>,
         pds: pds::EmbeddedPds,
+        pds_pool: SqlitePool,
+        pds_signing_key: SigningKey,
         station_url: String,
+        station_name: String,
+        station_description: Option<String>,
     ) -> Self {
+        let pds_public_key_multibase = pds.public_key_multibase().to_owned();
+        let (pds_events, _) = broadcast::channel(32);
         Self {
             auth: Arc::new(auth),
             radio: Arc::new(radio),
@@ -89,8 +112,15 @@ impl AppState {
             service_did,
             service_endpoint,
             service_ids,
-            pds: Arc::new(pds),
+            station_announce_relays,
+            pds: Arc::new(RwLock::new(pds)),
+            pds_events,
+            pds_pool,
+            pds_public_key_multibase,
+            pds_signing_key: Arc::new(pds_signing_key),
             station_url,
+            station_name,
+            station_description,
             service_auth_resolver: JacquardResolver::new(
                 reqwest::Client::new(),
                 ResolverOptions::default(),
@@ -240,38 +270,6 @@ pub(crate) enum RadioClientMessage {
     },
 }
 
-// ── Session token extraction ──
-
-/// Extracts the session token from `Authorization: Bearer <token>` header or the session cookie.
-pub(crate) struct SessionToken(pub(crate) Option<String>);
-
-impl FromRequestParts<AppState> for SessionToken {
-    type Rejection = std::convert::Infallible;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
-        let bearer = parts
-            .headers
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.strip_prefix("Bearer "))
-            .map(|s| s.to_owned());
-
-        if bearer.is_some() {
-            return Ok(SessionToken(bearer));
-        }
-
-        let jar = CookieJar::from_request_parts(parts, state).await.unwrap();
-        let token = jar
-            .get(&state.auth.config().session_cookie_name)
-            .map(|c| c.value().to_owned());
-
-        Ok(SessionToken(token))
-    }
-}
-
 // ── Common error types ──
 
 #[derive(Serialize)]
@@ -281,23 +279,7 @@ pub(crate) struct ErrorResponse {
 
 // ── Router ──
 
-pub(crate) fn app(state: AppState, app_url: &str) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(
-            app_url
-                .parse::<HeaderValue>()
-                .expect("invalid APP_URL for CORS origin"),
-        )
-        .allow_methods([
-            Method::GET,
-            Method::POST,
-            Method::PUT,
-            Method::DELETE,
-            Method::OPTIONS,
-        ])
-        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
-        .allow_credentials(true);
-
+pub(crate) fn app(state: AppState, _app_url: &str) -> Router {
     let public_cors = CorsLayer::permissive();
 
     let xrpc_routes = Router::new()
@@ -326,7 +308,34 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
         .merge(QueueModifyRequest::into_router(xrpc::xrpc_queue_modify))
         .merge(SongsListRequest::into_router(xrpc::xrpc_songs_list))
         .merge(SongsAddRequest::into_router(xrpc::xrpc_songs_add))
-        .merge(SongsUploadRequest::into_router(xrpc::xrpc_songs_upload));
+        .merge(SongsUploadRequest::into_router(xrpc::xrpc_songs_upload))
+        .merge(SongsCoverRequest::into_router(xrpc::xrpc_songs_cover))
+        .merge(SongsModifyRequest::into_router(xrpc::xrpc_songs_modify))
+        .merge(AdminPermissionsRequest::into_router(
+            xrpc::xrpc_admin_permissions_query,
+        ))
+        .merge(AdminModifyRequest::into_router(xrpc::xrpc_admin_modify))
+        .merge(ControlRequest::into_router(xrpc::xrpc_control))
+        .merge(AlbumsListRequest::into_router(xrpc::xrpc_albums_list))
+        .merge(AlbumsModifyRequest::into_router(xrpc::xrpc_albums_modify))
+        .merge(PlaylistsListRequest::into_router(xrpc::xrpc_playlists_list))
+        .merge(PlaylistsModifyRequest::into_router(
+            xrpc::xrpc_playlists_modify,
+        ))
+        .merge(ChatSendRequest::into_router(xrpc::xrpc_chat_send))
+        .merge(ChatBansListRequest::into_router(xrpc::xrpc_chat_bans_list))
+        .merge(ChatBansModifyRequest::into_router(
+            xrpc::xrpc_chat_bans_modify,
+        ))
+        .merge(ChatMessagesModifyRequest::into_router(
+            xrpc::xrpc_chat_messages_modify,
+        ))
+        .merge(SubsonicSearchRequest::into_router(
+            xrpc::xrpc_subsonic_search,
+        ))
+        .merge(SubsonicImportRequest::into_router(
+            xrpc::xrpc_subsonic_import,
+        ));
 
     let public_routes = Router::new()
         .route("/client-metadata.json", get(well_known::client_metadata))
@@ -336,123 +345,35 @@ pub(crate) fn app(state: AppState, app_url: &str) -> Router {
             "/.well-known/oauth-protected-resource",
             get(well_known::oauth_protected_resource),
         )
-        .merge(xrpc_routes)
-        .layer(public_cors);
-
-    let api = Router::new()
+        .route("/health", get(well_known::health))
         .route("/api/health", get(well_known::health))
-        .route("/api/oauth/start", get(auth::start_oauth))
-        .route("/api/oauth/callback", get(auth::oauth_callback))
-        .route("/api/session", get(auth::get_session))
-        .route("/api/admin/permissions", get(admin::get_admin_permissions))
-        .route("/api/admin/dids", post(admin::add_admin_did))
-        .route("/api/admin/dids/{did}", delete(admin::remove_admin_did))
-        .route("/api/radio/albums", get(songs::get_albums))
-        .route("/api/radio/albums/{album_id}", delete(songs::delete_album))
-        .route(
-            "/api/radio/albums/{album_id}/enabled",
-            put(songs::set_album_enabled),
-        )
         .route("/api/radio/state", get(radio::get_radio_state))
         .route("/api/radio/seek", get(radio::get_radio_seek))
         .route("/api/radio/ws", get(radio::radio_ws))
         .route("/api/radio/chat/ws", get(chat::chat_ws))
         .route(
-            "/api/radio/chat/messages/{message_id}",
-            delete(chat::delete_chat_message),
+            "/api/syndication/announce",
+            post(pds::announce_station_to_relays),
         )
-        .route(
-            "/api/radio/chat/bans",
-            get(chat::list_chat_bans).post(chat::create_chat_ban),
-        )
-        .route("/api/radio/chat/bans/{did}", delete(chat::remove_chat_ban))
-        .route(
-            "/api/radio/queue",
-            post(queue::enqueue_song).delete(queue::clear_queue),
-        )
-        .route("/api/radio/queue/album", post(queue::enqueue_album))
-        .route("/api/radio/queue/reorder", post(queue::reorder_queue))
-        .route(
-            "/api/radio/queue/{queue_id}",
-            delete(queue::remove_queue_item),
-        )
-        .route(
-            "/api/radio/playlists",
-            get(queue::get_playlists).post(queue::create_playlist),
-        )
-        .route(
-            "/api/radio/playlists/{playlist_id}",
-            delete(queue::delete_playlist),
-        )
-        .route(
-            "/api/radio/playlists/{playlist_id}/load",
-            post(queue::load_playlist),
-        )
-        .route("/api/radio/control/{action}", post(radio::control_radio))
-        .route("/api/songs", get(songs::get_songs).post(songs::upload_song))
-        .route("/api/songs/from-url", post(upload::upload_song_from_url))
-        .route(
-            "/api/songs/from-subsonic",
-            post(subsonic_import::import_from_subsonic),
-        )
-        .route(
-            "/api/songs/from-subsonic-share",
-            post(subsonic_import::import_from_subsonic_share),
-        )
-        .route(
-            "/api/subsonic/search",
-            post(subsonic_import::subsonic_search),
-        )
-        .route(
-            "/api/songs/{song_id}",
-            put(songs::update_song).delete(songs::delete_song),
-        )
+        .route("/api/songs", get(songs::get_songs))
         .route("/api/songs/{song_id}/audio", get(songs::song_audio))
-        .route(
-            "/api/songs/{song_id}/cover",
-            get(songs::song_cover).put(songs::upload_song_cover),
-        )
+        .route("/api/songs/{song_id}/cover", get(songs::song_cover))
         .route(
             "/api/songs/{song_id}/cover/thumbnail",
             get(songs::song_cover_thumbnail),
         )
-        .route("/api/logout", post(auth::logout))
-        .layer(cors);
+        .route("/api/{*path}", any(well_known::api_not_found))
+        .merge(xrpc_routes)
+        .layer(public_cors);
 
     let frontend = ServeDir::new("static").fallback(ServeFile::new("static/index.html"));
 
     Router::new()
         .nest("/rest", crate::subsonic::router())
-        .merge(api)
         .merge(public_routes)
         .fallback_service(frontend)
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
         .with_state(state)
-}
-
-// ── Shared helpers ──
-
-pub(crate) async fn admin_session(
-    state: &AppState,
-    token: Option<&str>,
-) -> Result<AppSession, (StatusCode, Json<ErrorResponse>)> {
-    let session = state
-        .auth
-        .session(token)
-        .await
-        .map_err(internal_api_error)?
-        .ok_or_else(|| api_error(StatusCode::UNAUTHORIZED, "unauthenticated"))?;
-
-    if !state
-        .auth
-        .is_admin_did(&session.account_did)
-        .await
-        .map_err(internal_api_error)?
-    {
-        return Err(api_error(StatusCode::FORBIDDEN, "admin_required"));
-    }
-
-    Ok(session)
 }
 
 pub(crate) fn api_error(status: StatusCode, error: &str) -> (StatusCode, Json<ErrorResponse>) {

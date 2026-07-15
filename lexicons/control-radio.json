@@ -1,0 +1,45 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.control",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Perform an explicit admin radio playback action.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["action", "intent"],
+          "properties": {
+            "action": {
+              "type": "string",
+              "knownValues": ["play", "pause", "stop", "skip", "previous"]
+            },
+            "intent": {
+              "type": "string",
+              "knownValues": ["explicit_admin_action"]
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["snapshot"],
+          "properties": {
+            "snapshot": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#radioSnapshot"
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" }
+      ]
+    }
+  }
+}

@@ -7,7 +7,7 @@ mod radio;
 mod routes;
 mod subsonic;
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::Context;
 use auth::{AuthConfig, AuthService, parse_admin_dids};
@@ -25,13 +25,13 @@ struct AppConfig {
     bind_addr: SocketAddr,
     database_url: String,
     app_url: String,
-    cors_origin: String,
-    session_cookie_name: String,
-    session_ttl_days: i64,
+    frontend_url: String,
     admin_dids: Vec<String>,
     service_did: Did<'static>,
     service_endpoint: String,
     service_ids: Vec<String>,
+    station_announce_relays: Vec<String>,
+    station_announce_on_startup: bool,
     station_url: String,
     station_name: String,
     station_description: Option<String>,
@@ -46,18 +46,9 @@ impl AppConfig {
     fn from_env() -> anyhow::Result<Self> {
         let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".into());
         let app_url = std::env::var("APP_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".into());
-        let cors_origin =
-            std::env::var("CORS_ORIGIN").unwrap_or_else(|_| "http://127.0.0.1:5173".into());
+        let frontend_url = std::env::var("FRONTEND_URL").unwrap_or_else(|_| app_url.clone());
         let database_url =
             std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://radio.db".into());
-        let session_cookie_name =
-            std::env::var("SESSION_COOKIE_NAME").unwrap_or_else(|_| "radio_session".into());
-        let session_ttl_days = std::env::var("SESSION_TTL_DAYS")
-            .ok()
-            .map(|value| value.parse::<i64>())
-            .transpose()
-            .context("parsing SESSION_TTL_DAYS")?
-            .unwrap_or(30);
         let admin_dids = std::env::var("ADMIN_DIDS")
             .map(|value| parse_admin_dids(&value))
             .unwrap_or_default();
@@ -65,6 +56,8 @@ impl AppConfig {
         let service_endpoint = std::env::var("SERVICE_ENDPOINT")
             .unwrap_or_else(|_| default_service_endpoint(&app_url));
         let service_ids = service_ids_from_env();
+        let station_announce_relays = station_announce_relays_from_env();
+        let station_announce_on_startup = station_announce_on_startup_from_env();
         let station_url = std::env::var("STATION_URL")
             .unwrap_or_else(|_| service_endpoint.trim_end_matches('/').to_owned());
         let station_name = std::env::var("STATION_NAME").unwrap_or_else(|_| "radio".into());
@@ -80,13 +73,13 @@ impl AppConfig {
                 .with_context(|| format!("parsing BIND_ADDR {bind_addr}"))?,
             database_url,
             app_url: app_url.trim_end_matches('/').to_owned(),
-            cors_origin: cors_origin.trim_end_matches('/').to_owned(),
-            session_cookie_name,
-            session_ttl_days,
+            frontend_url: frontend_url.trim_end_matches('/').to_owned(),
             admin_dids,
             service_did,
             service_endpoint: service_endpoint.trim_end_matches('/').to_owned(),
             service_ids,
+            station_announce_relays,
+            station_announce_on_startup,
             station_url: station_url.trim_end_matches('/').to_owned(),
             station_name,
             station_description,
@@ -98,9 +91,7 @@ impl AppConfig {
     fn auth_config(&self) -> AuthConfig {
         AuthConfig {
             app_url: self.app_url.clone(),
-            frontend_url: self.cors_origin.clone(),
-            session_cookie_name: self.session_cookie_name.clone(),
-            session_ttl_days: self.session_ttl_days,
+            frontend_url: self.frontend_url.clone(),
             admin_dids: self.admin_dids.clone(),
         }
     }
@@ -109,7 +100,7 @@ impl AppConfig {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // .env.local takes precedence over .env, so a developer can drop
-    // dev-only overrides (APP_URL/CORS_ORIGIN pointing at localhost) into
+    // dev-only overrides (APP_URL/FRONTEND_URL pointing at localhost) into
     // .env.local without disturbing the prod values in .env. dotenvy only
     // sets vars that aren't already populated, so loading local first works.
     dotenvy::from_filename(".env.local").ok();
@@ -122,14 +113,31 @@ async fn main() -> anyhow::Result<()> {
     let pds_signing_key = routes::pds::load_or_create_signing_key(db.pool()).await?;
     let auth = AuthService::new(config.auth_config(), db.clone())?;
     let chat = ChatService::new(db.clone());
-    let station_updated_at = routes::pds::load_or_update_station_updated_at(
-        db.pool(),
-        &config.station_url,
-        &config.station_name,
-        config.station_description.as_deref(),
-        &rfc3339_now(),
-    )
-    .await?;
+    let pds_pool = db.pool().clone();
+    let station_now = rfc3339_now();
+    let station_has_public_announce_host = routes::pds::announce_hostname(&config.service_endpoint)
+        .or_else(|| routes::pds::announce_hostname(&config.station_url))
+        .is_some();
+    let station_updated_at =
+        if config.station_announce_on_startup && station_has_public_announce_host {
+            routes::pds::store_station_updated_at(
+                db.pool(),
+                &config.station_url,
+                &config.station_name,
+                config.station_description.as_deref(),
+                &station_now,
+            )
+            .await?
+        } else {
+            routes::pds::load_or_update_station_updated_at(
+                db.pool(),
+                &config.station_url,
+                &config.station_name,
+                config.station_description.as_deref(),
+                &station_now,
+            )
+            .await?
+        };
     let radio = RadioService::new(db, config.audio_dir.clone(), chat.clone());
     let pds = routes::pds::EmbeddedPds::new(
         &config.service_did,
@@ -187,10 +195,15 @@ async fn main() -> anyhow::Result<()> {
             config.service_did.clone(),
             config.service_endpoint.clone(),
             config.service_ids.clone(),
+            config.station_announce_relays.clone(),
             pds,
+            pds_pool,
+            pds_signing_key.clone(),
             config.station_url.clone(),
+            config.station_name.clone(),
+            config.station_description.clone(),
         ),
-        &config.cors_origin,
+        &config.frontend_url,
     )
     .layer(TraceLayer::new_for_http());
 
@@ -198,14 +211,50 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("binding backend to {}", config.bind_addr))?;
 
+    if config.station_announce_on_startup {
+        if let Some(hostname) = routes::pds::announce_hostname(&config.service_endpoint)
+            .or_else(|| routes::pds::announce_hostname(&config.station_url))
+        {
+            let relays = config.station_announce_relays.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(750)).await;
+                for report in routes::pds::request_relay_crawls(&relays, &hostname).await {
+                    if report.ok {
+                        tracing::info!(
+                            relay = %report.relay,
+                            hostname = %report.hostname,
+                            status = ?report.status,
+                            "announced station repo to relay"
+                        );
+                    } else {
+                        tracing::warn!(
+                            relay = %report.relay,
+                            hostname = %report.hostname,
+                            status = ?report.status,
+                            error = ?report.error,
+                            "failed to announce station repo to relay"
+                        );
+                    }
+                }
+            });
+        } else {
+            tracing::info!(
+                service_endpoint = %config.service_endpoint,
+                station_url = %config.station_url,
+                "skipping station relay announce without a public endpoint"
+            );
+        }
+    }
+
     tracing::info!(
         bind_addr = %config.bind_addr,
         app_url = %config.app_url,
-        cors_origin = %config.cors_origin,
+        frontend_url = %config.frontend_url,
         database_url = %config.database_url,
         service_did = %config.service_did.as_str(),
         service_endpoint = %config.service_endpoint,
         service_ids = ?config.service_ids,
+        station_announce_relays = ?config.station_announce_relays,
         station_url = %config.station_url,
         station_name = %config.station_name,
         "radio backend listening"
@@ -250,6 +299,43 @@ fn service_ids_from_env() -> Vec<String> {
     } else {
         ids
     }
+}
+
+fn station_announce_relays_from_env() -> Vec<String> {
+    let mut targets = Vec::new();
+    extend_announce_targets(
+        &mut targets,
+        &std::env::var("STATION_ANNOUNCE_RELAYS")
+            .unwrap_or_else(|_| "https://relay.fire.hose.cam".into()),
+    );
+    if let Ok(workers) = std::env::var("STATION_ANNOUNCE_WORKERS") {
+        extend_announce_targets(&mut targets, &workers);
+    }
+    targets
+}
+
+fn extend_announce_targets(targets: &mut Vec<String>, raw: &str) {
+    for target in raw
+        .split(',')
+        .map(str::trim)
+        .map(|target| target.trim_end_matches('/'))
+        .filter(|target| !target.is_empty())
+    {
+        if !targets.iter().any(|existing| existing == target) {
+            targets.push(target.to_owned());
+        }
+    }
+}
+
+fn station_announce_on_startup_from_env() -> bool {
+    !matches!(
+        std::env::var("STATION_ANNOUNCE_ON_STARTUP")
+            .unwrap_or_else(|_| "true".into())
+            .trim()
+            .to_lowercase()
+            .as_str(),
+        "0" | "false" | "off" | "no"
+    )
 }
 
 fn rfc3339_now() -> String {

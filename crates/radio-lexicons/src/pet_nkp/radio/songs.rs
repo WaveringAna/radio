@@ -4,5 +4,7 @@
 // Any manual changes will be overwritten on the next regeneration.
 
 pub mod add;
+pub mod cover;
 pub mod list;
+pub mod modify;
 pub mod upload;

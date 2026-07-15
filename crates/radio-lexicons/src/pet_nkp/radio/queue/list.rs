@@ -8,12 +8,12 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
-use crate::pet_nkp::radio::RadioSnapshot;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Deserialize, Serialize};
+use serde::{Serialize, Deserialize};
+use crate::pet_nkp::radio::RadioSnapshot;
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
@@ -22,6 +22,7 @@ pub struct ListOutput<'a> {
     #[serde(borrow)]
     pub snapshot: RadioSnapshot<'a>,
 }
+
 
 #[open_union]
 #[derive(
@@ -33,15 +34,14 @@ pub struct ListOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic,
+    IntoStatic
 )]
+
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum ListError<'a> {
     #[serde(rename = "AuthenticationRequired")]
     AuthenticationRequired(Option<CowStr<'a>>),
-    #[serde(rename = "AdminRequired")]
-    AdminRequired(Option<CowStr<'a>>),
     #[serde(rename = "InvalidRequest")]
     InvalidRequest(Option<CowStr<'a>>),
 }
@@ -51,13 +51,6 @@ impl core::fmt::Display for ListError<'_> {
         match self {
             Self::AuthenticationRequired(msg) => {
                 write!(f, "AuthenticationRequired")?;
-                if let Some(msg) = msg {
-                    write!(f, ": {}", msg)?;
-                }
-                Ok(())
-            }
-            Self::AdminRequired(msg) => {
-                write!(f, "AdminRequired")?;
                 if let Some(msg) = msg {
                     write!(f, ": {}", msg)?;
                 }

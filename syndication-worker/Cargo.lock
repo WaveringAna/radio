@@ -3378,6 +3378,7 @@ dependencies = [
  "dotenvy",
  "hydrant",
  "miette",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",

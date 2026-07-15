@@ -6,10 +6,12 @@ import {
   loadSubsonicCreds,
   saveSubsonicCreds,
   searchSubsonic,
+  type RadioTarget,
   type SubsonicSongResult,
 } from '../../shared/lib/radio'
 
 interface SubsonicPaneProps {
+  target?: RadioTarget
   onSongAdded: () => void
   onError: (message: string | null) => void
 }
@@ -35,7 +37,7 @@ export function SubsonicPane(props: SubsonicPaneProps) {
     setImportingShare(true)
     try {
       props.onError(null)
-      await importFromSubsonicShare(url, addToQueue())
+      await importFromSubsonicShare(url, addToQueue(), props.target)
       setShareUrl('')
       props.onSongAdded()
     } catch (error) {
@@ -57,7 +59,7 @@ export function SubsonicPane(props: SubsonicPaneProps) {
     }
     const timer = setTimeout(() => {
       setSearching(true)
-      void searchSubsonic({ serverUrl: creds.serverUrl, username: creds.username, password: creds.password }, q)
+      void searchSubsonic({ serverUrl: creds.serverUrl, username: creds.username, password: creds.password }, q, props.target)
         .then(setResults)
         .catch(() => setResults([]))
         .finally(() => setSearching(false))
@@ -74,6 +76,7 @@ export function SubsonicPane(props: SubsonicPaneProps) {
         result.id,
         result.coverArtId,
         addToQueue(),
+        props.target,
       )
       props.onSongAdded()
     } catch (error) {

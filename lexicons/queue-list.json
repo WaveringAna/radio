@@ -20,7 +20,6 @@
       },
       "errors": [
         { "name": "AuthenticationRequired" },
-        { "name": "AdminRequired" },
         { "name": "InvalidRequest" }
       ]
     }

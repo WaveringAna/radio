@@ -1,0 +1,42 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.chat.send",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Send a listener chat message.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["text"],
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["message"],
+          "properties": {
+            "message": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#chatMessage"
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "InvalidRequest" },
+        { "name": "Banned" }
+      ]
+    }
+  }
+}

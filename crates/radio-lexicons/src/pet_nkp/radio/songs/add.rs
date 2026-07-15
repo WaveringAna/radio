@@ -8,14 +8,14 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
-use crate::pet_nkp::radio::RadioSnapshot;
-use crate::pet_nkp::radio::Song;
-use crate::pet_nkp::radio::SongUrlSource;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Deserialize, Serialize};
+use serde::{Serialize, Deserialize};
+use crate::pet_nkp::radio::RadioSnapshot;
+use crate::pet_nkp::radio::Song;
+use crate::pet_nkp::radio::SongUrlSource;
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
@@ -25,6 +25,7 @@ pub struct Add<'a> {
     #[serde(borrow)]
     pub sources: Vec<SongUrlSource<'a>>,
 }
+
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
@@ -39,6 +40,7 @@ pub struct AddOutput<'a> {
     pub songs: Vec<Song<'a>>,
 }
 
+
 #[open_union]
 #[derive(
     Serialize,
@@ -49,8 +51,9 @@ pub struct AddOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic,
+    IntoStatic
 )]
+
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum AddError<'a> {
@@ -129,8 +132,9 @@ impl jacquard_common::xrpc::XrpcResp for AddResponse {
 
 impl<'a> jacquard_common::xrpc::XrpcRequest for Add<'a> {
     const NSID: &'static str = "pet.nkp.radio.songs.add";
-    const METHOD: jacquard_common::xrpc::XrpcMethod =
-        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
+    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
+        "application/json",
+    );
     type Response = AddResponse;
 }
 
@@ -138,15 +142,16 @@ impl<'a> jacquard_common::xrpc::XrpcRequest for Add<'a> {
 pub struct AddRequest;
 impl jacquard_common::xrpc::XrpcEndpoint for AddRequest {
     const PATH: &'static str = "/xrpc/pet.nkp.radio.songs.add";
-    const METHOD: jacquard_common::xrpc::XrpcMethod =
-        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
+    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
+        "application/json",
+    );
     type Request<'de> = Add<'de>;
     type Response = AddResponse;
 }
 
 pub mod add_state {
 
-    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
+    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {

@@ -1,0 +1,32 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.songs.cover",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Upload or replace a song cover image.",
+      "input": {
+        "encoding": "multipart/form-data"
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["song"],
+          "properties": {
+            "song": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#song"
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" },
+        { "name": "SongNotFound" }
+      ]
+    }
+  }
+}

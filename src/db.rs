@@ -5,7 +5,6 @@ use sqlx::{
     SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
 };
-use time::OffsetDateTime;
 
 const MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
@@ -48,7 +47,6 @@ impl Database {
             .run(&self.pool)
             .await
             .context("running sqlite migrations")?;
-        cleanup_expired_app_sessions(&self.pool).await?;
         Ok(())
     }
 
@@ -56,14 +54,4 @@ impl Database {
     pub(crate) fn pool(&self) -> &SqlitePool {
         &self.pool
     }
-}
-
-async fn cleanup_expired_app_sessions(pool: &SqlitePool) -> anyhow::Result<()> {
-    sqlx::query("delete from app_sessions where expires_at <= ?")
-        .bind(OffsetDateTime::now_utc().unix_timestamp())
-        .execute(pool)
-        .await
-        .context("cleaning up expired app sessions")?;
-
-    Ok(())
 }

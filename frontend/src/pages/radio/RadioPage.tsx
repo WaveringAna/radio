@@ -1,27 +1,44 @@
 import { createEffect, createResource, createSignal, For, Index, onCleanup, Show, untrack } from 'solid-js'
-import { Eye, Send, Volume2 } from 'lucide-solid'
+import { AudioLines, ChevronLeft, ChevronRight, Eye, Play, RadioTower, Send, Volume2 } from 'lucide-solid'
 import { resolveAtprotoProfile, type AtprotoProfile } from '../../shared/lib/atproto'
 import {
-  API_BASE,
   fetchRadioSnapshot,
   fetchSongs,
+  fetchSyndicatedStations,
+  canUseRadioXrpcTarget,
   getListenerOptOut,
   getRadioViewerId,
-  getSessionToken,
   MAX_CHAT_BODY_LEN,
   openChatSocket,
   openRadioSocket,
   sendChatMessage,
   sendRadioViewerHello,
   sendRadioViewerKeepalive,
+  songAudioUrl,
+  songCoverUrl,
+  SYNDICATION_WORKER_BASE,
   type ChatEvent,
   type ChatMessage,
   type QueueItem,
   type RadioEvent,
   type RadioState,
+  type RadioTarget,
   type Song,
 } from '../../shared/lib/radio'
-import { fetchSession } from '../../shared/lib/auth'
+import type { SessionResponse } from '../../shared/lib/auth'
+import {
+  labelFromStationUrl,
+  normalizeStationUrl,
+  readSelectedStationUrl,
+  selectedTuneInStationFrom,
+  stationListKey,
+  stationRadioTarget,
+  stationResourceKey as tuneInStationResourceKey,
+  TUNE_IN_CHANGED_EVENT,
+  tuneInStationsFrom,
+  writeSelectedStationUrl,
+  type TuneInStation,
+} from '../../shared/lib/stationSelection'
 import { PaginationRow } from '../../shared/components/PaginationRow'
 import { ProfileAvatar } from '../../shared/components/ProfileAvatar'
 import { SongCoverThumb } from '../../shared/components/SongCoverThumb'
@@ -44,6 +61,7 @@ const DEFAULT_ALBUM_ACCENT: AlbumAccent = {
   topWash: 'rgb(190 124 143 / 0%)',
 }
 
+const SYNDICATION_REFRESH_MS = 10_000
 function fallbackProfile(did: string): AtprotoProfile {
   return { did, handle: did }
 }
@@ -76,6 +94,10 @@ export function isMobileDevice(): boolean {
   if (/Android|iPad|iPhone|iPod|Mobi/i.test(navigator.userAgent)) return true
   // iPadOS reports as Macintosh; touch points disambiguate it from real Macs.
   return /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1
+}
+
+interface RadioPageProps {
+  session?: SessionResponse
 }
 
 function rgbToHsl(red: number, green: number, blue: number): { hue: number; saturation: number; lightness: number } {
@@ -213,9 +235,26 @@ function extractAlbumAccent(image: HTMLImageElement): AlbumAccent {
  * Renders the public listener radio view.
  * @returns The radio page view.
  */
-export default function RadioPage() {
-  const [snapshot, { mutate, refetch }] = createResource(fetchRadioSnapshot)
-  const [songs, { refetch: refetchSongs }] = createResource(fetchSongs)
+export default function RadioPage(props: RadioPageProps) {
+  const [selectedStationUrl, setSelectedStationUrl] = createSignal(readSelectedStationUrl())
+  const [syndicatedStations, { refetch: refetchSyndicatedStations }] = createResource(
+    () => SYNDICATION_WORKER_BASE || 'disabled',
+    (workerBase) => workerBase === 'disabled' ? Promise.resolve([]) : fetchSyndicatedStations(workerBase),
+  )
+  const tuneInStations = (): TuneInStation[] => tuneInStationsFrom(syndicatedStations() ?? [])
+  const selectedStation = (): TuneInStation => selectedTuneInStationFrom(tuneInStations(), selectedStationUrl())
+  const selectedApiBase = () => selectedStation().apiBase
+  const selectedStationKey = () => tuneInStationResourceKey(selectedStation())
+  const selectedRadioTarget = (): RadioTarget => stationRadioTarget(selectedStation())
+  const selectedRadioCanUseXrpc = () => canUseRadioXrpcTarget(selectedRadioTarget())
+  const canUseRadioXrpc = () => Boolean(props.session?.authenticated) && selectedRadioCanUseXrpc()
+  const stationResourceKey = () => ({
+    key: selectedStationKey(),
+    authenticated: canUseRadioXrpc(),
+    target: selectedRadioTarget(),
+  })
+  const [snapshot, { mutate, refetch }] = createResource(stationResourceKey, ({ target, authenticated }) => fetchRadioSnapshot(target, authenticated))
+  const [songs, { refetch: refetchSongs }] = createResource(stationResourceKey, ({ target, authenticated }) => fetchSongs(target, authenticated))
   const [profiles, setProfiles] = createSignal<Record<string, AtprotoProfile>>({})
   const inFlightDids = new Set<string>()
   const [volume, setVolume] = createSignal(readVolumeCookie())
@@ -229,6 +268,16 @@ export default function RadioPage() {
   let chatSocket: WebSocket | null = null
   let chatLogRef: HTMLDivElement | undefined
   const [listenerOverflowOpen, setListenerOverflowOpen] = createSignal(false)
+
+  createEffect(() => {
+    const syncSelectedStation = () => setSelectedStationUrl(readSelectedStationUrl())
+    window.addEventListener('storage', syncSelectedStation)
+    window.addEventListener(TUNE_IN_CHANGED_EVENT, syncSelectedStation)
+    onCleanup(() => {
+      window.removeEventListener('storage', syncSelectedStation)
+      window.removeEventListener(TUNE_IN_CHANGED_EVENT, syncSelectedStation)
+    })
+  })
   const MAX_VISIBLE_LISTENERS = 8
   const visibleListenerDids = () => listenerDids().slice(0, MAX_VISIBLE_LISTENERS)
   const overflowListenerDids = () => listenerDids().slice(MAX_VISIBLE_LISTENERS)
@@ -258,12 +307,49 @@ export default function RadioPage() {
   const onMobile = isMobileDevice()
   const equalizer = createEqualizerController(() => audioRef)
   const viewerId = getRadioViewerId()
-  const [session] = createResource(fetchSession)
+  let previousSelectedStationKey: string | null = null
+  let handledTuneInAutoplay = 0
+  const [tuneInAutoplayVersion, setTuneInAutoplayVersion] = createSignal(0)
+  createEffect(() => {
+    const timer = window.setInterval(() => {
+      void refetchSyndicatedStations()
+    }, SYNDICATION_REFRESH_MS)
+    onCleanup(() => window.clearInterval(timer))
+  })
+  createEffect(() => {
+    const key = selectedStationKey()
+    if (previousSelectedStationKey === null) {
+      previousSelectedStationKey = key
+      return
+    }
+    if (key === previousSelectedStationKey) return
+    previousSelectedStationKey = key
+
+    consumedQueueIds = new Set()
+    lastPlaybackKey = null
+    setLocalCurrentSong(null)
+    setLocalQueue([])
+    setViewerCount(0)
+    setListenerDids([])
+    setChatMessages([])
+    setChatDraft('')
+    setChatConnected(false)
+    setListenerOverflowOpen(false)
+    if (emptyQueueEndSyncTimer !== null) {
+      window.clearTimeout(emptyQueueEndSyncTimer)
+      emptyQueueEndSyncTimer = null
+    }
+    if (audioRef) {
+      audioRef.pause()
+      audioRef.removeAttribute('src')
+      audioRef.load()
+    }
+  })
   // Re-read on socket events so an in-tab opt-out toggle takes effect on next
   // keepalive without forcing the user to reload.
   const listenerDid = (): string | null => {
     if (getListenerOptOut()) return null
-    return session()?.accountDid ?? null
+    return props.session?.accountDid ?? null
   }
 
   const playbackKey = (state: RadioState | undefined) =>
@@ -309,7 +395,7 @@ export default function RadioPage() {
       return
     }
     if (songChanged) {
-      const expected = `${API_BASE}/api/songs/${song.id}/audio`
+      const expected = songAudioUrl(song.id, selectedApiBase())
       if (audioRef.src !== expected && !audioRef.src.endsWith(`/api/songs/${song.id}/audio`)) {
         audioRef.src = expected
         audioRef.load()
@@ -392,7 +478,7 @@ export default function RadioPage() {
 
     const connect = () => {
       if (cancelled) return
-      socket = openRadioSocket()
+      socket = openRadioSocket(selectedApiBase())
 
       socket.addEventListener('open', () => {
         reconnectAttempt = 0
@@ -455,7 +541,7 @@ export default function RadioPage() {
 
     const connect = () => {
       if (cancelled) return
-      chatSocket = openChatSocket()
+      chatSocket = openChatSocket(selectedApiBase())
 
       chatSocket.addEventListener('open', () => {
         reconnectAttempt = 0
@@ -510,15 +596,14 @@ export default function RadioPage() {
     }
   })
 
-  const canSendChat = () => Boolean(session()?.accountDid) && chatConnected()
+  const canSendChat = () => Boolean(props.session?.accountDid) && chatConnected() && selectedRadioCanUseXrpc()
 
   const submitChat = () => {
     const text = chatDraft().trim()
     if (!text) return
     if (!chatSocket || chatSocket.readyState !== WebSocket.OPEN) return
-    const token = getSessionToken()
-    if (!token) return
-    sendChatMessage(chatSocket, text.slice(0, MAX_CHAT_BODY_LEN), token)
+    void sendChatMessage(text.slice(0, MAX_CHAT_BODY_LEN), selectedRadioTarget())
+      .catch((error) => console.warn('chat send failed', error))
     setChatDraft('')
   }
 
@@ -585,7 +670,7 @@ export default function RadioPage() {
     let cancelled = false
     const image = new Image()
     image.crossOrigin = 'anonymous'
-    image.src = `${API_BASE}/api/songs/${song.id}/cover`
+    image.src = songCoverUrl(song.id, selectedApiBase())
     image.onload = () => {
       if (cancelled) return
       try {
@@ -624,13 +709,155 @@ export default function RadioPage() {
 
   const currentAudioUrl = () => {
     const songId = localCurrentSong()?.id
-    return songId ? `${API_BASE}/api/songs/${songId}/audio` : undefined
+    return songId ? songAudioUrl(songId, selectedApiBase()) : undefined
   }
   const nextAudioUrl = () => {
     const next = localQueue()[0]
-    return next ? `${API_BASE}/api/songs/${next.songId}/audio` : undefined
+    return next ? songAudioUrl(next.songId, selectedApiBase()) : undefined
   }
   const profileFor = (did: string) => profiles()[did] ?? fallbackProfile(did)
+  const selectTuneInStation = (station: TuneInStation) => {
+    const url = normalizeStationUrl(station.url)
+    if (!url) return
+    writeSelectedStationUrl(url)
+    setSelectedStationUrl(url)
+    setHasStarted(true)
+    setTuneInAutoplayVersion((version) => version + 1)
+  }
+  const isSelectedStation = (station: TuneInStation) =>
+    stationListKey(station.url) === stationListKey(selectedStation().url)
+  const stationHost = (station: TuneInStation) => labelFromStationUrl(station.url)
+  const stationSubtitle = (station: TuneInStation) => {
+    if (station.local) return 'local preview'
+
+    const name = station.name.trim()
+    const host = stationHost(station)
+    if (name && name.toLowerCase() !== host.toLowerCase() && name.toLowerCase() !== 'radio') {
+      return name
+    }
+
+    const description = station.description?.trim()
+    return description || 'public station'
+  }
+  const stationPresetName = (station: TuneInStation) => {
+    const name = station.name.trim()
+    if (name && name.toLowerCase() !== 'radio' && name.toLowerCase() !== 'this radio') return name
+    return stationHost(station)
+  }
+  const selectedStationIndex = () => {
+    const index = tuneInStations().findIndex(isSelectedStation)
+    return Math.max(0, index)
+  }
+  const stationNeedlePosition = () => {
+    const stationCount = tuneInStations().length
+    if (stationCount <= 1) return 50
+    return (selectedStationIndex() / (stationCount - 1)) * 100
+  }
+  const tuneStationBy = (offset: number, focusPreset = false) => {
+    const stations = tuneInStations()
+    if (stations.length <= 1) return
+    const nextIndex = (selectedStationIndex() + offset + stations.length) % stations.length
+    selectTuneInStation(stations[nextIndex])
+    if (focusPreset) {
+      queueMicrotask(() => {
+        document.querySelector<HTMLButtonElement>(`[data-station-preset="${nextIndex}"]`)?.focus()
+      })
+    }
+  }
+  const tuneInStatus = () => {
+    if (syndicatedStations.loading) return 'scanning'
+    return `${tuneInStations().length} live`
+  }
+  const tuneInCard = () => (
+    <section class="glass-card tune-in-card">
+      <div class="section-heading">
+        <p class="eyebrow">tuner</p>
+        <span>{tuneInStatus()}</span>
+      </div>
+      <div class="station-tuner-readout" title={selectedStation().url}>
+        <span class="station-tuner-signal" aria-hidden="true">
+          <RadioTower size={17} strokeWidth={1.8} />
+          <span class="station-tuner-signal-bars">
+            <i />
+            <i />
+            <i />
+          </span>
+        </span>
+        <div class="station-tuner-copy">
+          <span class="station-tuner-label">on air</span>
+          <strong aria-live="polite">{stationHost(selectedStation())}</strong>
+          <small>{stationSubtitle(selectedStation())}</small>
+        </div>
+        <div class="station-tuner-stepper">
+          <button
+            type="button"
+            aria-label="previous station"
+            title="previous station"
+            disabled={tuneInStations().length <= 1}
+            onClick={() => tuneStationBy(-1)}
+          >
+            <ChevronLeft size={18} strokeWidth={1.8} />
+          </button>
+          <span>{String(selectedStationIndex() + 1).padStart(2, '0')}</span>
+          <button
+            type="button"
+            aria-label="next station"
+            title="next station"
+            disabled={tuneInStations().length <= 1}
+            onClick={() => tuneStationBy(1)}
+          >
+            <ChevronRight size={18} strokeWidth={1.8} />
+          </button>
+        </div>
+      </div>
+      <div class="station-tuner-dial" style={`--station-needle: ${stationNeedlePosition()}%`} aria-hidden="true">
+        <span>88</span>
+        <span class="station-tuner-track"><i /></span>
+        <span>108</span>
+      </div>
+      <ol
+        class="station-presets"
+        role="radiogroup"
+        aria-label="station presets"
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+            event.preventDefault()
+            tuneStationBy(-1, true)
+          }
+          if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+            event.preventDefault()
+            tuneStationBy(1, true)
+          }
+        }}
+      >
+        <For each={tuneInStations()}>
+          {(station, index) => (
+            <li>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={isSelectedStation(station)}
+                aria-label={`tune in to ${stationHost(station)}`}
+                title={station.url}
+                tabIndex={isSelectedStation(station) ? 0 : -1}
+                data-station-preset={index()}
+                onClick={() => selectTuneInStation(station)}
+              >
+                <span class="station-preset-number">{String(index() + 1).padStart(2, '0')}</span>
+                <span class="station-preset-copy">
+                  <strong>{stationPresetName(station)}</strong>
+                  <small>{station.local ? 'local' : stationHost(station)}</small>
+                </span>
+                <Show when={isSelectedStation(station)}>
+                  <span class="station-preset-status">on air</span>
+                </Show>
+              </button>
+            </li>
+          )}
+        </For>
+      </ol>
+    </section>
+  )
 
   const chatCard = () => (
     <section class="glass-card chat-card">
@@ -690,26 +917,31 @@ export default function RadioPage() {
         }}
       >
         <Show
-          when={session()?.accountDid}
+          when={props.session?.accountDid}
           fallback={<p class="muted chat-empty">log in to chat</p>}
         >
-          <input
-            class="chat-input"
-            type="text"
-            placeholder="say something nice"
-            maxlength={MAX_CHAT_BODY_LEN}
-            value={chatDraft()}
-            onInput={(event) => setChatDraft(event.currentTarget.value)}
-            disabled={!chatConnected()}
-          />
-          <button
-            class="chat-send"
-            type="submit"
-            aria-label="send"
-            disabled={!canSendChat() || chatDraft().trim().length === 0}
+          <Show
+            when={selectedRadioCanUseXrpc()}
+            fallback={<p class="muted chat-empty">chat needs a public radio xrpc endpoint</p>}
           >
-            <Send size={16} />
-          </button>
+            <input
+              class="chat-input"
+              type="text"
+              placeholder="say something nice"
+              maxlength={MAX_CHAT_BODY_LEN}
+              value={chatDraft()}
+              onInput={(event) => setChatDraft(event.currentTarget.value)}
+              disabled={!chatConnected()}
+            />
+            <button
+              class="chat-send"
+              type="submit"
+              aria-label="send"
+              disabled={!canSendChat() || chatDraft().trim().length === 0}
+            >
+              <Send size={16} />
+            </button>
+          </Show>
         </Show>
       </form>
     </section>
@@ -740,6 +972,14 @@ export default function RadioPage() {
       void equalizer.ensureGraph()
     }
   }
+
+  createEffect(() => {
+    const version = tuneInAutoplayVersion()
+    if (version === 0 || version === handledTuneInAutoplay) return
+    if (!currentSong()) return
+    handledTuneInAutoplay = version
+    queueMicrotask(() => void startListening())
+  })
 
   const advanceLocally = () => {
     const queue = localQueue()
@@ -822,7 +1062,7 @@ export default function RadioPage() {
       artist: song.artist,
       album: song.album ?? undefined,
       artwork: song.hasCover
-        ? [{ src: `${API_BASE}/api/songs/${song.id}/cover`, sizes: '512x512', type: 'image/jpeg' }]
+        ? [{ src: songCoverUrl(song.id, selectedApiBase()), sizes: '512x512', type: 'image/jpeg' }]
         : [],
     })
     navigator.mediaSession.setActionHandler('play', () => void startListening())
@@ -899,7 +1139,7 @@ export default function RadioPage() {
             {(songId) => (
               <>
                 <Show when={currentSong()?.hasCover} fallback={<div class="art-glow" />}>
-                  <img class="album-cover" src={`${API_BASE}/api/songs/${songId}/cover`} alt="" />
+                  <img class="album-cover" src={songCoverUrl(songId, selectedApiBase())} alt="" />
                 </Show>
                 <div class="art-crt-scanload" aria-hidden="true" />
               </>
@@ -944,7 +1184,9 @@ export default function RadioPage() {
                 aria-label={isAudioPlaying() ? 'listening live' : 'listen live'}
                 title={isAudioPlaying() ? 'listening live' : 'listen live'}
               >
-                {isAudioPlaying() ? '•' : '▷'}
+                <Show when={isAudioPlaying()} fallback={<Play size={19} strokeWidth={1.8} fill="currentColor" />}>
+                  <AudioLines size={19} strokeWidth={1.9} />
+                </Show>
               </button>
             </Show>
           </div>
@@ -1057,11 +1299,13 @@ export default function RadioPage() {
         <Show when={nextAudioUrl()}>
           {(url) => <audio src={url()} preload="auto" crossOrigin="anonymous" aria-hidden="true" style="display:none" />}
         </Show>
+        {onMobile && tuneInCard()}
         {onMobile && chatCard()}
       </div>
 
       <Show when={!onMobile}>
         <aside class="radio-panel">
+          {tuneInCard()}
           {chatCard()}
 
           <section class="glass-card up-next-card">
@@ -1078,7 +1322,7 @@ export default function RadioPage() {
                     return (
                       <li>
                         <span class="queue-number">{upNextPaging.page() * queuePageSize + index() + 1}</span>
-                        <SongCoverThumb songId={item.songId} hasCover={hasCover()} />
+                        <SongCoverThumb songId={item.songId} hasCover={hasCover()} baseUrl={selectedApiBase()} />
                         <div class="up-next-copy">
                           <span class="up-next-title">{item.title}</span>
                           <small class="up-next-artist">{item.artist || 'unknown artist'}</small>

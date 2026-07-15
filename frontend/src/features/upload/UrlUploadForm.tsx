@@ -1,8 +1,9 @@
 import { createSignal, Show } from 'solid-js'
 import { createStore } from 'solid-js/store'
-import { uploadSongFromUrl } from '../../shared/lib/radio'
+import { uploadSongFromUrl, type RadioTarget } from '../../shared/lib/radio'
 
 interface UrlUploadFormProps {
+  target?: RadioTarget
   onSongAdded: () => void
   onError: (message: string | null) => void
 }
@@ -34,7 +35,7 @@ export function UrlUploadForm(props: UrlUploadFormProps) {
         artist: artist || undefined,
         album: fields.album.trim() || undefined,
         addToQueue: addToQueue(),
-      })
+      }, props.target)
       setUrlInput('')
       setFields({ title: '', artist: '', album: '' })
       props.onSongAdded()

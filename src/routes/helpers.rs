@@ -177,9 +177,7 @@ pub(crate) fn parse_m3u(bytes: &[u8]) -> Vec<PlaylistEntry> {
     entries
 }
 
-pub(crate) fn playlist_label_metadata(
-    label: Option<&str>,
-) -> (Option<String>, Option<String>) {
+pub(crate) fn playlist_label_metadata(label: Option<&str>) -> (Option<String>, Option<String>) {
     let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) else {
         return (None, None);
     };

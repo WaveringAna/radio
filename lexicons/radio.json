@@ -230,6 +230,174 @@
           "default": false
         }
       }
+    },
+    "adminPermission": {
+      "type": "object",
+      "description": "Permission surfaced in the admin panel.",
+      "required": ["key", "description"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Stable permission key used by backend feature gates."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable permission description."
+        }
+      }
+    },
+    "adminPermissions": {
+      "type": "object",
+      "description": "Configured admin DID whitelist and available permissions.",
+      "required": ["whitelistedDids", "permissions"],
+      "properties": {
+        "whitelistedDids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "#adminPermission"
+          }
+        }
+      }
+    },
+    "radioAlbum": {
+      "type": "object",
+      "description": "Admin-defined album loop metadata.",
+      "required": ["id", "title", "position", "isEnabled", "tracks"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "isEnabled": {
+          "type": "boolean"
+        },
+        "tracks": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "#song"
+          }
+        }
+      }
+    },
+    "playlist": {
+      "type": "object",
+      "description": "Saved playlist/set of songs.",
+      "required": ["id", "name", "createdAt", "tracks"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tracks": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "#song"
+          }
+        }
+      }
+    },
+    "chatMessage": {
+      "type": "object",
+      "description": "A single persisted chat message.",
+      "required": ["id", "senderDid", "body", "createdAt", "kind"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "senderDid": {
+          "type": "string",
+          "description": "DID that sent the message."
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "knownValues": ["user", "now_playing"]
+        }
+      }
+    },
+    "chatBan": {
+      "type": "object",
+      "description": "Banned DID record returned to admin tooling.",
+      "required": ["did", "bannedByDid", "reason", "createdAt"],
+      "nullable": ["reason"],
+      "properties": {
+        "did": {
+          "type": "string"
+        },
+        "bannedByDid": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "subsonicSongResult": {
+      "type": "object",
+      "description": "Search result returned from a Subsonic server.",
+      "required": ["id", "title", "artist", "album", "durationSeconds", "coverArtId"],
+      "nullable": ["album", "durationSeconds", "coverArtId"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "artist": {
+          "type": "string"
+        },
+        "album": {
+          "type": "string"
+        },
+        "durationSeconds": {
+          "type": "integer"
+        },
+        "coverArtId": {
+          "type": "string"
+        }
+      }
     }
   }
 }

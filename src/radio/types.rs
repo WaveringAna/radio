@@ -109,7 +109,9 @@ pub(crate) struct RadioSeek {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub(crate) enum RadioEvent {
-    SnapshotChanged { snapshot: RadioSnapshot },
+    SnapshotChanged {
+        snapshot: RadioSnapshot,
+    },
     ViewerCountChanged {
         viewer_count: usize,
         #[serde(default)]
@@ -159,4 +161,3 @@ pub(crate) struct Playlist {
     #[sqlx(skip)]
     pub(crate) tracks: Vec<Song>,
 }
-

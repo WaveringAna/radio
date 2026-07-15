@@ -1,24 +1,20 @@
 use axum::{
     Json,
-    extract::{Path, State, ws::{Message, WebSocket}, WebSocketUpgrade},
+    extract::{
+        State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
+    },
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::Deserialize;
 use tokio::time::{Instant, MissedTickBehavior};
 
-use super::{AppState, ErrorResponse, SessionToken, api_error, internal_api_error, admin_session, RadioClientMessage};
-use super::helpers::valid_viewer_id;
-use super::helpers::valid_listener_did;
-use super::VIEWER_KEEPALIVE_INTERVAL;
 use super::VIEWER_KEEPALIVE_GRACE;
-use crate::radio::{RadioControlAction, RadioEvent, RadioSeek, event_message};
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ControlRadioRequest {
-    pub(crate) intent: String,
-}
+use super::VIEWER_KEEPALIVE_INTERVAL;
+use super::helpers::valid_listener_did;
+use super::helpers::valid_viewer_id;
+use super::{AppState, ErrorResponse, RadioClientMessage, internal_api_error};
+use crate::radio::{RadioEvent, RadioSeek, event_message};
 
 pub(crate) async fn get_radio_state(
     State(state): State<AppState>,
@@ -37,34 +33,6 @@ pub(crate) async fn get_radio_seek(
     state
         .radio
         .seek()
-        .await
-        .map(Json)
-        .map_err(internal_api_error)
-}
-
-pub(crate) async fn control_radio(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Path(action): Path<String>,
-    Json(payload): Json<ControlRadioRequest>,
-) -> Result<Json<crate::radio::RadioSnapshot>, (StatusCode, Json<ErrorResponse>)> {
-    let session = admin_session(&state, session_token.0.as_deref()).await?;
-    if payload.intent != "explicit_admin_action" {
-        return Err(api_error(StatusCode::BAD_REQUEST, "invalid_control_intent"));
-    }
-
-    let action = match action.as_str() {
-        "play" => RadioControlAction::Play,
-        "pause" => RadioControlAction::Pause,
-        "stop" => RadioControlAction::Stop,
-        "skip" => RadioControlAction::Skip,
-        "previous" => RadioControlAction::Previous,
-        _ => return Err(api_error(StatusCode::BAD_REQUEST, "unknown_radio_action")),
-    };
-
-    state
-        .radio
-        .control(action, &session.account_did)
         .await
         .map(Json)
         .map_err(internal_api_error)

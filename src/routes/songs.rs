@@ -5,76 +5,14 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::Response,
 };
-use serde::Deserialize;
 
-use super::{
-    AppState, ErrorResponse, SessionToken, admin_session, api_error, internal_api_error,
-};
 use super::helpers::{
-    extract_embedded_metadata, parse_byte_range,
-    parse_filename_metadata, reject_unsupported_audio_upload,
+    extract_embedded_metadata, parse_byte_range, parse_filename_metadata,
+    reject_unsupported_audio_upload,
 };
+use super::{AppState, ErrorResponse, api_error, internal_api_error};
 use crate::metadata::fetch_online_metadata;
-use crate::radio::{NewSongUpload, SongFile, SongMetadataUpdate};
-
-#[derive(Deserialize)]
-pub(crate) struct AlbumEnabledRequest {
-    pub(crate) enabled: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SongMetadataRequest {
-    pub(crate) title: String,
-    pub(crate) artist: String,
-    pub(crate) album: Option<String>,
-    pub(crate) genre: Option<String>,
-    pub(crate) duration_seconds: Option<i64>,
-}
-
-// ── Albums ──
-
-pub(crate) async fn get_albums(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-) -> Result<Json<Vec<crate::radio::RadioAlbum>>, (StatusCode, Json<ErrorResponse>)> {
-    let _session = admin_session(&state, session_token.0.as_deref()).await?;
-    state
-        .radio
-        .albums()
-        .await
-        .map(Json)
-        .map_err(internal_api_error)
-}
-
-pub(crate) async fn delete_album(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Path(album_id): Path<String>,
-) -> Result<Json<Vec<crate::radio::RadioAlbum>>, (StatusCode, Json<ErrorResponse>)> {
-    let _session = admin_session(&state, session_token.0.as_deref()).await?;
-    state
-        .radio
-        .delete_album(&album_id)
-        .await
-        .map(Json)
-        .map_err(internal_api_error)
-}
-
-pub(crate) async fn set_album_enabled(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Path(album_id): Path<String>,
-    Json(payload): Json<AlbumEnabledRequest>,
-) -> Result<Json<Vec<crate::radio::RadioAlbum>>, (StatusCode, Json<ErrorResponse>)> {
-    let _session = admin_session(&state, session_token.0.as_deref()).await?;
-    state
-        .radio
-        .set_album_enabled(&album_id, payload.enabled)
-        .await
-        .map(Json)
-        .map_err(internal_api_error)
-}
+use crate::radio::{NewSongUpload, SongFile};
 
 // ── Songs ──
 
@@ -89,56 +27,7 @@ pub(crate) async fn get_songs(
         .map_err(internal_api_error)
 }
 
-pub(crate) async fn update_song(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Path(song_id): Path<String>,
-    Json(input): Json<SongMetadataRequest>,
-) -> Result<Json<crate::radio::Song>, (StatusCode, Json<ErrorResponse>)> {
-    let _session = admin_session(&state, session_token.0.as_deref()).await?;
-    state
-        .radio
-        .update_song_metadata(
-            &song_id,
-            SongMetadataUpdate {
-                title: input.title,
-                artist: input.artist,
-                album: input.album,
-                genre: input.genre,
-                duration_seconds: input.duration_seconds,
-            },
-        )
-        .await
-        .map(Json)
-        .map_err(internal_api_error)
-}
-
-pub(crate) async fn delete_song(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Path(song_id): Path<String>,
-) -> Result<Json<crate::radio::RadioSnapshot>, (StatusCode, Json<ErrorResponse>)> {
-    let _session = admin_session(&state, session_token.0.as_deref()).await?;
-    state
-        .radio
-        .delete_song(&song_id)
-        .await
-        .map(Json)
-        .map_err(internal_api_error)
-}
-
 // ── Upload ──
-
-pub(crate) async fn upload_song(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    multipart: Multipart,
-) -> Result<Json<crate::radio::Song>, (StatusCode, Json<ErrorResponse>)> {
-    let session = admin_session(&state, session_token.0.as_deref()).await?;
-    add_song_from_multipart_upload(&state, &session.account_did, multipart)
-        .await
-        .map(Json)
-}
 
 pub(crate) async fn add_song_from_multipart_upload(
     state: &AppState,
@@ -364,46 +253,4 @@ pub(crate) async fn song_cover_thumbnail(
         .header(header::CONTENT_LENGTH, bytes.len().to_string())
         .body(Body::from(bytes))
         .expect("thumbnail response should be valid"))
-}
-
-pub(crate) async fn upload_song_cover(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Path(song_id): Path<String>,
-    mut multipart: Multipart,
-) -> Result<Json<crate::radio::Song>, (StatusCode, Json<ErrorResponse>)> {
-    let _session = admin_session(&state, session_token.0.as_deref()).await?;
-    let mut filename = None;
-    let mut mime_type = None;
-    let mut bytes = None;
-
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|_| api_error(StatusCode::BAD_REQUEST, "invalid_multipart"))?
-    {
-        if field.name() == Some("cover") {
-            filename = field.file_name().map(ToOwned::to_owned);
-            mime_type = field.content_type().map(ToString::to_string);
-            bytes = Some(
-                field
-                    .bytes()
-                    .await
-                    .map_err(|_| api_error(StatusCode::BAD_REQUEST, "invalid_cover_file"))?
-                    .to_vec(),
-            );
-        }
-    }
-
-    state
-        .radio
-        .set_song_cover(
-            &song_id,
-            filename,
-            mime_type,
-            bytes.ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "missing_cover_file"))?,
-        )
-        .await
-        .map(Json)
-        .map_err(internal_api_error)
 }

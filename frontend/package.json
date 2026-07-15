@@ -9,6 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@atcute/atproto": "^4.0.2",
+    "@atcute/client": "^5.1.0",
+    "@atcute/identity": "^2.0.0",
+    "@atcute/identity-resolver": "^2.0.0",
+    "@atcute/lexicons": "^2.0.1",
+    "@atcute/oauth-browser-client": "^4.0.0",
+    "@atcute/oauth-types": "^1.0.0",
     "lucide-solid": "^1.14.0",
     "music-metadata": "^11.12.3",
     "solid-js": "^1.9.12"

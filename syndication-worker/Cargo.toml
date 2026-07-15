@@ -11,6 +11,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 hydrant = { git = "https://tangled.org/ptr.pet/hydrant", rev = "c480d37079a73475e7afea8d49d2fee00473c511" }
 miette = "7"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

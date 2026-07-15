@@ -17,6 +17,13 @@ pub(crate) async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { ok: true })
 }
 
+pub(crate) async fn api_not_found() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({ "error": "not_found" })),
+    )
+}
+
 pub(crate) async fn client_metadata(State(state): State<AppState>) -> Response {
     match state.auth.client_metadata_json() {
         Ok(json) => (
@@ -86,7 +93,7 @@ pub(crate) fn did_document(state: &AppState) -> serde_json::Value {
             "id": format!("{}#atproto", state.service_did.as_str()),
             "type": "Multikey",
             "controller": state.service_did.as_str(),
-            "publicKeyMultibase": state.pds.public_key_multibase(),
+            "publicKeyMultibase": state.pds_public_key_multibase.as_str(),
         }],
         "service": services,
     })

@@ -1,9 +1,10 @@
 import { createSignal, Show } from 'solid-js'
 import { CloudUpload } from 'lucide-solid'
 import { extractAudioMetadata, type ExtractedAudioMetadata } from '../../shared/lib/audioMetadata'
-import { uploadSong } from '../../shared/lib/radio'
+import { uploadSong, type RadioTarget } from '../../shared/lib/radio'
 
 interface FileUploadFormProps {
+  target?: RadioTarget
   onSongAdded: () => void
   onError: (message: string | null) => void
 }
@@ -215,7 +216,7 @@ export function FileUploadForm(props: FileUploadFormProps) {
           durationSeconds: extracted?.durationSeconds,
           cover: coverFile(),
           addToQueue: uploadKind() === 'songs' && addToQueue(),
-        })
+        }, props.target)
         uploadedSongIds.push(song.id)
       }
 

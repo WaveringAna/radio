@@ -1,5 +1,5 @@
 import { createEffect, createResource, createSignal, For, onCleanup, Show } from 'solid-js'
-import { Ban, Trash2 } from 'lucide-solid'
+import { Ban, ChevronDown, Trash2 } from 'lucide-solid'
 import { ProfileAvatar } from '../../shared/components/ProfileAvatar'
 import { resolveAtprotoProfile, type AtprotoProfile } from '../../shared/lib/atproto'
 import {
@@ -11,7 +11,14 @@ import {
   type ChatBan,
   type ChatEvent,
   type ChatMessage,
+  type RadioTarget,
 } from '../../shared/lib/radio'
+
+interface ChatModerationPanelProps {
+  apiBase: string
+  stationKey: string
+  target?: RadioTarget
+}
 
 function fallbackProfile(did: string): AtprotoProfile {
   return { did, handle: did }
@@ -25,10 +32,14 @@ function formatTime(unixSeconds: number): string {
  * Admin moderation cockpit: deletes chat messages and manages the ban list.
  * @returns The chat moderation panel view.
  */
-export function ChatModerationPanel() {
+export function ChatModerationPanel(props: ChatModerationPanelProps) {
   const [messages, setMessages] = createSignal<ChatMessage[]>([])
   const [connected, setConnected] = createSignal(false)
-  const [bans, { refetch: refetchBans }] = createResource(fetchChatBans, { initialValue: [] })
+  const [bans, { refetch: refetchBans }] = createResource(
+    () => props.stationKey,
+    () => fetchChatBans(props.target),
+    { initialValue: [] },
+  )
   const [banInputDid, setBanInputDid] = createSignal('')
   const [banReason, setBanReason] = createSignal('')
   const [actionError, setActionError] = createSignal<string | null>(null)
@@ -45,7 +56,7 @@ export function ChatModerationPanel() {
 
     const connect = () => {
       if (cancelled) return
-      socket = openChatSocket()
+      socket = openChatSocket(props.apiBase)
 
       socket.addEventListener('open', () => {
         reconnectAttempt = 0
@@ -124,7 +135,7 @@ export function ChatModerationPanel() {
   const removeMessage = async (id: string) => {
     setActionError(null)
     try {
-      await deleteChatMessage(id)
+      await deleteChatMessage(id, props.target)
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'failed to delete message')
     }
@@ -133,7 +144,7 @@ export function ChatModerationPanel() {
   const banSender = async (did: string, reason?: string) => {
     setActionError(null)
     try {
-      await createChatBan(did, reason)
+      await createChatBan(did, reason, props.target)
       void refetchBans()
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'failed to ban did')
@@ -152,7 +163,7 @@ export function ChatModerationPanel() {
   const unban = async (did: string) => {
     setActionError(null)
     try {
-      await removeChatBan(did)
+      await removeChatBan(did, props.target)
       void refetchBans()
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'failed to remove ban')
@@ -166,108 +177,114 @@ export function ChatModerationPanel() {
       .reverse()
 
   return (
-    <section class="chat-moderation-card">
-      <div class="section-heading">
-        <p class="eyebrow">chat moderation</p>
-        <span>{connected() ? 'live' : 'offline'}</span>
-      </div>
+    <details class="chat-moderation-card">
+      <summary class="chat-moderation-summary">
+        <span>chat moderation</span>
+        <span class="chat-moderation-summary-state">
+          <span classList={{ 'is-live': connected() }}>{connected() ? 'live' : 'offline'}</span>
+          <ChevronDown size={16} strokeWidth={1.7} aria-hidden="true" />
+        </span>
+      </summary>
 
-      <Show when={actionError()}>
-        {(message) => <p class="error-copy chat-moderation-error">{message()}</p>}
-      </Show>
+      <div class="chat-moderation-content">
 
-      <div class="chat-moderation-section">
-        <h3 class="chat-moderation-subtitle">recent messages</h3>
-        <ul class="chat-moderation-list">
-          <For
-            each={visibleUserMessages()}
-            fallback={<li class="list-empty">no messages yet</li>}
-          >
-            {(message) => {
-              const profile = () => profileFor(message.senderDid)
-              return (
-                <li>
-                  <ProfileAvatar profile={profile()} />
-                  <div class="chat-moderation-copy">
-                    <div class="chat-moderation-meta">
-                      <span class="chat-moderation-handle">@{profile().handle}</span>
-                      <span class="chat-moderation-time">{formatTime(message.createdAt)}</span>
+        <Show when={actionError()}>
+          {(message) => <p class="error-copy chat-moderation-error">{message()}</p>}
+        </Show>
+
+        <div class="chat-moderation-section">
+          <h3 class="chat-moderation-subtitle">recent messages</h3>
+          <ul class="chat-moderation-list">
+            <For
+              each={visibleUserMessages()}
+              fallback={<li class="list-empty">no messages yet</li>}
+            >
+              {(message) => {
+                const profile = () => profileFor(message.senderDid)
+                return (
+                  <li>
+                    <ProfileAvatar profile={profile()} />
+                    <div class="chat-moderation-copy">
+                      <div class="chat-moderation-meta">
+                        <span class="chat-moderation-handle">@{profile().handle}</span>
+                        <span class="chat-moderation-time">{formatTime(message.createdAt)}</span>
+                      </div>
+                      <p class="chat-moderation-body">{message.body}</p>
                     </div>
-                    <p class="chat-moderation-body">{message.body}</p>
-                  </div>
-                  <div class="chat-moderation-actions">
-                    <button
-                      class="icon-button"
-                      type="button"
-                      aria-label="delete message"
-                      title="delete message"
-                      onClick={() => void removeMessage(message.id)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                    <button
-                      class="icon-button"
-                      type="button"
-                      aria-label="ban sender"
-                      title="ban sender"
-                      onClick={() => void banSender(message.senderDid)}
-                    >
-                      <Ban size={16} />
-                    </button>
-                  </div>
-                </li>
-              )
-            }}
-          </For>
-        </ul>
-      </div>
-
-      <div class="chat-moderation-section">
-        <h3 class="chat-moderation-subtitle">banned dids · {bans().length}</h3>
-        <form class="chat-moderation-ban-form" onSubmit={submitBanForm}>
-          <input
-            placeholder="did:plc:…"
-            value={banInputDid()}
-            onInput={(event) => setBanInputDid(event.currentTarget.value)}
-          />
-          <input
-            placeholder="reason (optional)"
-            value={banReason()}
-            onInput={(event) => setBanReason(event.currentTarget.value)}
-          />
-          <button class="pill-button" type="submit" disabled={banInputDid().trim().length === 0}>
-            ban
-          </button>
-        </form>
-        <ul class="chat-moderation-list">
-          <For each={bans()} fallback={<li class="list-empty">no bans</li>}>
-            {(ban: ChatBan) => {
-              const profile = () => profileFor(ban.did)
-              return (
-                <li>
-                  <ProfileAvatar profile={profile()} />
-                  <div class="chat-moderation-copy">
-                    <div class="chat-moderation-meta">
-                      <span class="chat-moderation-handle">@{profile().handle}</span>
-                      <span class="chat-moderation-time">{formatTime(ban.createdAt)}</span>
+                    <div class="chat-moderation-actions">
+                      <button
+                        class="icon-button"
+                        type="button"
+                        aria-label="delete message"
+                        title="delete message"
+                        onClick={() => void removeMessage(message.id)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                      <button
+                        class="icon-button"
+                        type="button"
+                        aria-label="ban sender"
+                        title="ban sender"
+                        onClick={() => void banSender(message.senderDid)}
+                      >
+                        <Ban size={16} />
+                      </button>
                     </div>
-                    <Show when={ban.reason}>
-                      <p class="chat-moderation-body chat-moderation-reason">{ban.reason}</p>
-                    </Show>
-                  </div>
-                  <button
-                    class="pill-button subtle"
-                    type="button"
-                    onClick={() => void unban(ban.did)}
-                  >
-                    unban
-                  </button>
-                </li>
-              )
-            }}
-          </For>
-        </ul>
+                  </li>
+                )
+              }}
+            </For>
+          </ul>
+        </div>
+
+        <div class="chat-moderation-section">
+          <h3 class="chat-moderation-subtitle">banned dids · {bans().length}</h3>
+          <form class="chat-moderation-ban-form" onSubmit={submitBanForm}>
+            <input
+              placeholder="did:plc:…"
+              value={banInputDid()}
+              onInput={(event) => setBanInputDid(event.currentTarget.value)}
+            />
+            <input
+              placeholder="reason (optional)"
+              value={banReason()}
+              onInput={(event) => setBanReason(event.currentTarget.value)}
+            />
+            <button class="pill-button" type="submit" disabled={banInputDid().trim().length === 0}>
+              ban
+            </button>
+          </form>
+          <ul class="chat-moderation-list">
+            <For each={bans()} fallback={<li class="list-empty">no bans</li>}>
+              {(ban: ChatBan) => {
+                const profile = () => profileFor(ban.did)
+                return (
+                  <li>
+                    <ProfileAvatar profile={profile()} />
+                    <div class="chat-moderation-copy">
+                      <div class="chat-moderation-meta">
+                        <span class="chat-moderation-handle">@{profile().handle}</span>
+                        <span class="chat-moderation-time">{formatTime(ban.createdAt)}</span>
+                      </div>
+                      <Show when={ban.reason}>
+                        <p class="chat-moderation-body chat-moderation-reason">{ban.reason}</p>
+                      </Show>
+                    </div>
+                    <button
+                      class="pill-button subtle"
+                      type="button"
+                      onClick={() => void unban(ban.did)}
+                    >
+                      unban
+                    </button>
+                  </li>
+                )
+              }}
+            </For>
+          </ul>
+        </div>
       </div>
-    </section>
+    </details>
   )
 }

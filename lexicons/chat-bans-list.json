@@ -1,0 +1,31 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.chat.bans.list",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "List chat moderation bans.",
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["bans"],
+          "properties": {
+            "bans": {
+              "type": "array",
+              "items": {
+                "type": "ref",
+                "ref": "pet.nkp.radio#chatBan"
+              }
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" }
+      ]
+    }
+  }
+}

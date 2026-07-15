@@ -1,0 +1,47 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.chat.bans.modify",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Create or remove chat moderation bans.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["action", "did"],
+          "properties": {
+            "action": {
+              "type": "string",
+              "knownValues": ["create", "remove"]
+            },
+            "did": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "ban": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#chatBan"
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" },
+        { "name": "BanNotFound" }
+      ]
+    }
+  }
+}

@@ -27,21 +27,6 @@
   gap: 1rem;
 }
 
-.listener-opt-out {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-top: 1rem;
-  font-family: var(--mono);
-  font-size: 0.86rem;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.listener-opt-out input {
-  accent-color: var(--accent);
-}
-
 .admin-page > p,
 .admin-page > .error-copy {
   grid-column: 1 / -1;
@@ -358,7 +343,7 @@
   white-space: nowrap;
   font-size: clamp(1.35rem, 2vw, 2rem);
   font-weight: 600;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
   line-height: 1.1;
   opacity: 0.88;
   text-shadow: 0 0 40px rgba(var(--accent-rgb), 0.22);
@@ -432,14 +417,58 @@
   font-size: 1.3rem;
   line-height: 1;
   cursor: pointer;
-  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+  transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease, transform 120ms ease-out;
 }
 
-.listen-icon-button:hover,
 .listen-icon-button:focus-visible {
   border-color: color-mix(in srgb, var(--text) 82%, var(--accent));
   background: rgb(var(--accent-rgb) / 8%);
   color: color-mix(in srgb, var(--text) 82%, var(--accent));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .listen-icon-button:hover {
+    border-color: color-mix(in srgb, var(--text) 82%, var(--accent));
+    background: rgb(var(--accent-rgb) / 8%);
+    color: color-mix(in srgb, var(--text) 82%, var(--accent));
+  }
+}
+
+.listen-icon-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 75%, white);
+  outline-offset: 3px;
+}
+
+.listen-icon-button:active {
+  transform: scale(0.94);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .art-crt-scanload,
+  .art-crt-sweep::before,
+  .station-id-card,
+  .marquee-track {
+    animation: none;
+  }
+
+  .art-crt-scanload {
+    display: none;
+  }
+
+  .listen-icon-button {
+    transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+  }
+
+  .listen-icon-button:active {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .radio-footer {
+    background: var(--bg);
+    backdrop-filter: none;
+  }
 }
 
 .nowplaying-artist-album {

@@ -1,0 +1,59 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.playlists.modify",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Create, delete, or load a saved playlist.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["action"],
+          "properties": {
+            "action": {
+              "type": "string",
+              "knownValues": ["create", "delete", "load"]
+            },
+            "playlistId": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "songIds": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "replace": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "playlist": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#playlist"
+            },
+            "snapshot": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#radioSnapshot"
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" },
+        { "name": "PlaylistNotFound" }
+      ]
+    }
+  }
+}

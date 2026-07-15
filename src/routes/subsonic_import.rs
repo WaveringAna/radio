@@ -1,8 +1,8 @@
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Json, http::StatusCode};
 use serde::{Deserialize, Serialize};
 
-use super::{AppState, ErrorResponse, SessionToken, admin_session, api_error, internal_api_error};
 use super::helpers::{extract_share_info, parse_share_url};
+use super::{AppState, ErrorResponse, api_error, internal_api_error};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -10,14 +10,6 @@ pub(crate) struct SubsonicCreds {
     pub(crate) server_url: String,
     pub(crate) username: String,
     pub(crate) password: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SubsonicSearchRequest {
-    #[serde(flatten)]
-    pub(crate) creds: SubsonicCreds,
-    pub(crate) query: String,
 }
 
 #[derive(Serialize)]
@@ -63,21 +55,18 @@ pub(crate) fn subsonic_auth_params(creds: &SubsonicCreds) -> [(&'static str, Str
     ]
 }
 
-pub(crate) async fn subsonic_search(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Json(payload): Json<SubsonicSearchRequest>,
+pub(crate) async fn search_subsonic_catalog(
+    creds: &SubsonicCreds,
+    query: &str,
 ) -> Result<Json<Vec<SubsonicSongResult>>, (StatusCode, Json<ErrorResponse>)> {
-    let _session = admin_session(&state, session_token.0.as_deref()).await?;
-
-    let base = payload.creds.server_url.trim_end_matches('/').to_owned();
-    let auth = subsonic_auth_params(&payload.creds);
+    let base = creds.server_url.trim_end_matches('/').to_owned();
+    let auth = subsonic_auth_params(creds);
 
     let response = reqwest::Client::new()
         .get(format!("{base}/rest/search3.view"))
         .query(&auth)
         .query(&[
-            ("query", payload.query.as_str()),
+            ("query", query),
             ("songCount", "50"),
             ("artistCount", "0"),
             ("albumCount", "0"),
@@ -114,13 +103,11 @@ pub(crate) async fn subsonic_search(
     Ok(Json(results))
 }
 
-pub(crate) async fn import_from_subsonic(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Json(payload): Json<SubsonicImportRequest>,
-) -> Result<Json<crate::radio::Song>, (StatusCode, Json<ErrorResponse>)> {
-    let session = admin_session(&state, session_token.0.as_deref()).await?;
-
+pub(crate) async fn import_subsonic_song(
+    state: &AppState,
+    admin_did: &str,
+    payload: SubsonicImportRequest,
+) -> Result<crate::radio::Song, (StatusCode, Json<ErrorResponse>)> {
     let base = payload.creds.server_url.trim_end_matches('/').to_owned();
     let auth = subsonic_auth_params(&payload.creds);
     let client = reqwest::Client::new();
@@ -187,7 +174,7 @@ pub(crate) async fn import_from_subsonic(
                 duration_seconds,
                 add_to_queue: payload.add_to_queue.unwrap_or(false),
             },
-            &session.account_did,
+            admin_did,
         )
         .await
         .map_err(internal_api_error)?;
@@ -220,16 +207,14 @@ pub(crate) async fn import_from_subsonic(
         }
     }
 
-    Ok(Json(song))
+    Ok(song)
 }
 
-pub(crate) async fn import_from_subsonic_share(
-    State(state): State<AppState>,
-    session_token: SessionToken,
-    Json(payload): Json<SubsonicShareImportRequest>,
-) -> Result<Json<crate::radio::Song>, (StatusCode, Json<ErrorResponse>)> {
-    let session = admin_session(&state, session_token.0.as_deref()).await?;
-
+pub(crate) async fn import_subsonic_share(
+    state: &AppState,
+    admin_did: &str,
+    payload: SubsonicShareImportRequest,
+) -> Result<crate::radio::Song, (StatusCode, Json<ErrorResponse>)> {
     let (base, share_id) = parse_share_url(&payload.share_url)
         .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "share_url_invalid"))?;
 
@@ -302,7 +287,7 @@ pub(crate) async fn import_from_subsonic_share(
                 duration_seconds,
                 add_to_queue: payload.add_to_queue.unwrap_or(false),
             },
-            &session.account_did,
+            admin_did,
         )
         .await
         .map_err(internal_api_error)?;
@@ -333,5 +318,5 @@ pub(crate) async fn import_from_subsonic_share(
         }
     }
 
-    Ok(Json(song))
+    Ok(song)
 }

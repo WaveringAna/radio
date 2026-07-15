@@ -449,6 +449,235 @@
   background: transparent;
 }
 
+.tune-in-card {
+  display: grid;
+  min-width: 0;
+  background: transparent;
+}
+
+.station-tuner-readout {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+  min-width: 0;
+  padding: 0.75rem 1rem 0.55rem;
+  font-family: var(--mono);
+}
+
+.station-tuner-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  color: var(--accent);
+}
+
+.station-tuner-signal-bars {
+  display: inline-flex;
+  align-items: end;
+  gap: 2px;
+  height: 0.75rem;
+}
+
+.station-tuner-signal-bars i {
+  display: block;
+  width: 2px;
+  height: 0.3rem;
+  background: currentColor;
+}
+
+.station-tuner-signal-bars i:nth-child(2) {
+  height: 0.5rem;
+}
+
+.station-tuner-signal-bars i:nth-child(3) {
+  height: 0.72rem;
+}
+
+.station-tuner-copy,
+.station-preset-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.18rem;
+}
+
+.station-tuner-label,
+.station-preset-status {
+  color: var(--accent);
+  font-size: 0.66rem;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.station-tuner-copy strong,
+.station-preset-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.station-tuner-copy small,
+.station-preset-copy small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 300;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.station-tuner-stepper {
+  display: grid;
+  grid-template-columns: 2rem auto 2rem;
+  align-items: center;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.station-tuner-stepper button {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  cursor: pointer;
+  transition: color 140ms ease, transform 120ms ease-out;
+}
+
+.station-tuner-stepper button:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.station-tuner-stepper button:focus-visible,
+.station-presets button:focus-visible {
+  outline: 1px dotted var(--accent);
+  outline-offset: -2px;
+}
+
+.station-tuner-stepper button:active:not(:disabled),
+.station-presets button:active {
+  transform: scale(0.96);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .station-tuner-stepper button:hover:not(:disabled),
+  .station-presets button:hover {
+    color: var(--text);
+  }
+}
+
+.station-tuner-dial {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.35rem 1rem 0.55rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  line-height: 1;
+}
+
+.station-tuner-track {
+  position: relative;
+  display: block;
+  height: 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 46%, var(--hairline));
+  background: repeating-linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--muted) 45%, transparent) 0 1px,
+    transparent 1px 5%
+  ) bottom / 100% 0.45rem no-repeat;
+}
+
+.station-tuner-track i {
+  position: absolute;
+  bottom: -0.18rem;
+  left: var(--station-needle);
+  width: 2px;
+  height: 1.2rem;
+  background: var(--accent);
+  box-shadow: 0 0 0.55rem rgb(var(--accent-rgb) / 65%);
+  transform: translateX(-50%);
+  transition: left 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.station-presets {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(9.5rem, 1fr);
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  border-top: 1px solid var(--hairline);
+  list-style: none;
+  scrollbar-width: thin;
+  scroll-snap-type: x proximity;
+}
+
+.station-presets li {
+  min-width: 0;
+  border-right: 1px solid color-mix(in srgb, var(--hairline) 72%, transparent);
+  scroll-snap-align: start;
+}
+
+.station-presets li:last-child {
+  border-right: 0;
+}
+
+.station-presets button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: start;
+  width: 100%;
+  min-width: 0;
+  min-height: 4rem;
+  padding: 0.65rem 0.75rem;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font-family: var(--mono);
+  text-align: left;
+  cursor: pointer;
+  transition: color 140ms ease, transform 120ms ease-out;
+}
+
+.station-presets button[aria-checked='true'] {
+  color: var(--accent);
+}
+
+.station-presets button[aria-checked='true'] .station-preset-copy strong {
+  color: var(--accent);
+}
+
+.station-preset-number {
+  padding-top: 0.05rem;
+  color: currentColor;
+  font-size: 0.68rem;
+  line-height: 1.2;
+}
+
+.station-preset-status {
+  align-self: center;
+  white-space: nowrap;
+}
+
 .chat-card {
   display: flex;
   flex-direction: column;
@@ -469,7 +698,20 @@
   border-top: 1px solid var(--hairline);
 }
 
+.now-playing-card > .tune-in-card {
+  margin-top: 0.8rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--hairline);
+}
+
+.now-playing-card > .tune-in-card > .section-heading,
 .now-playing-card > .chat-card > .section-heading {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.now-playing-card > .tune-in-card > .station-tuner-readout,
+.now-playing-card > .tune-in-card > .station-tuner-dial {
   padding-left: 0;
   padding-right: 0;
 }
@@ -666,4 +908,49 @@
 .chat-send:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+@media (max-width: 520px) {
+  .station-tuner-readout {
+    grid-template-columns: 1.5rem minmax(0, 1fr) auto;
+    gap: 0.5rem;
+  }
+
+  .station-tuner-signal-bars {
+    display: none;
+  }
+
+  .station-tuner-stepper {
+    grid-template-columns: 1.75rem auto 1.75rem;
+  }
+
+  .station-tuner-stepper button {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+
+  .station-presets {
+    grid-auto-columns: minmax(8.75rem, 1fr);
+  }
+
+  .station-presets button {
+    min-height: 3.75rem;
+    padding-inline: 0.65rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .station-tuner-stepper button,
+  .station-presets button {
+    transition: color 120ms ease;
+  }
+
+  .station-tuner-stepper button:active:not(:disabled),
+  .station-presets button:active {
+    transform: none;
+  }
+
+  .station-tuner-track i {
+    transition: none;
+  }
 }

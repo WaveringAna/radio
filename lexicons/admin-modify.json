@@ -1,0 +1,45 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.admin.modify",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Modify the persisted admin DID whitelist.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["action", "did"],
+          "properties": {
+            "action": {
+              "type": "string",
+              "knownValues": ["add", "remove"]
+            },
+            "did": {
+              "type": "string",
+              "description": "Admin DID to add or remove."
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["permissions"],
+          "properties": {
+            "permissions": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#adminPermissions"
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" }
+      ]
+    }
+  }
+}

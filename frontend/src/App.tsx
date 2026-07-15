@@ -1,5 +1,6 @@
 import { createResource, createSignal, onCleanup, Show } from 'solid-js'
-import { getListenerOptOut, setListenerOptOut, setSessionToken } from './shared/lib/radio'
+import { CircleUserRound, ListMusic, LogIn, LogOut, Radio, ShieldCheck } from 'lucide-solid'
+import { getListenerOptOut, setListenerOptOut } from './shared/lib/radio'
 import AdminPage from './pages/admin/AdminPage'
 import QueueControlPage from './pages/queue-control/QueueControlPage'
 import RadioPage from './pages/radio/RadioPage'
@@ -21,16 +22,6 @@ function currentPath(): string {
  * @returns The routed app view.
  */
 export default function App() {
-  // Capture Bearer token delivered via ?token= after OAuth callback and store it.
-  const urlParams = new URLSearchParams(window.location.search)
-  const urlToken = urlParams.get('token')
-  if (urlToken) {
-    setSessionToken(urlToken)
-    urlParams.delete('token')
-    const remaining = urlParams.toString()
-    window.history.replaceState({}, '', remaining ? `/?${remaining}` : '/')
-  }
-
   const [input, setInput] = createSignal('')
   const [localError, setLocalError] = createSignal<string | null>(null)
   const [path, setPath] = createSignal(currentPath())
@@ -54,12 +45,12 @@ export default function App() {
 
   const authError = () => readAuthError() ?? localError()
 
-  const beginSignIn = (event: SubmitEvent) => {
+  const beginSignIn = async (event: SubmitEvent) => {
     event.preventDefault()
 
     try {
       setLocalError(null)
-      startSignIn(input())
+      await startSignIn(input())
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : 'sign-in exploded a little')
     }
@@ -77,10 +68,9 @@ export default function App() {
   }
 
   const signInForm = () => (
-    <form onSubmit={beginSignIn}>
-      <label>
-        handle or did
-        <br />
+    <form class="account-sign-in" onSubmit={beginSignIn}>
+      <label class="account-field">
+        <span>handle or did</span>
         <input
           type="text"
           name="input"
@@ -93,57 +83,93 @@ export default function App() {
           }}
         />
       </label>
-      <div>
-        <button type="submit">sign in</button>
-      </div>
+      <button class="account-primary-action" type="submit">
+        <LogIn size={16} strokeWidth={1.9} aria-hidden="true" />
+        <span>sign in</span>
+      </button>
     </form>
   )
 
   return (
     <main>
-      <nav class="top-nav">
+      <nav class="top-nav" aria-label="primary navigation">
         <a href="/" onClick={navigate('/')} aria-current={path() === '/' ? 'page' : undefined}>
-          radio
+          <Radio size={15} strokeWidth={1.9} aria-hidden="true" />
+          <span>radio</span>
         </a>
-        <Show when={session()?.isAdmin}>
-          <a href="/queue-control" onClick={navigate('/queue-control')} aria-current={path() === '/queue-control' ? 'page' : undefined}>
-            queue control
-          </a>
-        </Show>
+        <a
+          href="/queue-control"
+          aria-label="queue control"
+          onClick={navigate('/queue-control')}
+          aria-current={path() === '/queue-control' ? 'page' : undefined}
+        >
+          <ListMusic size={15} strokeWidth={1.9} aria-hidden="true" />
+          <span class="nav-label-full">queue control</span>
+          <span class="nav-label-short" aria-hidden="true">queue</span>
+        </a>
         <a href="/auth" onClick={navigate('/auth')} aria-current={path() === '/auth' || path() === '/admin' ? 'page' : undefined}>
-          auth
+          <CircleUserRound size={15} strokeWidth={1.9} aria-hidden="true" />
+          <span>auth</span>
         </a>
       </nav>
 
-      <Show when={!session.loading} fallback={<p>checking session...</p>}>
-        <section hidden={path() !== '/'}>
-          <RadioPage />
+      <Show when={path() === '/'}>
+        <section>
+          <RadioPage session={session()} />
         </section>
+      </Show>
 
-        <section hidden={path() !== '/queue-control'}>
-          <QueueControlPage isAdmin={session()?.isAdmin ?? false} />
+      <Show when={path() === '/queue-control'}>
+        <section>
+          <QueueControlPage session={session()} sessionLoading={session.loading} />
         </section>
+      </Show>
 
-        <section hidden={path() !== '/auth' && path() !== '/admin'}>
-          <h1>sign in with bluesky oauth</h1>
-          <Show when={session()?.authenticated} fallback={signInForm()}>
-            <p>you are signed in.</p>
-            <p>account did: {session()?.accountDid}</p>
-            <Show when={session()?.isAdmin}>
-              <AdminPage accountDid={session()?.accountDid ?? ''} isAdmin={session()?.isAdmin ?? false} />
+      <Show when={path() === '/auth' || path() === '/admin'}>
+        <section class="account-page">
+          <Show when={!session.loading} fallback={<p>checking session...</p>}>
+            <header class="account-header">
+              <p class="eyebrow">bluesky oauth</p>
+              <h1>{session()?.authenticated ? 'account connected' : 'sign in'}</h1>
+            </header>
+            <Show when={session()?.authenticated} fallback={signInForm()}>
+              <div class="account-session">
+                <span class="account-session-icon" aria-hidden="true">
+                  <CircleUserRound size={20} strokeWidth={1.8} />
+                </span>
+                <div class="account-session-copy">
+                  <span>connected account</span>
+                  <code title={session()?.accountDid ?? undefined}>{session()?.accountDid}</code>
+                </div>
+                <button class="account-sign-out" type="button" onClick={handleSignOut}>
+                  <LogOut size={16} strokeWidth={1.9} aria-hidden="true" />
+                  <span>sign out</span>
+                </button>
+              </div>
+              <label class="listener-opt-out">
+                <span class="listener-opt-out-copy">
+                  <strong>listener visibility</strong>
+                  <small>hide my profile from the live listener count</small>
+                </span>
+                <span class="listener-opt-out-switch">
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={listenerOptOut()}
+                    onChange={(event) => toggleListenerOptOut(event.currentTarget.checked)}
+                  />
+                  <span aria-hidden="true" />
+                </span>
+              </label>
+              <Show when={session()?.isAdmin}>
+                <div class="account-admin-heading">
+                  <ShieldCheck size={17} strokeWidth={1.8} aria-hidden="true" />
+                  <span>station admin</span>
+                </div>
+                <AdminPage accountDid={session()?.accountDid ?? ''} isAdmin={session()?.isAdmin ?? false} />
+              </Show>
             </Show>
-            <button type="button" onClick={handleSignOut}>
-              sign out
-            </button>
           </Show>
-          <label class="listener-opt-out">
-            <input
-              type="checkbox"
-              checked={listenerOptOut()}
-              onChange={(event) => toggleListenerOptOut(event.currentTarget.checked)}
-            />
-            <span>opt out of showing my profile in the listener counter</span>
-          </label>
         </section>
       </Show>
 

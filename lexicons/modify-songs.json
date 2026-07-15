@@ -1,0 +1,63 @@
+{
+  "lexicon": 1,
+  "id": "pet.nkp.radio.songs.modify",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Update or delete songs in the radio library.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["action", "songId"],
+          "properties": {
+            "action": {
+              "type": "string",
+              "knownValues": ["update", "delete"]
+            },
+            "songId": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "artist": {
+              "type": "string"
+            },
+            "album": {
+              "type": "string"
+            },
+            "genre": {
+              "type": "string"
+            },
+            "durationSeconds": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "song": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#song"
+            },
+            "snapshot": {
+              "type": "ref",
+              "ref": "pet.nkp.radio#radioSnapshot"
+            }
+          }
+        }
+      },
+      "errors": [
+        { "name": "AuthenticationRequired" },
+        { "name": "AdminRequired" },
+        { "name": "InvalidRequest" },
+        { "name": "SongNotFound" }
+      ]
+    }
+  }
+}

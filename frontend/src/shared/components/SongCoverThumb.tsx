@@ -1,11 +1,11 @@
 import { Show } from 'solid-js'
-import { API_BASE } from '../lib/radio'
+import { songCoverThumbnailUrl } from '../lib/radio'
 
-export function SongCoverThumb(props: { songId: string; hasCover: boolean }) {
+export function SongCoverThumb(props: { songId: string; hasCover: boolean; baseUrl?: string | null }) {
   return (
     <span class="song-cover-thumb" aria-hidden="true">
       <Show when={props.hasCover} fallback={<span class="song-cover-fallback">art</span>}>
-        <img src={`${API_BASE}/api/songs/${props.songId}/cover/thumbnail`} alt="" loading="lazy" />
+        <img src={songCoverThumbnailUrl(props.songId, props.baseUrl)} alt="" loading="lazy" />
       </Show>
     </span>
   )

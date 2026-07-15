@@ -1,5 +1,5 @@
-use axum::extract::ws::Message;
 use super::types::*;
+use axum::extract::ws::Message;
 
 /// Serializes a radio event into a websocket text message.
 pub(crate) fn event_message(event: &RadioEvent) -> anyhow::Result<Message> {
