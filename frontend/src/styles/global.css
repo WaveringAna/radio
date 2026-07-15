@@ -511,3 +511,39 @@ main > section {
     transform: none;
   }
 }
+
+
+/* Admin Whitelist styling - unscrunch and layout profile rows */
+.song-list.admin-whitelist-list li {
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: center;
+  padding: 0.5rem 0.25rem;
+}
+
+.admin-profile-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.profile-handle {
+  font-weight: 500;
+  color: var(--text);
+  font-size: 0.95rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-did-sub {
+  font-size: 0.75rem;
+  color: color-mix(in srgb, var(--text) 45%, transparent);
+  word-break: break-all;
+}
+
+.did-fallback {
+  word-break: break-all;
+  font-size: 0.85rem;
+  color: color-mix(in srgb, var(--text) 70%, transparent);
+}

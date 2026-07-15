@@ -1,7 +1,8 @@
-import { createResource, createSignal, For, Show } from 'solid-js'
+import { createEffect, createResource, createSignal, For, Show } from 'solid-js'
 import { Plus, Trash2 } from 'lucide-solid'
 import { addAdminDid, fetchAdminPermissions, removeAdminDid } from '../../shared/lib/auth'
 import type { RadioTarget } from '../../shared/lib/radio'
+import { resolveAtprotoProfile, type AtprotoProfile } from '../../shared/lib/atproto'
 
 interface AdminPageProps {
   accountDid: string
@@ -21,6 +22,19 @@ function readableError(error: unknown): string {
 export default function AdminPage(props: AdminPageProps) {
   const [newDid, setNewDid] = createSignal('')
   const [localError, setLocalError] = createSignal<string | null>(null)
+  const [profiles, setProfiles] = createSignal<Record<string, AtprotoProfile>>({})
+  const inFlightDids = new Set<string>()
+
+  createEffect(() => {
+    const dids = adminPermissions()?.whitelistedDids ?? []
+    for (const did of dids) {
+      if (profiles()[did] || inFlightDids.has(did)) continue
+      inFlightDids.add(did)
+      void resolveAtprotoProfile(did)
+        .then((profile) => setProfiles((current) => ({ ...current, [did]: profile })))
+        .finally(() => inFlightDids.delete(did))
+    }
+  })
   const [adminPermissions, { mutate: mutateAdmins }] = createResource(
     () => ({ isAdmin: props.isAdmin, target: props.target }),
     ({ isAdmin, target }) => (isAdmin ? fetchAdminPermissions(target) : undefined),
@@ -66,18 +80,28 @@ export default function AdminPage(props: AdminPageProps) {
                   <Plus size={18} />
                 </button>
               </form>
-              <ul class="song-list">
+              <ul class="song-list admin-whitelist-list">
                 <For each={adminPermissions()?.whitelistedDids ?? []}>
-                  {(did) => (
-                    <li>
-                      <div class="song-copy">
-                        <span>{did}</span>
-                      </div>
-                      <button class="icon-button" type="button" aria-label="remove admin did" onClick={() => void removeDid(did)}>
-                        <Trash2 size={17} />
-                      </button>
-                    </li>
-                  )}
+                  {(did) => {
+                    const profile = () => profiles()[did]
+                    return (
+                      <li>
+                        <div class="song-copy">
+                          <Show when={profile()} fallback={<span class="did-fallback">{did}</span>}>
+                            {(p) => (
+                              <div class="admin-profile-row">
+                                <span class="profile-handle">@{p().handle}</span>
+                                <span class="profile-did-sub">{did}</span>
+                              </div>
+                            )}
+                          </Show>
+                        </div>
+                        <button class="icon-button" type="button" aria-label="remove admin did" onClick={() => void removeDid(did)}>
+                          <Trash2 size={17} />
+                        </button>
+                      </li>
+                    )
+                  }}
                 </For>
               </ul>
             </section>
