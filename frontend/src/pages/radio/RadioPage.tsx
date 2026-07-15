@@ -1,4 +1,4 @@
-import { createEffect, createResource, createSignal, For, Index, onCleanup, Show, untrack } from 'solid-js'
+import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, Show, untrack } from 'solid-js'
 import { AudioLines, ChevronLeft, ChevronRight, Eye, Play, RadioTower, Send, Volume2 } from 'lucide-solid'
 import { resolveAtprotoProfile, type AtprotoProfile } from '../../shared/lib/atproto'
 import {
@@ -22,7 +22,6 @@ import {
   type QueueItem,
   type RadioEvent,
   type RadioState,
-  type RadioTarget,
   type Song,
 } from '../../shared/lib/radio'
 import type { SessionResponse } from '../../shared/lib/auth'
@@ -241,17 +240,27 @@ export default function RadioPage(props: RadioPageProps) {
     () => SYNDICATION_WORKER_BASE || 'disabled',
     (workerBase) => workerBase === 'disabled' ? Promise.resolve([]) : fetchSyndicatedStations(workerBase),
   )
-  const tuneInStations = (): TuneInStation[] => tuneInStationsFrom(syndicatedStations() ?? [])
-  const selectedStation = (): TuneInStation => selectedTuneInStationFrom(tuneInStations(), selectedStationUrl())
-  const selectedApiBase = () => selectedStation().apiBase
-  const selectedStationKey = () => tuneInStationResourceKey(selectedStation())
-  const selectedRadioTarget = (): RadioTarget => stationRadioTarget(selectedStation())
-  const selectedRadioCanUseXrpc = () => canUseRadioXrpcTarget(selectedRadioTarget())
-  const canUseRadioXrpc = () => Boolean(props.session?.authenticated) && selectedRadioCanUseXrpc()
-  const stationResourceKey = () => ({
+  const tuneInStations = createMemo(() => tuneInStationsFrom(syndicatedStations() ?? []))
+  const selectedStation = createMemo(() => selectedTuneInStationFrom(tuneInStations(), selectedStationUrl()))
+  const selectedApiBase = createMemo(() => selectedStation().apiBase)
+  const selectedStationKey = createMemo(() => tuneInStationResourceKey(selectedStation()))
+  const selectedRadioTarget = createMemo(
+    () => stationRadioTarget(selectedStation()),
+    undefined,
+    { equals: (prev, next) => prev?.did === next?.did && prev?.baseUrl === next?.baseUrl }
+  )
+  const selectedRadioCanUseXrpc = createMemo(() => canUseRadioXrpcTarget(selectedRadioTarget()))
+  const canUseRadioXrpc = createMemo(() => Boolean(props.session?.authenticated) && selectedRadioCanUseXrpc())
+  const stationResourceKey = createMemo(() => ({
     key: selectedStationKey(),
     authenticated: canUseRadioXrpc(),
     target: selectedRadioTarget(),
+  }), undefined, {
+    equals: (prev, next) =>
+      prev?.key === next?.key &&
+      prev?.authenticated === next?.authenticated &&
+      prev?.target.did === next?.target.did &&
+      prev?.target.baseUrl === next?.target.baseUrl
   })
   const [snapshot, { mutate, refetch }] = createResource(stationResourceKey, ({ target, authenticated }) => fetchRadioSnapshot(target, authenticated))
   const [songs, { refetch: refetchSongs }] = createResource(stationResourceKey, ({ target, authenticated }) => fetchSongs(target, authenticated))
