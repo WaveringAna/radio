@@ -26,6 +26,7 @@ import {
 } from '../../shared/lib/radio'
 import type { SessionResponse } from '../../shared/lib/auth'
 import {
+  isPlaceholderStation,
   labelFromStationUrl,
   normalizeStationUrl,
   readSelectedStationUrl,
@@ -251,7 +252,10 @@ export default function RadioPage(props: RadioPageProps) {
   )
   const selectedRadioCanUseXrpc = createMemo(() => canUseRadioXrpcTarget(selectedRadioTarget()))
   const canUseRadioXrpc = createMemo(() => Boolean(props.session?.authenticated) && selectedRadioCanUseXrpc())
-  const stationResourceKey = createMemo(() => ({
+  // While the standalone client waits for the station directory, the selected
+  // station is a placeholder with no API base; a null key keeps resources idle
+  // so nothing fetches against the static host serving this page.
+  const stationResourceKey = createMemo(() => isPlaceholderStation(selectedStation()) ? null : ({
     key: selectedStationKey(),
     authenticated: canUseRadioXrpc(),
     target: selectedRadioTarget(),
@@ -480,6 +484,7 @@ export default function RadioPage(props: RadioPageProps) {
   })
 
   createEffect(() => {
+    if (isPlaceholderStation(selectedStation())) return
     let socket: WebSocket | null = null
     let reconnectTimer: number | null = null
     let reconnectAttempt = 0
@@ -544,6 +549,7 @@ export default function RadioPage(props: RadioPageProps) {
   })
 
   createEffect(() => {
+    if (isPlaceholderStation(selectedStation())) return
     let reconnectTimer: number | null = null
     let reconnectAttempt = 0
     let cancelled = false

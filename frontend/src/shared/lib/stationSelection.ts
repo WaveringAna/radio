@@ -178,6 +178,10 @@ export function selectedTuneInStationFrom(stations: TuneInStation[], selectedUrl
   return localTuneInStation()
 }
 
+export function isPlaceholderStation(station: TuneInStation): boolean {
+  return station.did === 'loading'
+}
+
 export function stationResourceKey(station: TuneInStation): string {
   if (station.local) return station.apiBase || RELATIVE_API_BASE
   return (station.apiBase || station.url) || RELATIVE_API_BASE

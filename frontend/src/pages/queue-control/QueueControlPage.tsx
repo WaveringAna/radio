@@ -57,6 +57,7 @@ import {
 } from '../../shared/lib/radio'
 import { SearchableDropdown } from '../../shared/components/SearchableDropdown'
 import {
+  isPlaceholderStation,
   labelFromStationUrl,
   readSelectedStationUrl,
   selectedTuneInStationFrom,
@@ -104,7 +105,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const selectedStationKey = () => stationResourceKey(selectedStation())
   const selectedRadioTarget = (): RadioTarget => stationRadioTarget(selectedStation())
   const selectedRadioCanUseXrpc = () => canUseRadioXrpcTarget(selectedRadioTarget())
-  const adminProbeSource = () => props.session?.authenticated && selectedRadioCanUseXrpc() ? selectedStationKey() : null
+  const adminProbeSource = () => props.session?.authenticated && selectedRadioCanUseXrpc() && !isPlaceholderStation(selectedStation()) ? selectedStationKey() : null
   const [adminStatus] = createResource(adminProbeSource, async () => {
     try {
       await fetchAdminPermissions(selectedRadioTarget())
