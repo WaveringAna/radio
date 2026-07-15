@@ -1396,10 +1396,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.5rem 1rem;
-  background: var(--surface-soft);
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
+  padding: 0.5rem 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
   margin-bottom: 1rem;
   color: var(--muted);
   font-size: 0.8rem;
@@ -1603,18 +1603,19 @@
 }
 
 .qc-control-btn.play-circle-btn {
-  background: var(--surface-soft);
-  border: 1px solid var(--accent);
-  color: var(--accent);
+  background: #ffffff;
+  color: #000000;
+  border: none;
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.15);
+  box-shadow: 0 4px 12px rgba(255, 255, 255, 0.15);
 }
 
 .qc-control-btn.play-circle-btn:hover {
   transform: scale(1.05);
-  background: rgba(var(--accent-rgb), 0.1);
+  background: #ffffff;
+  opacity: 0.9;
 }
 
 .qc-control-btn.play-circle-btn:active {

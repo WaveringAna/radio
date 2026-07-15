@@ -653,7 +653,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
         <header class="qc-station-bar-new">
           <div class="qc-station-identity-new">
-            <span class="qc-live-mark-new" aria-hidden="true" />
             <strong>{selectedStation().name}</strong>
             <span title={selectedStation().url}>{labelFromStationUrl(selectedStation().url)}</span>
           </div>
@@ -661,7 +660,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
             class="qc-station-state-new"
             classList={{ 'is-playing': snapshot()?.state.status === 'playing' }}
           >
-            <span aria-hidden="true" />
             {snapshot()?.state.status ?? 'connecting'}
           </span>
         </header>
@@ -680,7 +678,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
             <div class="qc-now-details">
               <div class="qc-now-eyebrow">
-                <span class="qc-now-status-dot"></span>
                 <span>NOW PLAYING</span>
               </div>
               <Show
