@@ -697,6 +697,16 @@ function isLocalhost(hostname: string): boolean {
   return host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost') || host === '::1'
 }
 
+function isLocalTarget(target?: RadioTarget): boolean {
+  const base = serviceBase(target)
+  try {
+    const url = new URL(base)
+    return isLocalhost(url.hostname)
+  } catch {
+    return false
+  }
+}
+
 function isLoopbackOrPrivateHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
   if (host === 'localhost' || host.endsWith('.localhost') || host === '::1') return true
@@ -710,17 +720,13 @@ function isPublicDid(did: string | null | undefined): boolean {
   const value = (did ?? '').trim().toLowerCase()
   if (!value) return false
   
-  if (typeof window !== 'undefined' && isLocalhost(window.location.hostname)) {
-    return true
-  }
-  
   return !value.startsWith('did:web:localhost')
     && !value.startsWith('did:web:127.')
     && !value.startsWith('did:web:0.0.0.0')
 }
 
 function defaultProxyTargetLooksPublic(): boolean {
-  if (typeof window !== 'undefined' && isLocalhost(window.location.hostname)) {
+  if (isLocalTarget()) {
     return true
   }
 
