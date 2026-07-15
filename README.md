@@ -2,67 +2,67 @@
 
 small rust + solidjs radio server. the rust backend owns the xrpcs, media, audio storage, embedded read-only pds, and production static serving; the solid frontend owns browser oauth and the ui.
 
-## setup
+## setup & hosting
 
+To run your own radio station and have it syndicated (so it automatically shows up on directories like `https://radio.wisp.place`):
+
+1. **Install dependencies:**
+   ```bash
+   cp .env.example .env
+   npm --prefix frontend install
+   cargo check
+   ```
+
+2. **Expose it publicly:**
+   Your station must be publicly reachable over standard HTTPS on a public domain name so ATProto relays and directory workers can crawl it. Setting up a reverse proxy (like Caddy or Nginx) or routing traffic through a Cloudflare Tunnel is the easiest way to expose it.
+
+3. **Configure your `.env`:**
+   Configure your public domain endpoints (you can use the exact same domain name for all of them!):
+   ```env
+   APP_URL=https://radio.yourdomain.com
+   SERVICE_DID=did:web:radio.yourdomain.com
+   STATION_URL=https://radio.yourdomain.com
+   STATION_ANNOUNCE_WORKERS=https://syndication.sharkgirl.pet
+   ```
+
+When the backend starts up, it will automatically register your station's metadata and notify the syndication workers to crawl it. 
+
+You can also trigger a manual crawl announcement directly to the public worker:
 ```bash
-cp .env.example .env
-npm --prefix frontend install
-cargo check
+curl -X POST https://syndication.sharkgirl.pet/xrpc/com.atproto.sync.requestCrawl \
+  -H "Content-Type: application/json" \
+  -d '{"hostname": "radio.yourdomain.com"}'
 ```
 
-edit `.env` for your local url, database, admin dids, and audio directory.
+## syndication worker
 
-## environment
+If you want to run your own syndication worker directory instead of using `https://syndication.sharkgirl.pet`:
 
-| variable | default | description |
-| --- | --- | --- |
-| `BIND_ADDR` | `0.0.0.0:3000` | socket address the rust backend listens on |
-| `APP_URL` | `http://127.0.0.1:3000` | public backend url used for oauth client metadata and service defaults |
-| `FRONTEND_URL` | `APP_URL` | frontend origin used for the browser oauth `/auth` redirect |
-| `SERVICE_DID` | `did:web:localhost` | service DID expected as the service-auth JWT audience |
-| `SERVICE_IDS` | `#radio_xrpc` | comma-separated DID document service ids; quote values starting with `#` in `.env` |
-| `SERVICE_ENDPOINT` | `APP_URL` with `http://` rewritten to `https://` | endpoint published in `/.well-known/did.json` for PDS proxy service routing |
-| `STATION_URL` | `SERVICE_ENDPOINT` | public radio backend URL advertised by the embedded read-only PDS |
-| `STATION_ANNOUNCE_RELAYS` | `https://relay.fire.hose.cam` | comma-separated relay HTTP origins to notify with `com.atproto.sync.requestCrawl` |
-| `STATION_ANNOUNCE_WORKERS` | empty | comma-separated syndication worker origins to notify with the same `requestCrawl` call |
-| `STATION_ANNOUNCE_ON_STARTUP` | `true` | whether to announce the public station host after the listener starts |
-| `STATION_NAME` | `radio` | station name advertised by the embedded read-only PDS |
-| `STATION_DESCRIPTION` | empty | optional station description advertised by the embedded read-only PDS |
-| `PDS_SIGNING_KEY_HEX` | generated and stored in sqlite | optional 32-byte secp256k1 private key hex for signing the embedded PDS repo |
-| `OAUTH_AUTHORIZATION_SERVER` | `https://bsky.social` | authorization server advertised by `/.well-known/oauth-protected-resource` |
-| `DATABASE_URL` | `sqlite://radio.db` | sqlite database url |
-| `ADMIN_DIDS` | empty | comma-separated did allowlist for admin actions |
-| `AUDIO_DIR` | `data/audio` | uploaded audio and cover storage directory |
+1. **Configure environment:**
+   ```bash
+   cp syndication-worker/.env.example syndication-worker/.env
+   # Edit syndication-worker/.env as needed
+   ```
 
-## syndication & public hosting
+2. **Run it:**
+   ```bash
+   cargo run --manifest-path syndication-worker/Cargo.toml
+   ```
 
-To have your station discovered and syndicated (so it appears on public directories like `https://radio.wisp.place`):
+It listens on `http://127.0.0.1:3300` by default. You can query its status and endpoints:
+- `GET /health` - Overall health check.
+- `GET /stations` - List of all crawled healthy stations.
+- `GET /stations/{did}` - Detailed information on a specific station.
+- `POST /xrpc/com.atproto.sync.requestCrawl` - Request the worker to crawl your public station.
 
-1. **Public Domain & SSL/TLS**: Your station **must** be publicly reachable over standard HTTPS on a public domain name (e.g., `https://radio.yourdomain.com`). Relays and syndication workers cannot crawl local addresses (`localhost`, `127.0.0.1`), private IPs, or servers with invalid/self-signed SSL certificates.
-2. **Reverse Proxy Setup**: Run the backend behind a reverse proxy (such as Caddy, Nginx, or a Cloudflare Tunnel) to manage HTTPS certificates and forward inbound traffic to the Rust backend (default `BIND_ADDR=0.0.0.0:3000`).
-3. **Environment Setup**: In your `.env` file, configure your public endpoints:
-   - `APP_URL=https://radio.yourdomain.com`
-   - `SERVICE_DID=did:web:radio.yourdomain.com`
-   - `STATION_URL=https://radio.yourdomain.com`
-   - `STATION_ANNOUNCE_WORKERS=https://syndication.sharkgirl.pet` (or the URL of the active syndication directory worker)
-
-When the backend boots (or receives a manual announcement), it publishes the station's metadata in the embedded read-only PDS under the record `pet.nkp.radio.station/self` and prompts the relays and syndication workers in your `.env` to crawl its public DID document and repository.
-
-You can force a syndication crawl announcement manually without restarting:
-
-```bash
-curl -X POST http://127.0.0.1:3000/api/syndication/announce
-```
 ## development
 
 run the backend:
-
 ```bash
 cargo run
 ```
 
 run the frontend dev server:
-
 ```bash
 npm --prefix frontend run dev
 ```
@@ -85,3 +85,25 @@ cargo run --release
 - `static/` frontend bundle served by rust
 - `data/audio/` default uploaded audio storage
 - `migrations/` sqlite migrations
+
+## environment reference
+
+| variable | default | description |
+| --- | --- | --- |
+| `BIND_ADDR` | `0.0.0.0:3000` | socket address the rust backend listens on |
+| `APP_URL` | `http://127.0.0.1:3000` | public backend url used for oauth client metadata and service defaults |
+| `FRONTEND_URL` | `APP_URL` | frontend origin used for the browser oauth `/auth` redirect |
+| `SERVICE_DID` | `did:web:localhost` | service DID expected as the service-auth JWT audience |
+| `SERVICE_IDS` | `#radio_xrpc` | comma-separated DID document service ids; quote values starting with `#` in `.env` |
+| `SERVICE_ENDPOINT` | `APP_URL` with `http://` rewritten to `https://` | endpoint published in `/.well-known/did.json` for PDS proxy service routing |
+| `STATION_URL` | `SERVICE_ENDPOINT` | public radio backend URL advertised by the embedded read-only PDS |
+| `STATION_ANNOUNCE_RELAYS` | `https://relay.fire.hose.cam` | comma-separated relay HTTP origins to notify with `com.atproto.sync.requestCrawl` |
+| `STATION_ANNOUNCE_WORKERS` | empty | comma-separated syndication worker origins to notify with the same `requestCrawl` call |
+| `STATION_ANNOUNCE_ON_STARTUP` | `true` | whether to announce the public station host after the listener starts |
+| `STATION_NAME` | `radio` | station name advertised by the embedded read-only PDS |
+| `STATION_DESCRIPTION` | empty | optional station description advertised by the embedded read-only PDS |
+| `PDS_SIGNING_KEY_HEX` | generated and stored in sqlite | optional 32-byte secp256k1 private key hex for signing the embedded PDS repo |
+| `OAUTH_AUTHORIZATION_SERVER` | `https://bsky.social` | authorization server advertised by `/.well-known/oauth-protected-resource` |
+| `DATABASE_URL` | `sqlite://radio.db` | sqlite database url |
+| `ADMIN_DIDS` | empty | comma-separated did allowlist for admin actions |
+| `AUDIO_DIR` | `data/audio` | uploaded audio and cover storage directory |
