@@ -113,66 +113,59 @@ export default function App() {
         </a>
       </nav>
 
-      <Show when={path() === '/'}>
-        <section>
-          <RadioPage session={session()} />
-        </section>
-      </Show>
+      <section style={{ display: path() === '/' ? 'block' : 'none' }}>
+        <RadioPage session={session()} />
+      </section>
 
-      <Show when={path() === '/queue-control'}>
-        <section>
-          <QueueControlPage session={session()} sessionLoading={session.loading} />
-        </section>
-      </Show>
+      <section style={{ display: path() === '/queue-control' ? 'block' : 'none' }}>
+        <QueueControlPage session={session()} sessionLoading={session.loading} />
+      </section>
 
-      <Show when={path() === '/auth' || path() === '/admin'}>
-        <section class="account-page">
-          <Show when={!session.loading} fallback={<p>checking session...</p>}>
-            <header class="account-header">
-              <p class="eyebrow">bluesky oauth</p>
-              <h1>{session()?.authenticated ? 'account connected' : 'sign in'}</h1>
-            </header>
-            <Show when={session()?.authenticated} fallback={signInForm()}>
-              <div class="account-session">
-                <span class="account-session-icon" aria-hidden="true">
-                  <CircleUserRound size={20} strokeWidth={1.8} />
-                </span>
-                <div class="account-session-copy">
-                  <span>connected account</span>
-                  <code title={session()?.accountDid ?? undefined}>{session()?.accountDid}</code>
-                </div>
-                <button class="account-sign-out" type="button" onClick={handleSignOut}>
-                  <LogOut size={16} strokeWidth={1.9} aria-hidden="true" />
-                  <span>sign out</span>
-                </button>
+      <section class="account-page" style={{ display: path() === '/auth' || path() === '/admin' ? 'block' : 'none' }}>
+        <Show when={!session.loading} fallback={<p>checking session...</p>}>
+          <header class="account-header">
+            <p class="eyebrow">bluesky oauth</p>
+            <h1>{session()?.authenticated ? 'account connected' : 'sign in'}</h1>
+          </header>
+          <Show when={session()?.authenticated} fallback={signInForm()}>
+            <div class="account-session">
+              <span class="account-session-icon" aria-hidden="true">
+                <CircleUserRound size={20} strokeWidth={1.8} />
+              </span>
+              <div class="account-session-copy">
+                <span>connected account</span>
+                <code title={session()?.accountDid ?? undefined}>{session()?.accountDid}</code>
               </div>
-              <label class="listener-opt-out">
-                <span class="listener-opt-out-copy">
-                  <strong>listener visibility</strong>
-                  <small>hide my profile from the live listener count</small>
-                </span>
-                <span class="listener-opt-out-switch">
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    checked={listenerOptOut()}
-                    onChange={(event) => toggleListenerOptOut(event.currentTarget.checked)}
-                  />
-                  <span aria-hidden="true" />
-                </span>
-              </label>
-              <Show when={session()?.isAdmin}>
-                <div class="account-admin-heading">
-                  <ShieldCheck size={17} strokeWidth={1.8} aria-hidden="true" />
-                  <span>station admin</span>
-                </div>
-                <AdminPage accountDid={session()?.accountDid ?? ''} isAdmin={session()?.isAdmin ?? false} />
-              </Show>
+              <button class="account-sign-out" type="button" onClick={handleSignOut}>
+                <LogOut size={16} strokeWidth={1.9} aria-hidden="true" />
+                <span>sign out</span>
+              </button>
+            </div>
+            <label class="listener-opt-out">
+              <span class="listener-opt-out-copy">
+                <strong>listener visibility</strong>
+                <small>hide my profile from the live listener count</small>
+              </span>
+              <span class="listener-opt-out-switch">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={listenerOptOut()}
+                  onChange={(event) => toggleListenerOptOut(event.currentTarget.checked)}
+                />
+                <span aria-hidden="true" />
+              </span>
+            </label>
+            <Show when={session()?.isAdmin}>
+              <div class="account-admin-heading">
+                <ShieldCheck size={17} strokeWidth={1.8} aria-hidden="true" />
+                <span>station admin</span>
+              </div>
+              <AdminPage accountDid={session()?.accountDid ?? ''} isAdmin={session()?.isAdmin ?? false} />
             </Show>
           </Show>
-        </section>
-      </Show>
-
+        </Show>
+      </section>
       <Show when={authError()}>
         {(message) => <p>{formatAuthError(message())}</p>}
       </Show>
