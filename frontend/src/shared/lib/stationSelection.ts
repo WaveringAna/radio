@@ -94,10 +94,22 @@ export function localTuneInStation(): TuneInStation {
   }
 }
 
+function isStandaloneFrontend(hostname: string): boolean {
+  const host = hostname.toLowerCase()
+  return host === 'radio.wisp.place'
+    || host === 'wisp.place'
+    || host.endsWith('.wisp.place')
+    || host === 'sites.wisp.place'
+}
+
 export function tuneInStationsFrom(syndicatedStations: SyndicatedStation[] = []): TuneInStation[] {
   const stations = new Map<string, TuneInStation>()
   const local = localTuneInStation()
-  stations.set(stationListKey(local.url), local)
+
+  const isStandalone = typeof window !== 'undefined' && isStandaloneFrontend(window.location.hostname)
+  if (!isStandalone) {
+    stations.set(stationListKey(local.url), local)
+  }
 
   for (const station of syndicatedStations) {
     const url = normalizeStationUrl(station.url)
@@ -147,6 +159,9 @@ export function selectedTuneInStationFrom(stations: TuneInStation[], selectedUrl
     // Fall through to the local station when the remembered value is not a URL.
   }
 
+  if (stations.length > 0) {
+    return stations.find(s => !s.local) || stations[0]
+  }
   return localTuneInStation()
 }
 
