@@ -448,7 +448,7 @@ async function radioGet<T>(
   nsid: string,
   options: { session?: Session; target?: RadioTarget } = {},
 ): Promise<T> {
-  if (typeof window !== 'undefined' && isLocalhost(window.location.hostname)) {
+  if (isLocalTarget(options.target)) {
     const session = options.session ?? await requiredSession()
     const token = await getServiceAuthToken(session, nsid, options.target)
     const base = serviceBase(options.target)
@@ -477,7 +477,7 @@ async function radioPost<T = unknown>(
   input?: Record<string, unknown>,
   options: { target?: RadioTarget } = {},
 ): Promise<T> {
-  if (typeof window !== 'undefined' && isLocalhost(window.location.hostname)) {
+  if (isLocalTarget(options.target)) {
     const session = await requiredSession()
     const token = await getServiceAuthToken(session, nsid, options.target)
     const base = serviceBase(options.target)
@@ -506,7 +506,7 @@ async function radioPost<T = unknown>(
 async function radioMultipart<T>(nsid: string, formData: FormData, target?: RadioTarget): Promise<T> {
   const session = await requiredSession()
 
-  if (typeof window !== 'undefined' && isLocalhost(window.location.hostname)) {
+  if (isLocalTarget(target)) {
     const token = await getServiceAuthToken(session, nsid, target)
     const base = serviceBase(target)
     const response = await fetch(`${base}/xrpc/${nsid}`, {
