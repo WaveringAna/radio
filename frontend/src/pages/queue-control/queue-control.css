@@ -1915,11 +1915,15 @@
   transform: scale(0.97);
 }
 
-.qc-queued-label {
-  color: var(--muted);
-  font-size: 0.85rem;
-  font-weight: 600;
-  flex-shrink: 0;
+.qc-add-btn.already-queued {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+  border: 1px solid var(--hairline);
+  font-weight: 500;
+}
+
+.qc-add-btn.already-queued:hover {
+  background: color-mix(in srgb, var(--text) 14%, transparent);
 }
 
 .qc-more-btn {

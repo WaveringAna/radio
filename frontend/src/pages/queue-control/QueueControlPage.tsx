@@ -28,6 +28,7 @@ import {
   canUseRadioXrpcTarget,
   clearQueue,
   controlRadio,
+  createPlaylist,
   deleteSong,
   enqueueAlbum,
   enqueueSong,
@@ -54,6 +55,7 @@ import {
   type RadioTarget,
   type Song,
 } from '../../shared/lib/radio'
+import { SearchableDropdown } from '../../shared/components/SearchableDropdown'
 import {
   labelFromStationUrl,
   readSelectedStationUrl,
@@ -152,6 +154,91 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const [snapshotSyncedAt, setSnapshotSyncedAt] = createSignal(Date.now())
   const inFlightDids = new Set<string>()
   const pageSize = 8
+
+  const [selectedSongIds, setSelectedSongIds] = createSignal<string[]>([])
+  const [savingSelection, setSavingSelection] = createSignal(false)
+  const [newPlaylistName, setNewPlaylistName] = createSignal('')
+  const [savingQueue, setSavingQueue] = createSignal(false)
+  const [selectedGenre, setSelectedGenre] = createSignal('')
+
+  const toggleSongSelection = (songId: string, checked: boolean) => {
+    setSelectedSongIds((current) => (checked ? [...current, songId] : current.filter((id) => id !== songId)))
+  }
+
+  const addSelectedToQueue = async () => {
+    const ids = selectedSongIds()
+    if (ids.length === 0) return
+    try {
+      setPageError(null)
+      mutate(await enqueueAlbum(ids, selectedRadioTarget()))
+      setSelectedSongIds([])
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'multi add faceplanted.')
+    }
+  }
+
+  const saveQueueAsPlaylist = async () => {
+    const name = newPlaylistName().trim()
+    if (!name) return
+    const songIds = (snapshot()?.queue ?? []).map((item) => item.songId)
+    if (songIds.length === 0) return
+
+    try {
+      setPageError(null)
+      await createPlaylist(name, songIds, selectedRadioTarget())
+      setNewPlaylistName('')
+      setSavingQueue(false)
+      await refetchPlaylists()
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'failed to save queue as set')
+    }
+  }
+
+  const saveSelectionAsPlaylist = async () => {
+    const name = newPlaylistName().trim()
+    if (!name) return
+    const songIds = selectedSongIds()
+    if (songIds.length === 0) return
+
+    try {
+      setPageError(null)
+      await createPlaylist(name, songIds, selectedRadioTarget())
+      setNewPlaylistName('')
+      setSavingSelection(false)
+      setSelectedSongIds([])
+      await refetchPlaylists()
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'failed to save selection as set')
+    }
+  }
+
+
+  const genres = createMemo(() => {
+    const list = (songs() ?? [])
+      .map((song) => song.genre?.trim())
+      .filter((genre): genre is string => !!genre)
+    return [...new Set(list)].sort()
+  })
+
+  const shuffleLibraryByGenre = async (genre: string, replace: boolean) => {
+    if (!genre) return
+    const matchingSongIds = (songs() ?? [])
+      .filter((song) => song.genre?.toLowerCase() === genre.toLowerCase())
+      .map((song) => song.id)
+    if (matchingSongIds.length === 0) return
+
+    const shuffled = [...matchingSongIds].sort(() => Math.random() - 0.5)
+    try {
+      if (replace) {
+        setPageError(null)
+        mutate(await clearQueue(selectedRadioTarget()))
+      }
+      setPageError(null)
+      mutate(await enqueueAlbum(shuffled, selectedRadioTarget()))
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'shuffle/queue genre failed')
+    }
+  }
 
   const profileFor = (did: string) => profiles()[did] ?? fallbackProfile(did)
 
@@ -834,6 +921,68 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
               {/* Songs List */}
               <Show when={searchMode() === 'songs'}>
+                <Show when={libraryAction() === 'queue' && selectedSongIds().length > 0}>
+                  <div class="multi-add-row queue-selection-row" style="display: flex; flex-direction: column; gap: 0.75rem; padding: 0.75rem; border: 1px solid var(--hairline); border-radius: 8px; margin-bottom: 1rem; background: color-mix(in srgb, var(--hairline) 20%, transparent);">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+                      <span style="font-weight: 500; font-size: 0.95rem; color: var(--text);">{selectedSongIds().length} songs selected</span>
+                      <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <button class="pill-button" type="button" onClick={() => void addSelectedToQueue()}>
+                          add to queue
+                        </button>
+                        <button class="pill-button subtle" type="button" onClick={() => { setSavingSelection(!savingSelection()); setNewPlaylistName(''); }}>
+                          {savingSelection() ? 'cancel' : 'save as set'}
+                        </button>
+                        <button class="pill-button subtle" type="button" onClick={() => setSelectedSongIds([])}>
+                          clear
+                        </button>
+                      </div>
+                    </div>
+                    <Show when={savingSelection()}>
+                      <div class="playlist-save-form" style="display: flex; align-items: center; gap: 0.5rem; border-top: 1px solid var(--hairline); padding-top: 0.75rem; margin-top: 0.25rem;">
+                        <input
+                          type="text"
+                          placeholder="name your set"
+                          style="flex: 1; padding: 0.35rem 0.65rem; border-radius: 6px; border: 1px solid var(--hairline); background: transparent; color: var(--text); font-size: 0.9rem;"
+                          value={newPlaylistName()}
+                          onInput={(event) => setNewPlaylistName(event.currentTarget.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') void saveSelectionAsPlaylist()
+                          }}
+                        />
+                        <button class="pill-button" type="button" disabled={!newPlaylistName().trim()} onClick={() => void saveSelectionAsPlaylist()}>
+                          save
+                        </button>
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
+
+                <Show when={libraryAction() === 'queue'}>
+                  <div class="qc-genre-bar" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border: 1px solid var(--hairline); border-radius: 8px; margin-bottom: 1rem; background: color-mix(in srgb, var(--hairline) 8%, transparent); flex-wrap: wrap;">
+                    <span style="font-weight: 500; font-size: 0.9rem; color: var(--text); flex-shrink: 0;">queue genre:</span>
+                    <div style="flex: 1; min-width: 140px; position: relative;">
+                      <SearchableDropdown
+                        options={genres()}
+                        placeholder="select genre..."
+                        onSelect={(val) => setSelectedGenre(val)}
+                      />
+                    </div>
+                    <Show when={selectedGenre()}>
+                      <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
+                        <button class="pill-button subtle" type="button" onClick={() => void shuffleLibraryByGenre(selectedGenre(), false)}>
+                          append
+                        </button>
+                        <button class="pill-button subtle" type="button" onClick={() => void shuffleLibraryByGenre(selectedGenre(), true)}>
+                          play (shuffle)
+                        </button>
+                        <button class="pill-button subtle" type="button" style="padding-inline: 0.4rem;" onClick={() => setSelectedGenre('')}>
+                          <X size={15} />
+                        </button>
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
+
                 <Show when={!songs.loading} fallback={<p class="list-empty">loading songs...</p>}>
                   <ul class="qc-songs-list" classList={{ 'library-edit-list': libraryAction() === 'edit' }}>
                     <For each={songsPaging.paged()} fallback={<li class="list-empty">no songs match</li>}>
@@ -845,6 +994,12 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                               when={libraryAction() === 'edit'}
                               fallback={
                                 <>
+                                  <input
+                                    type="checkbox"
+                                    style="margin: 0 0.5rem 0 0; cursor: pointer; flex-shrink: 0; width: 16px; height: 16px;"
+                                    checked={selectedSongIds().includes(song.id)}
+                                    onChange={(event) => toggleSongSelection(song.id, event.currentTarget.checked)}
+                                  />
                                   <div class="qc-song-thumb">
                                     <Show when={song.hasCover} fallback={<div class="qc-thumb-placeholder">{song.title.slice(0, 4).toUpperCase()}</div>}>
                                       <img src={songCoverThumbnailUrl(song.id, selectedApiBase())} alt="" />
@@ -857,16 +1012,9 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                                   <div class="qc-song-genre-pill">{song.genre || 'General'}</div>
                                   <div class="qc-song-duration">{formatTime(song.durationSeconds)}</div>
                                   
-                                  <Show
-                                    when={isQueued()}
-                                    fallback={
-                                      <button class="qc-add-btn" onClick={() => void addSongToQueue(song.id)}>
-                                        + Add
-                                      </button>
-                                    }
-                                  >
-                                    <span class="qc-queued-label">+ Queued</span>
-                                  </Show>
+                                  <button class="qc-add-btn" classList={{ 'already-queued': isQueued() }} onClick={() => void addSongToQueue(song.id)}>
+                                    + Add
+                                  </button>
                                   <button class="qc-more-btn" onClick={() => beginSongEdit(song)}>...</button>
                                 </>
                               }
@@ -1112,12 +1260,36 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                   <h2>Up next</h2>
                 </div>
                 <Show when={(snapshot()?.queue.length ?? 0) > 0}>
-                  <button class="qc-clear-btn" onClick={() => void clearTheQueue()}>
-                    <Trash2 size={14} style="margin-right: 4px;" />
-                    Clear
-                  </button>
+                  <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
+                    <button class="qc-clear-btn" onClick={() => { setSavingQueue(!savingQueue()); setNewPlaylistName(''); }}>
+                      Save Set
+                    </button>
+                    <button class="qc-clear-btn" onClick={() => void clearTheQueue()}>
+                      <Trash2 size={14} style="margin-right: 4px;" />
+                      Clear
+                    </button>
+                  </div>
                 </Show>
               </div>
+
+              <Show when={savingQueue()}>
+                <div class="playlist-save-form" style="display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem; border: 1px solid var(--hairline); border-radius: 8px; margin-top: 0.75rem; margin-bottom: 0.75rem; background: color-mix(in srgb, var(--hairline) 8%, transparent);">
+                  <input
+                    type="text"
+                    placeholder="name your set"
+                    style="flex: 1; padding: 0.35rem 0.65rem; border-radius: 6px; border: 1px solid var(--hairline); background: transparent; color: var(--text); font-size: 0.9rem;"
+                    value={newPlaylistName()}
+                    onInput={(event) => setNewPlaylistName(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void saveQueueAsPlaylist()
+                    }}
+                  />
+                  <button class="pill-button" type="button" disabled={!newPlaylistName().trim()} onClick={() => void saveQueueAsPlaylist()}>
+                    save
+                  </button>
+                </div>
+              </Show>
+
 
               <span class="qc-column-stats" style="margin-top: 4px; display: block;">
                 {snapshot()?.queue.length ?? 0} tracks • about {queueDurationMin()} min
