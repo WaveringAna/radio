@@ -1,10 +1,12 @@
 import { createResource, createSignal, For, Show } from 'solid-js'
 import { Plus, Trash2 } from 'lucide-solid'
 import { addAdminDid, fetchAdminPermissions, removeAdminDid } from '../../shared/lib/auth'
+import type { RadioTarget } from '../../shared/lib/radio'
 
 interface AdminPageProps {
   accountDid: string
   isAdmin: boolean
+  target?: RadioTarget
 }
 
 function readableError(error: unknown): string {
@@ -20,8 +22,8 @@ export default function AdminPage(props: AdminPageProps) {
   const [newDid, setNewDid] = createSignal('')
   const [localError, setLocalError] = createSignal<string | null>(null)
   const [adminPermissions, { mutate: mutateAdmins }] = createResource(
-    () => props.isAdmin,
-    (enabled) => (enabled ? fetchAdminPermissions() : undefined),
+    () => ({ isAdmin: props.isAdmin, target: props.target }),
+    ({ isAdmin, target }) => (isAdmin ? fetchAdminPermissions(target) : undefined),
   )
 
   const addDid = async (event: SubmitEvent) => {
@@ -31,7 +33,7 @@ export default function AdminPage(props: AdminPageProps) {
 
     try {
       setLocalError(null)
-      mutateAdmins(await addAdminDid(did))
+      mutateAdmins(await addAdminDid(did, props.target))
       setNewDid('')
     } catch (error) {
       setLocalError(readableError(error))
@@ -41,7 +43,7 @@ export default function AdminPage(props: AdminPageProps) {
   const removeDid = async (did: string) => {
     try {
       setLocalError(null)
-      mutateAdmins(await removeAdminDid(did))
+      mutateAdmins(await removeAdminDid(did, props.target))
     } catch (error) {
       setLocalError(readableError(error))
     }

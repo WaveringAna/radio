@@ -26,13 +26,7 @@ To run your own radio station and have it syndicated (so it automatically shows 
    ```
 
 4. **Grant Admin Privileges:**
-   - Start the server, open the `/auth` page in the browser, and sign in with your Bluesky account.
-   - Copy your DID (e.g., `did:plc:abc123xyz...`) displayed under the connection details.
-   - Add your DID to the `ADMIN_DIDS` variable in your `.env` file (multiple DIDs can be comma-separated):
-     ```env
-     ADMIN_DIDS=did:plc:abc123xyz...
-     ```
-   - Restart the backend process to apply the admin privileges.
+   Add your ATProto DID to the `ADMIN_DIDS` environment variable in `.env` (comma-separated for multiple admins) and restart the backend.
 When the backend starts up, it will automatically register your station's metadata and notify the syndication workers to crawl it. 
 
 You can also trigger a manual crawl announcement directly to the public worker:

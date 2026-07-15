@@ -1,11 +1,25 @@
-import { createResource, createSignal, onCleanup, Show } from 'solid-js'
+import { createEffect, createMemo, createResource, createSignal, onCleanup, Show } from 'solid-js'
 import { CircleUserRound, ListMusic, LogIn, LogOut, Radio, ShieldCheck } from 'lucide-solid'
-import { getListenerOptOut, setListenerOptOut } from './shared/lib/radio'
+import {
+  canUseRadioXrpcTarget,
+  fetchSyndicatedStations,
+  getListenerOptOut,
+  setListenerOptOut,
+  SYNDICATION_WORKER_BASE,
+} from './shared/lib/radio'
+import {
+  readSelectedStationUrl,
+  selectedTuneInStationFrom,
+  stationRadioTarget,
+  TUNE_IN_CHANGED_EVENT,
+  tuneInStationsFrom,
+} from './shared/lib/stationSelection'
 import AdminPage from './pages/admin/AdminPage'
 import QueueControlPage from './pages/queue-control/QueueControlPage'
 import RadioPage from './pages/radio/RadioPage'
 import './App.css'
 import {
+  fetchAdminPermissions,
   fetchSession,
   formatAuthError,
   readAuthError,
@@ -27,6 +41,38 @@ export default function App() {
   const [path, setPath] = createSignal(currentPath())
   const [session, { refetch }] = createResource(fetchSession)
   const [listenerOptOut, setListenerOptOutSignal] = createSignal(getListenerOptOut())
+
+  const [selectedStationUrl, setSelectedStationUrl] = createSignal(readSelectedStationUrl())
+  const [syndicatedStations] = createResource(
+    () => SYNDICATION_WORKER_BASE || 'disabled',
+    (workerBase) => workerBase === 'disabled' ? Promise.resolve([]) : fetchSyndicatedStations(workerBase),
+  )
+
+  createEffect(() => {
+    const syncSelectedStation = () => setSelectedStationUrl(readSelectedStationUrl())
+    window.addEventListener('storage', syncSelectedStation)
+    window.addEventListener(TUNE_IN_CHANGED_EVENT, syncSelectedStation)
+    onCleanup(() => {
+      window.removeEventListener('storage', syncSelectedStation)
+      window.removeEventListener(TUNE_IN_CHANGED_EVENT, syncSelectedStation)
+    })
+  })
+
+  const tuneInStations = createMemo(() => tuneInStationsFrom(syndicatedStations() ?? []))
+  const selectedStation = createMemo(() => selectedTuneInStationFrom(tuneInStations(), selectedStationUrl()))
+  const selectedRadioTarget = createMemo(() => stationRadioTarget(selectedStation()))
+  const selectedRadioCanUseXrpc = createMemo(() => canUseRadioXrpcTarget(selectedRadioTarget()))
+
+  const adminProbeSource = createMemo(() => session()?.authenticated && selectedRadioCanUseXrpc() ? selectedRadioTarget() : null)
+  const [adminStatus] = createResource(adminProbeSource, async (target) => {
+    try {
+      await fetchAdminPermissions(target)
+      return true
+    } catch {
+      return false
+    }
+  })
+  const isAdmin = () => adminStatus() === true
 
   const toggleListenerOptOut = (next: boolean) => {
     setListenerOptOutSignal(next)
@@ -156,12 +202,12 @@ export default function App() {
                 <span aria-hidden="true" />
               </span>
             </label>
-            <Show when={session()?.isAdmin}>
+            <Show when={isAdmin()}>
               <div class="account-admin-heading">
                 <ShieldCheck size={17} strokeWidth={1.8} aria-hidden="true" />
                 <span>station admin</span>
               </div>
-              <AdminPage accountDid={session()?.accountDid ?? ''} isAdmin={session()?.isAdmin ?? false} />
+              <AdminPage accountDid={session()?.accountDid ?? ''} isAdmin={isAdmin()} target={selectedRadioTarget()} />
             </Show>
           </Show>
         </Show>
