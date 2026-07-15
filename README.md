@@ -34,16 +34,25 @@ edit `.env` for your local url, database, admin dids, and audio directory.
 | `ADMIN_DIDS` | empty | comma-separated did allowlist for admin actions |
 | `AUDIO_DIR` | `data/audio` | uploaded audio and cover storage directory |
 
-## syndication
+## syndication & public hosting
 
-When `STATION_ANNOUNCE_ON_STARTUP=true` and the station has a public `STATION_URL` or `SERVICE_ENDPOINT`, the backend refreshes the embedded `pet.nkp.radio.station/self` record, serves it from the read-only embedded PDS, and asks each configured relay in `STATION_ANNOUNCE_RELAYS` plus each worker in `STATION_ANNOUNCE_WORKERS` to crawl the public host.
+To have your station discovered and syndicated (so it appears on public directories like `https://radio.wisp.place`):
 
-You can force the same reemit path without a restart:
+1. **Public Domain & SSL/TLS**: Your station **must** be publicly reachable over standard HTTPS on a public domain name (e.g., `https://radio.yourdomain.com`). Relays and syndication workers cannot crawl local addresses (`localhost`, `127.0.0.1`), private IPs, or servers with invalid/self-signed SSL certificates.
+2. **Reverse Proxy Setup**: Run the backend behind a reverse proxy (such as Caddy, Nginx, or a Cloudflare Tunnel) to manage HTTPS certificates and forward inbound traffic to the Rust backend (default `BIND_ADDR=0.0.0.0:3000`).
+3. **Environment Setup**: In your `.env` file, configure your public endpoints:
+   - `APP_URL=https://radio.yourdomain.com`
+   - `SERVICE_DID=did:web:radio.yourdomain.com`
+   - `STATION_URL=https://radio.yourdomain.com`
+   - `STATION_ANNOUNCE_WORKERS=https://syndication.sharkgirl.pet` (or the URL of the active syndication directory worker)
+
+When the backend boots (or receives a manual announcement), it publishes the station's metadata in the embedded read-only PDS under the record `pet.nkp.radio.station/self` and prompts the relays and syndication workers in your `.env` to crawl its public DID document and repository.
+
+You can force a syndication crawl announcement manually without restarting:
 
 ```bash
 curl -X POST http://127.0.0.1:3000/api/syndication/announce
 ```
-
 ## development
 
 run the backend:
