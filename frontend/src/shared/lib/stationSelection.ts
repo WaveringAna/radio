@@ -159,6 +159,18 @@ export function selectedTuneInStationFrom(stations: TuneInStation[], selectedUrl
   if (stations.length > 0) {
     return stations.find(s => !s.local) || stations[0]
   }
+  if (STANDALONE) {
+    return {
+      did: 'loading',
+      url: '',
+      apiBase: '',
+      name: 'loading station...',
+      description: null,
+      updatedAt: null,
+      indexedAt: null,
+      local: false,
+    }
+  }
   return localTuneInStation()
 }
 
