@@ -439,9 +439,13 @@ async function radioPost<T = unknown>(
 async function radioMultipart<T>(nsid: string, formData: FormData, target?: RadioTarget): Promise<T> {
   const session = await requiredSession()
   const proxy = await radioProxyTarget(target)
+  const headers: Record<string, string> = {}
+  if (proxy) {
+    headers['atproto-proxy'] = proxy
+  }
   const response = await new OAuthUserAgent(session).handle(`/xrpc/${nsid}`, {
     method: 'POST',
-    headers: { 'atproto-proxy': proxy },
+    headers,
     body: formData,
   })
 
@@ -662,7 +666,11 @@ async function radioAudience(target?: RadioTarget): Promise<string> {
   return promise
 }
 
-async function radioProxyTarget(target?: RadioTarget): Promise<AtprotoAudience> {
+async function radioProxyTarget(target?: RadioTarget): Promise<AtprotoAudience | undefined> {
+  if (typeof window !== 'undefined' && isLocalhost(window.location.hostname)) {
+    return undefined
+  }
+
   const did = await radioAudience(target)
   const rawServiceId = target?.serviceId || RADIO_SERVICE_ID || '#radio_xrpc'
   const serviceId = rawServiceId.startsWith('#') ? rawServiceId : `#${rawServiceId}`
