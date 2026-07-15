@@ -419,10 +419,55 @@ export async function xrpcImportFromSubsonicShare(
   return normalizeSong(data.song)
 }
 
+async function getServiceAuthToken(session: Session, nsid: string, target?: RadioTarget): Promise<string> {
+  const pds = session.info.server.issuer.replace(/\/+$/, '')
+  const audience = await radioAudience(target)
+
+  const serviceAuthUrl = new URL(`${pds}/xrpc/com.atproto.server.getServiceAuth`)
+  serviceAuthUrl.searchParams.append('aud', audience)
+  serviceAuthUrl.searchParams.append('lxm', nsid)
+  serviceAuthUrl.searchParams.append('exp', (Math.floor(Date.now() / 1000) + 60 * 30).toString())
+
+  const response = await new OAuthUserAgent(session).handle(
+    `${serviceAuthUrl.pathname}${serviceAuthUrl.search}`,
+    {
+      method: 'GET',
+    }
+  )
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`failed to get service auth: ${error}`)
+  }
+
+  const data = await response.json() as { token: string }
+  return data.token
+}
+
 async function radioGet<T>(
   nsid: string,
   options: { session?: Session; target?: RadioTarget } = {},
 ): Promise<T> {
+  if (typeof window !== 'undefined' && isLocalhost(window.location.hostname)) {
+    const session = options.session ?? await requiredSession()
+    const token = await getServiceAuthToken(session, nsid, options.target)
+    const base = serviceBase(options.target)
+    const response = await fetch(`${base}/xrpc/${nsid}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      }
+    })
+    if (!response.ok) {
+      throw new ClientResponseError({
+        status: response.status,
+        headers: response.headers,
+        data: await response.json().catch(() => ({ error: 'UnknownXRPCError' })),
+      })
+    }
+    return await response.json() as T
+  }
+
   const client = await radioClient(options.session ?? await requiredSession(), options.target)
   return await ok(client.get(nsid, { as: 'json' })) as T
 }
@@ -432,12 +477,55 @@ async function radioPost<T = unknown>(
   input?: Record<string, unknown>,
   options: { target?: RadioTarget } = {},
 ): Promise<T> {
+  if (typeof window !== 'undefined' && isLocalhost(window.location.hostname)) {
+    const session = await requiredSession()
+    const token = await getServiceAuthToken(session, nsid, options.target)
+    const base = serviceBase(options.target)
+    const response = await fetch(`${base}/xrpc/${nsid}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: input ? JSON.stringify(input) : undefined,
+    })
+    if (!response.ok) {
+      throw new ClientResponseError({
+        status: response.status,
+        headers: response.headers,
+        data: await response.json().catch(() => ({ error: 'UnknownXRPCError' })),
+      })
+    }
+    return await response.json() as T
+  }
+
   const client = await radioClient(await requiredSession(), options.target)
   return await ok(client.post(nsid, { input, as: 'json' })) as T
 }
 
 async function radioMultipart<T>(nsid: string, formData: FormData, target?: RadioTarget): Promise<T> {
   const session = await requiredSession()
+
+  if (typeof window !== 'undefined' && isLocalhost(window.location.hostname)) {
+    const token = await getServiceAuthToken(session, nsid, target)
+    const base = serviceBase(target)
+    const response = await fetch(`${base}/xrpc/${nsid}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+      body: formData,
+    })
+    if (!response.ok) {
+      throw new ClientResponseError({
+        status: response.status,
+        headers: response.headers,
+        data: await response.json().catch(() => ({ error: 'UnknownXRPCError' })),
+      })
+    }
+    return await response.json() as T
+  }
+
   const proxy = await radioProxyTarget(target)
   const headers: Record<string, string> = {}
   if (proxy) {
