@@ -1,4 +1,4 @@
-import { API_BASE, BASE_URL } from './config'
+import { API_BASE, BASE_URL, STANDALONE } from './config'
 import type { RadioTarget } from './radioXrpc'
 import type { SyndicatedStation } from './radio'
 
@@ -94,20 +94,11 @@ export function localTuneInStation(): TuneInStation {
   }
 }
 
-function isStandaloneFrontend(hostname: string): boolean {
-  const host = hostname.toLowerCase()
-  return host === 'radio.wisp.place'
-    || host === 'wisp.place'
-    || host.endsWith('.wisp.place')
-    || host === 'sites.wisp.place'
-}
-
 export function tuneInStationsFrom(syndicatedStations: SyndicatedStation[] = []): TuneInStation[] {
   const stations = new Map<string, TuneInStation>()
   const local = localTuneInStation()
 
-  const isStandalone = typeof window !== 'undefined' && isStandaloneFrontend(window.location.hostname)
-  if (!isStandalone) {
+  if (!STANDALONE) {
     stations.set(stationListKey(local.url), local)
   }
 
