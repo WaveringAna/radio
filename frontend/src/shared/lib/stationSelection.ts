@@ -63,10 +63,14 @@ function firstConfiguredPublicBase(candidates: string[]): string {
 }
 
 export function defaultStationUrl(): string {
+  // Standalone builds are served from arbitrary domains; a build-time base URL
+  // must never leak into station selection or the UI.
+  if (STANDALONE) return ''
   return firstConfiguredPublicBase([BASE_URL, API_BASE]) || normalizeStationUrl(window.location.origin)
 }
 
 export function defaultStationApiBase(): string {
+  if (STANDALONE) return ''
   const local = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   return firstConfiguredPublicBase([API_BASE, BASE_URL]) || normalizeStationUrl(local ? '' : window.location.origin)
 }
