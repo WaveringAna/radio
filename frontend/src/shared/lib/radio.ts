@@ -1,24 +1,39 @@
-export const API_BASE = import.meta.env.VITE_API_BASE ?? ''
+import { API_BASE, BASE_URL, SYNDICATION_WORKER_BASE } from './config'
+import {
+  xrpcAlbumsList,
+  xrpcClearQueue,
+  xrpcControlRadio,
+  xrpcCreateChatBan,
+  xrpcCreatePlaylist,
+  xrpcDeleteAlbum,
+  xrpcDeleteChatMessage,
+  xrpcDeletePlaylist,
+  xrpcDeleteSong,
+  xrpcEnqueueSongs,
+  xrpcFetchChatBans,
+  xrpcFetchPlaylists,
+  xrpcImportFromSubsonic,
+  xrpcImportFromSubsonicShare,
+  xrpcLoadPlaylist,
+  xrpcRemoveChatBan,
+  xrpcRemoveQueueItem,
+  xrpcReorderQueue,
+  xrpcQueueList,
+  xrpcSearchSubsonic,
+  xrpcSendChatMessage,
+  xrpcSetAlbumEnabled,
+  xrpcMergeAlbums,
+  xrpcSongsList,
+  xrpcUpdateSongMetadata,
+  xrpcUploadSong,
+  xrpcUploadSongCover,
+  xrpcUploadSongFromUrl,
+  type RadioTarget,
+} from './radioXrpc'
 
-const SESSION_TOKEN_KEY = 'radio_session_token'
+export { API_BASE, BASE_URL, SYNDICATION_WORKER_BASE, type RadioTarget }
+
 const VIEWER_ID_KEY = 'radio_viewer_id'
-
-export function getSessionToken(): string | null {
-  return localStorage.getItem(SESSION_TOKEN_KEY)
-}
-
-export function setSessionToken(token: string): void {
-  localStorage.setItem(SESSION_TOKEN_KEY, token)
-}
-
-export function clearSessionToken(): void {
-  localStorage.removeItem(SESSION_TOKEN_KEY)
-}
-
-export function authHeaders(): Record<string, string> {
-  const token = getSessionToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
 
 export interface Song {
   id: string
@@ -76,6 +91,18 @@ export interface RadioSnapshot {
   queue: QueueItem[]
 }
 
+export interface SyndicatedStation {
+  did: string
+  uri: string
+  cid?: string | null
+  rev: string
+  url: string
+  name: string
+  description?: string | null
+  updatedAt: string
+  indexedAt: string
+}
+
 export type RadioEvent = {
   type: 'snapshotChanged'
   snapshot: RadioSnapshot
@@ -116,27 +143,115 @@ export interface UrlSongInput {
   addToQueue: boolean
 }
 
+function normalizeBase(base?: string | null): string {
+  return (base ?? '').trim().replace(/\/+$/, '')
+}
+
+function isLocalhost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  return host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost') || host === '::1'
+}
+
+function isLoopbackOrPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (host === 'localhost' || host.endsWith('.localhost') || host === '::1') return true
+  if (host.startsWith('127.') || host === '0.0.0.0') return true
+  if (host.startsWith('10.') || host.startsWith('192.168.')) return true
+  const [first, second] = host.split('.').map((part) => Number(part))
+  return first === 172 && Number.isFinite(second) && second >= 16 && second <= 31
+}
+
+function isPublicDid(did: string | null | undefined): boolean {
+  const value = (did ?? '').trim().toLowerCase()
+  if (!value) return false
+  
+  if (typeof window !== 'undefined' && isLocalhost(window.location.hostname)) {
+    return true
+  }
+  
+  return !value.startsWith('did:web:localhost')
+    && !value.startsWith('did:web:127.')
+    && !value.startsWith('did:web:0.0.0.0')
+}
+
+export function canUseRadioXrpcTarget(target?: RadioTarget): boolean {
+  if (typeof window !== 'undefined' && isLocalhost(window.location.hostname)) {
+    return true
+  }
+
+  if (target?.did) return isPublicDid(target.did)
+
+  const base = normalizeBase(target?.baseUrl || API_BASE)
+  const origin = base || window.location.origin
+  try {
+    const url = new URL(origin)
+    return url.protocol === 'https:' && !isLoopbackOrPrivateHost(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+export function radioApiUrl(path: string, base: string | null | undefined = API_BASE): string {
+  return `${normalizeBase(base)}${path}`
+}
+
+function socketUrl(path: string, base: string | null | undefined = API_BASE): string {
+  const normalized = normalizeBase(base)
+  if (normalized) {
+    const url = new URL(normalized)
+    const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${protocol}//${url.host}${path}`
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = window.location.port === '5173'
+    ? `${window.location.hostname}:3000`
+    : window.location.host
+  return `${protocol}//${host}${path}`
+}
+
+export function songAudioUrl(songId: string, base: string | null | undefined = API_BASE): string {
+  return radioApiUrl(`/api/songs/${encodeURIComponent(songId)}/audio`, base)
+}
+
+export function songCoverUrl(songId: string, base: string | null | undefined = API_BASE): string {
+  return radioApiUrl(`/api/songs/${encodeURIComponent(songId)}/cover`, base)
+}
+
+export function songCoverThumbnailUrl(songId: string, base: string | null | undefined = API_BASE): string {
+  return radioApiUrl(`/api/songs/${encodeURIComponent(songId)}/cover/thumbnail`, base)
+}
+
 /**
  * Loads the current public radio snapshot.
+ * @param base Optional radio base URL. Defaults to the current radio.
  * @returns The current radio state and queue.
  * @throws Error When the backend request fails.
  */
-export async function fetchRadioSnapshot(): Promise<RadioSnapshot> {
-  const response = await fetch(`${API_BASE}/api/radio/state`, { cache: 'no-store' })
+export async function fetchRadioSnapshot(target?: RadioTarget, authenticated?: boolean): Promise<RadioSnapshot> {
+  if (authenticated && canUseRadioXrpcTarget(target)) {
+    try {
+      return await xrpcQueueList(target)
+    } catch (error) {
+      console.warn('xrpc queue.list failed, falling back to public radio state', error)
+    }
+  }
+  const base = target?.baseUrl || API_BASE
+  const response = await fetch(radioApiUrl('/api/radio/state', base), { cache: 'no-store' })
   if (!response.ok) {
     throw new Error('failed to load radio state')
   }
-
   return (await response.json()) as RadioSnapshot
 }
 
 /**
  * Loads the current backend seek position in seconds.
+ * @param base Optional radio base URL. Defaults to the current radio.
  * @returns The current seek position.
  * @throws Error When the backend request fails.
  */
-export async function fetchRadioSeek(): Promise<RadioSeek> {
-  const response = await fetch(`${API_BASE}/api/radio/seek`, { cache: 'no-store' })
+export async function fetchRadioSeek(base: string | null | undefined = API_BASE): Promise<RadioSeek> {
+  const response = await fetch(radioApiUrl('/api/radio/seek', base), { cache: 'no-store' })
   if (!response.ok) {
     throw new Error('failed to load radio seek')
   }
@@ -146,16 +261,11 @@ export async function fetchRadioSeek(): Promise<RadioSeek> {
 
 /**
  * Opens a websocket for realtime radio events.
+ * @param base Optional radio base URL. Defaults to the current radio.
  * @returns A connected websocket instance.
  */
-export function openRadioSocket(): WebSocket {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const host = API_BASE
-    ? new URL(API_BASE).host
-    : window.location.port === '5173'
-      ? `${window.location.hostname}:3000`
-      : window.location.host
-  return new WebSocket(`${protocol}//${host}/api/radio/ws`)
+export function openRadioSocket(base: string | null | undefined = API_BASE): WebSocket {
+  return new WebSocket(socketUrl('/api/radio/ws', base))
 }
 
 /**
@@ -181,11 +291,6 @@ export function sendRadioViewerKeepalive(socket: WebSocket, viewerId: string, di
 
 export const MAX_CHAT_BODY_LEN = 1000
 
-async function apiErrorCode(response: Response): Promise<string | null> {
-  const data = await response.json().catch(() => ({})) as { error?: string }
-  return data.error ?? null
-}
-
 export type ChatMessageKind = 'user' | 'now_playing'
 
 export interface ChatMessage {
@@ -209,69 +314,33 @@ export interface ChatBan {
   createdAt: number
 }
 
-export async function deleteChatMessage(messageId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/radio/chat/messages/${messageId}`, {
-    method: 'DELETE',
-    credentials: 'include',
-    headers: authHeaders(),
-  })
-  if (!response.ok) {
-    throw new Error('failed to delete chat message')
-  }
+export async function deleteChatMessage(messageId: string, target?: RadioTarget): Promise<void> {
+  await xrpcDeleteChatMessage(messageId, target)
 }
 
-export async function fetchChatBans(): Promise<ChatBan[]> {
-  const response = await fetch(`${API_BASE}/api/radio/chat/bans`, {
-    credentials: 'include',
-    headers: authHeaders(),
-  })
-  if (!response.ok) {
-    throw new Error('failed to load chat bans')
-  }
-  return (await response.json()) as ChatBan[]
+export async function fetchChatBans(target?: RadioTarget): Promise<ChatBan[]> {
+  return xrpcFetchChatBans(target)
 }
 
-export async function createChatBan(did: string, reason?: string): Promise<ChatBan> {
-  const response = await fetch(`${API_BASE}/api/radio/chat/bans`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify({ did, reason: reason ?? null }),
-  })
-  if (!response.ok) {
-    const data = (await response.json().catch(() => ({}))) as { error?: string }
-    throw new Error(data.error ?? 'failed to ban did')
-  }
-  return (await response.json()) as ChatBan
+export async function createChatBan(did: string, reason?: string, target?: RadioTarget): Promise<ChatBan> {
+  return xrpcCreateChatBan(did, reason, target)
 }
 
-export async function removeChatBan(did: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/radio/chat/bans/${encodeURIComponent(did)}`, {
-    method: 'DELETE',
-    credentials: 'include',
-    headers: authHeaders(),
-  })
-  if (!response.ok) {
-    throw new Error('failed to remove chat ban')
-  }
+export async function removeChatBan(did: string, target?: RadioTarget): Promise<void> {
+  await xrpcRemoveChatBan(did, target)
 }
 
 /**
  * Opens a websocket for the relayed chat channel.
+ * @param base Optional radio base URL. Defaults to the current radio.
  * @returns A connected websocket instance.
  */
-export function openChatSocket(): WebSocket {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const host = API_BASE
-    ? new URL(API_BASE).host
-    : window.location.port === '5173'
-      ? `${window.location.hostname}:3000`
-      : window.location.host
-  return new WebSocket(`${protocol}//${host}/api/radio/chat/ws`)
+export function openChatSocket(base: string | null | undefined = API_BASE): WebSocket {
+  return new WebSocket(socketUrl('/api/radio/chat/ws', base))
 }
 
-export function sendChatMessage(socket: WebSocket, text: string, token: string | null): void {
-  socket.send(JSON.stringify({ type: 'send', text, token }))
+export async function sendChatMessage(text: string, target?: RadioTarget): Promise<ChatMessage> {
+  return xrpcSendChatMessage(text, target)
 }
 
 const LISTENER_OPT_OUT_KEY = 'radio_listener_opt_out'
@@ -289,13 +358,8 @@ export function setListenerOptOut(optOut: boolean): void {
  * @returns Songs ordered by newest first.
  * @throws Error When the backend request fails.
  */
-export async function fetchAlbums(): Promise<RadioAlbum[]> {
-  const response = await fetch(`${API_BASE}/api/radio/albums`, { credentials: 'include', headers: authHeaders() })
-  if (!response.ok) {
-    throw new Error('failed to load album loops')
-  }
-
-  return (await response.json()) as RadioAlbum[]
+export async function fetchAlbums(target?: RadioTarget): Promise<RadioAlbum[]> {
+  return xrpcAlbumsList(target)
 }
 
 
@@ -305,38 +369,8 @@ export async function fetchAlbums(): Promise<RadioAlbum[]> {
  * @returns Remaining album loops.
  * @throws Error When the backend request fails.
  */
-export async function deleteAlbum(albumId: string): Promise<RadioAlbum[]> {
-  const response = await fetch(`${API_BASE}/api/radio/albums/${albumId}`, {
-    method: 'DELETE',
-    credentials: 'include',
-    headers: authHeaders(),
-  })
-  if (!response.ok) {
-    throw new Error('failed to delete album loop')
-  }
-
-  return (await response.json()) as RadioAlbum[]
-}
-
-/**
- * Appends songs to an existing album loop, skipping duplicates.
- * @param albumId Album loop id.
- * @param songIds Song ids to add.
- * @returns Updated album.
- * @throws Error When the backend request fails.
- */
-export async function addSongsToAlbum(albumId: string, songIds: string[]): Promise<RadioAlbum> {
-  const response = await fetch(`${API_BASE}/api/radio/albums/${albumId}/songs`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify({ songIds }),
-  })
-  if (!response.ok) {
-    throw new Error('failed to add songs to album loop')
-  }
-
-  return (await response.json()) as RadioAlbum
+export async function deleteAlbum(albumId: string, target?: RadioTarget): Promise<RadioAlbum[]> {
+  return xrpcDeleteAlbum(albumId, target)
 }
 
 /**
@@ -346,18 +380,19 @@ export async function addSongsToAlbum(albumId: string, songIds: string[]): Promi
  * @returns Updated album loops.
  * @throws Error When the backend request fails.
  */
-export async function setAlbumEnabled(albumId: string, enabled: boolean): Promise<RadioAlbum[]> {
-  const response = await fetch(`${API_BASE}/api/radio/albums/${albumId}/enabled`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify({ enabled }),
-  })
-  if (!response.ok) {
-    throw new Error('failed to update album loop')
-  }
+export async function setAlbumEnabled(albumId: string, enabled: boolean, target?: RadioTarget): Promise<RadioAlbum[]> {
+  return xrpcSetAlbumEnabled(albumId, enabled, target)
+}
 
-  return (await response.json()) as RadioAlbum[]
+/**
+ * Merges a duplicate source album into a target album.
+ * @param albumId Source album id to merge and delete.
+ * @param targetAlbumId Target/destination album id.
+ * @returns Updated album loops.
+ * @throws Error When the backend request fails.
+ */
+export async function mergeAlbums(albumId: string, targetAlbumId: string, target?: RadioTarget): Promise<RadioAlbum[]> {
+  return xrpcMergeAlbums(albumId, targetAlbumId, target)
 }
 
 /**
@@ -365,13 +400,34 @@ export async function setAlbumEnabled(albumId: string, enabled: boolean): Promis
  * @returns Songs ordered by newest first.
  * @throws Error When the backend request fails.
  */
-export async function fetchSongs(): Promise<Song[]> {
-  const response = await fetch(`${API_BASE}/api/songs`)
+export async function fetchSongs(target?: RadioTarget, authenticated?: boolean): Promise<Song[]> {
+  if (authenticated && canUseRadioXrpcTarget(target)) {
+    try {
+      return await xrpcSongsList(target)
+    } catch (error) {
+      console.warn('xrpc songs.list failed, falling back to public songs', error)
+    }
+  }
+  const base = target?.baseUrl || API_BASE
+  const response = await fetch(radioApiUrl('/api/songs', base), { cache: 'no-store' })
   if (!response.ok) {
     throw new Error('failed to load songs')
   }
-
   return (await response.json()) as Song[]
+}
+
+export async function fetchSyndicatedStations(
+  workerBase: string | null | undefined = SYNDICATION_WORKER_BASE,
+): Promise<SyndicatedStation[]> {
+  const base = normalizeBase(workerBase)
+  if (!base) return []
+
+  const response = await fetch(`${base}/stations`, { cache: 'no-store' })
+  if (!response.ok) {
+    throw new Error('failed to load syndicated stations')
+  }
+
+  return (await response.json()) as SyndicatedStation[]
 }
 
 /**
@@ -380,34 +436,12 @@ export async function fetchSongs(): Promise<Song[]> {
  * @returns The created queue item.
  * @throws Error When the backend request fails.
  */
-export async function enqueueAlbum(songIds: string[]): Promise<RadioSnapshot> {
-  const response = await fetch(`${API_BASE}/api/radio/queue/album`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify({ songIds }),
-  })
-
-  if (!response.ok) {
-    throw new Error('failed to queue album')
-  }
-
-  return (await response.json()) as RadioSnapshot
+export async function enqueueAlbum(songIds: string[], target?: RadioTarget): Promise<RadioSnapshot> {
+  return xrpcEnqueueSongs(songIds, target)
 }
 
-export async function enqueueSong(songId: string): Promise<RadioSnapshot> {
-  const response = await fetch(`${API_BASE}/api/radio/queue`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify({ songId }),
-  })
-
-  if (!response.ok) {
-    throw new Error('failed to add song to queue')
-  }
-
-  return (await response.json()) as RadioSnapshot
+export async function enqueueSong(songId: string, target?: RadioTarget): Promise<RadioSnapshot> {
+  return xrpcEnqueueSongs([songId], target)
 }
 
 /**
@@ -416,18 +450,8 @@ export async function enqueueSong(songId: string): Promise<RadioSnapshot> {
  * @returns The updated radio snapshot.
  * @throws Error When the backend request fails.
  */
-export async function removeQueueItem(queueId: string): Promise<RadioSnapshot> {
-  const response = await fetch(`${API_BASE}/api/radio/queue/${queueId}`, {
-    method: 'DELETE',
-    credentials: 'include',
-    headers: authHeaders(),
-  })
-
-  if (!response.ok) {
-    throw new Error('failed to remove queue item')
-  }
-
-  return (await response.json()) as RadioSnapshot
+export async function removeQueueItem(queueId: string, target?: RadioTarget): Promise<RadioSnapshot> {
+  return xrpcRemoveQueueItem(queueId, target)
 }
 
 /**
@@ -435,18 +459,8 @@ export async function removeQueueItem(queueId: string): Promise<RadioSnapshot> {
  * @returns The updated radio snapshot.
  * @throws Error When the backend request fails.
  */
-export async function clearQueue(): Promise<RadioSnapshot> {
-  const response = await fetch(`${API_BASE}/api/radio/queue`, {
-    method: 'DELETE',
-    credentials: 'include',
-    headers: authHeaders(),
-  })
-
-  if (!response.ok) {
-    throw new Error('failed to clear queue')
-  }
-
-  return (await response.json()) as RadioSnapshot
+export async function clearQueue(target?: RadioTarget): Promise<RadioSnapshot> {
+  return xrpcClearQueue(target)
 }
 
 /**
@@ -455,19 +469,8 @@ export async function clearQueue(): Promise<RadioSnapshot> {
  * @returns The updated radio snapshot.
  * @throws Error When the backend request fails.
  */
-export async function reorderQueue(queueIds: string[]): Promise<RadioSnapshot> {
-  const response = await fetch(`${API_BASE}/api/radio/queue/reorder`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify({ queueIds }),
-  })
-
-  if (!response.ok) {
-    throw new Error('failed to reorder queue')
-  }
-
-  return (await response.json()) as RadioSnapshot
+export async function reorderQueue(queueIds: string[], target?: RadioTarget): Promise<RadioSnapshot> {
+  return xrpcReorderQueue(queueIds, target)
 }
 
 /**
@@ -476,38 +479,14 @@ export async function reorderQueue(queueIds: string[]): Promise<RadioSnapshot> {
  * @returns The created song.
  * @throws Error When upload fails.
  */
-export async function uploadSong(input: SongUploadInput): Promise<Song> {
-  const formData = new FormData()
-  formData.set('file', input.file)
-  formData.set('title', input.title)
-  formData.set('artist', input.artist)
-  formData.set('album', input.album ?? '')
-  if (input.genre) {
-    formData.set('genre', input.genre)
+export async function uploadSong(input: SongUploadInput, target?: RadioTarget): Promise<Song> {
+  try {
+    return await xrpcUploadSong(input, target)
+  } catch (error) {
+    throw new Error(error instanceof Error && error.message.includes('UnsupportedAudio')
+      ? 'upload playlist files together with their referenced audio tracks.'
+      : 'song upload failed')
   }
-  if (input.durationSeconds !== undefined) {
-    formData.set('durationSeconds', String(input.durationSeconds))
-  }
-  formData.set('addToQueue', String(input.addToQueue))
-
-  const response = await fetch(`${API_BASE}/api/songs`, {
-    method: 'POST',
-    body: formData,
-    credentials: 'include',
-    headers: authHeaders(),
-  })
-
-  if (!response.ok) {
-    const error = await apiErrorCode(response)
-    throw new Error(error === 'playlist_requires_batch_import' ? 'upload playlist files together with their referenced audio tracks.' : 'song upload failed')
-  }
-
-  const song = (await response.json()) as Song
-  if (input.cover) {
-    return uploadSongCover(song.id, input.cover)
-  }
-
-  return song
 }
 
 /**
@@ -517,22 +496,8 @@ export async function uploadSong(input: SongUploadInput): Promise<Song> {
  * @returns Updated song metadata.
  * @throws Error When upload fails.
  */
-export async function uploadSongCover(songId: string, cover: File): Promise<Song> {
-  const formData = new FormData()
-  formData.set('cover', cover)
-
-  const response = await fetch(`${API_BASE}/api/songs/${songId}/cover`, {
-    method: 'PUT',
-    body: formData,
-    credentials: 'include',
-    headers: authHeaders(),
-  })
-
-  if (!response.ok) {
-    throw new Error('cover upload failed')
-  }
-
-  return (await response.json()) as Song
+export async function uploadSongCover(songId: string, cover: File, target?: RadioTarget): Promise<Song> {
+  return xrpcUploadSongCover(songId, cover, target)
 }
 
 /**
@@ -542,19 +507,8 @@ export async function uploadSongCover(songId: string, cover: File): Promise<Song
  * @returns Updated song metadata.
  * @throws Error When update fails.
  */
-export async function updateSongMetadata(songId: string, input: SongMetadataInput): Promise<Song> {
-  const response = await fetch(`${API_BASE}/api/songs/${songId}`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify(input),
-  })
-
-  if (!response.ok) {
-    throw new Error('failed to update song metadata')
-  }
-
-  return (await response.json()) as Song
+export async function updateSongMetadata(songId: string, input: SongMetadataInput, target?: RadioTarget): Promise<Song> {
+  return xrpcUpdateSongMetadata(songId, input, target)
 }
 
 /**
@@ -563,18 +517,8 @@ export async function updateSongMetadata(songId: string, input: SongMetadataInpu
  * @returns Updated radio snapshot.
  * @throws Error When deletion fails.
  */
-export async function deleteSong(songId: string): Promise<RadioSnapshot> {
-  const response = await fetch(`${API_BASE}/api/songs/${songId}`, {
-    method: 'DELETE',
-    credentials: 'include',
-    headers: authHeaders(),
-  })
-
-  if (!response.ok) {
-    throw new Error('failed to delete song')
-  }
-
-  return (await response.json()) as RadioSnapshot
+export async function deleteSong(songId: string, target?: RadioTarget): Promise<RadioSnapshot> {
+  return xrpcDeleteSong(songId, target)
 }
 
 /**
@@ -612,15 +556,8 @@ export function saveSubsonicCreds(creds: SubsonicCreds): void {
   localStorage.setItem(SUBSONIC_CREDS_KEY, JSON.stringify(creds))
 }
 
-export async function searchSubsonic(creds: SubsonicCreds, query: string): Promise<SubsonicSongResult[]> {
-  const response = await fetch(`${API_BASE}/api/subsonic/search`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify({ ...creds, query }),
-  })
-  if (!response.ok) throw new Error('subsonic search failed')
-  return (await response.json()) as SubsonicSongResult[]
+export async function searchSubsonic(creds: SubsonicCreds, query: string, target?: RadioTarget): Promise<SubsonicSongResult[]> {
+  return xrpcSearchSubsonic(creds, query, target)
 }
 
 export async function importFromSubsonic(
@@ -628,77 +565,42 @@ export async function importFromSubsonic(
   songId: string,
   coverArtId: string | null | undefined,
   addToQueue: boolean,
+  target?: RadioTarget,
 ): Promise<Song> {
-  const response = await fetch(`${API_BASE}/api/songs/from-subsonic`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify({ ...creds, songId, coverArtId, addToQueue }),
-  })
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({})) as { error?: string }
-    throw new Error(data.error ?? 'subsonic import failed')
-  }
-  return (await response.json()) as Song
+  return xrpcImportFromSubsonic(creds, songId, coverArtId, addToQueue, target)
 }
 
 export async function importFromSubsonicShare(
   shareUrl: string,
   addToQueue: boolean,
+  target?: RadioTarget,
 ): Promise<Song> {
-  const response = await fetch(`${API_BASE}/api/songs/from-subsonic-share`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify({ shareUrl, addToQueue }),
-  })
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({})) as { error?: string }
-    throw new Error(data.error ?? 'subsonic share import failed')
-  }
-  return (await response.json()) as Song
+  return xrpcImportFromSubsonicShare(shareUrl, addToQueue, target)
 }
 
-export async function uploadSongFromUrl(input: UrlSongInput): Promise<Song> {
-  const response = await fetch(`${API_BASE}/api/songs/from-url`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify(input),
-  })
-
-  if (!response.ok) {
-    const error = await apiErrorCode(response)
+export async function uploadSongFromUrl(input: UrlSongInput, target?: RadioTarget): Promise<Song | null> {
+  try {
+    return await xrpcUploadSongFromUrl(input, target)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
     throw new Error(
-      error === 'source_unavailable'
+      message.includes('source_unavailable')
         ? 'that video is unavailable (removed, private, or region-locked).'
-        : error === 'url_fetch_failed'
+        : message.includes('url_fetch_failed')
           ? 'could not fetch audio from that url.'
-          : error === 'playlist_requires_batch_import'
+          : message.includes('playlist_requires_batch_import')
             ? 'nested playlists are not supported yet.'
             : 'url import failed',
     )
   }
-
-  return (await response.json()) as Song
 }
 
 export async function controlRadio(
   action: 'play' | 'pause' | 'stop' | 'skip',
   intent: 'explicit_admin_action',
+  target?: RadioTarget,
 ): Promise<RadioSnapshot> {
-  const response = await fetch(`${API_BASE}/api/radio/control/${action}`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ intent }),
-  })
-
-  if (!response.ok) {
-    throw new Error('radio control failed')
-  }
-
-  return (await response.json()) as RadioSnapshot
+  return xrpcControlRadio(action, intent, target)
 }
 
 export interface Playlist {
@@ -708,48 +610,18 @@ export interface Playlist {
   tracks: Song[]
 }
 
-export async function fetchPlaylists(): Promise<Playlist[]> {
-  const response = await fetch(`${API_BASE}/api/radio/playlists`, { credentials: 'include', headers: authHeaders() })
-  if (!response.ok) {
-    throw new Error('failed to load playlists')
-  }
-  return (await response.json()) as Playlist[]
+export async function fetchPlaylists(target?: RadioTarget): Promise<Playlist[]> {
+  return xrpcFetchPlaylists(target)
 }
 
-export async function createPlaylist(name: string, songIds: string[]): Promise<Playlist> {
-  const response = await fetch(`${API_BASE}/api/radio/playlists`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify({ name, songIds }),
-  })
-  if (!response.ok) {
-    throw new Error('failed to create playlist')
-  }
-  return (await response.json()) as Playlist
+export async function createPlaylist(name: string, songIds: string[], target?: RadioTarget): Promise<Playlist> {
+  return xrpcCreatePlaylist(name, songIds, target)
 }
 
-export async function deletePlaylist(playlistId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/radio/playlists/${playlistId}`, {
-    method: 'DELETE',
-    credentials: 'include',
-    headers: authHeaders(),
-  })
-  if (!response.ok) {
-    throw new Error('failed to delete playlist')
-  }
+export async function deletePlaylist(playlistId: string, target?: RadioTarget): Promise<void> {
+  await xrpcDeletePlaylist(playlistId, target)
 }
 
-export async function loadPlaylist(playlistId: string, replace: boolean): Promise<RadioSnapshot> {
-  const response = await fetch(`${API_BASE}/api/radio/playlists/${playlistId}/load`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeaders() },
-    credentials: 'include',
-    body: JSON.stringify({ replace }),
-  })
-  if (!response.ok) {
-    throw new Error('failed to load playlist into queue')
-  }
-  return (await response.json()) as RadioSnapshot
+export async function loadPlaylist(playlistId: string, replace: boolean, target?: RadioTarget): Promise<RadioSnapshot> {
+  return xrpcLoadPlaylist(playlistId, replace, target)
 }
-

@@ -5,10 +5,12 @@ use sqlx::FromRow;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::{chat::ChatService, db::Database, loudness, metadata};
-use super::types::*;
 use super::events::advance_duration_seconds;
-use super::helpers::{extension, file_extension, is_unsupported_audio_file as is_unsupported_by_ext, now};
+use super::helpers::{
+    extension, file_extension, is_unsupported_audio_file as is_unsupported_by_ext, now,
+};
+use super::types::*;
+use crate::{chat::ChatService, db::Database, loudness, metadata};
 
 /// Service for radio state, queue, song storage, and realtime broadcasts.
 #[derive(Clone)]
@@ -155,13 +157,17 @@ impl RadioService {
         .await
         .context("loading all songs with albums for sync")?;
 
-        let mut grouped: std::collections::HashMap<String, (String, Vec<String>)> = std::collections::HashMap::new();
+        let mut grouped: std::collections::HashMap<String, (Vec<String>, Vec<String>)> =
+            std::collections::HashMap::new();
         for song in songs {
             if let Some(album) = song.album {
                 let album_name = album.trim().to_owned();
                 if !album_name.is_empty() {
-                    let key = album_name.to_lowercase();
-                    let entry = grouped.entry(key).or_insert_with(|| (album_name.clone(), Vec::new()));
+                    let key = crate::radio::helpers::normalize_album_title(&album_name);
+                    let entry = grouped
+                        .entry(key)
+                        .or_insert_with(|| (Vec::new(), Vec::new()));
+                    entry.0.push(album_name);
                     entry.1.push(song.id);
                 }
             }
@@ -174,39 +180,44 @@ impl RadioService {
             .await
             .context("starting auto-sync transaction")?;
 
-        for (key, (album_name, song_ids)) in grouped {
-            // Check if an album with this title exists (case-insensitively).
-            #[derive(FromRow)]
-            struct ExistingAlbum {
-                id: String,
-            }
-            let existing = sqlx::query_as::<_, ExistingAlbum>(
-                "select id from radio_albums where lower(title) = ? limit 1"
-            )
-            .bind(&key)
-            .fetch_optional(&mut *tx)
+        #[derive(FromRow)]
+        struct ExistingAlbum {
+            id: String,
+            title: String,
+        }
+        let all_db_albums = sqlx::query_as::<_, ExistingAlbum>("select id, title from radio_albums")
+            .fetch_all(&mut *tx)
             .await
-            .context("checking for existing album")?;
+            .context("loading all existing albums")?;
 
-            let album_id = if let Some(row) = existing {
-                // Keep the existing ID but update the title/casing if needed.
+        for (key, (candidate_titles, song_ids)) in grouped {
+            let album_name = Self::resolve_album_title_conflict(&candidate_titles);
+
+            let mut matched_album_id = None;
+            for db_album in &all_db_albums {
+                if crate::radio::helpers::normalize_album_title(&db_album.title) == key {
+                    matched_album_id = Some(db_album.id.clone());
+                    break;
+                }
+            }
+
+            let album_id = if let Some(id) = matched_album_id {
                 sqlx::query("update radio_albums set title = ? where id = ?")
                     .bind(&album_name)
-                    .bind(&row.id)
+                    .bind(&id)
                     .execute(&mut *tx)
                     .await
                     .context("updating existing album title")?;
-                row.id
+                id
             } else {
                 let id = Uuid::new_v4().to_string();
-                let position = sqlx::query_scalar::<_, Option<i64>>(
-                    "select max(position) from radio_albums"
-                )
-                .fetch_one(&mut *tx)
-                .await
-                .context("loading max album position")?
-                .unwrap_or(0)
-                + 1;
+                let position =
+                    sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_albums")
+                        .fetch_one(&mut *tx)
+                        .await
+                        .context("loading max album position")?
+                        .unwrap_or(0)
+                        + 1;
 
                 sqlx::query("insert into radio_albums (id, title, position) values (?, ?, ?)")
                     .bind(&id)
@@ -218,6 +229,16 @@ impl RadioService {
                 id
             };
 
+            // Update all songs in this group to have the exact resolved album name.
+            for song_id in &song_ids {
+                sqlx::query("update songs set album = ? where id = ?")
+                    .bind(&album_name)
+                    .bind(song_id)
+                    .execute(&mut *tx)
+                    .await
+                    .context("updating song album metadata to resolved value")?;
+            }
+
             // Sync tracks for this album.
             sqlx::query("delete from radio_album_tracks where album_id = ?")
                 .bind(&album_id)
@@ -227,7 +248,7 @@ impl RadioService {
 
             for (index, song_id) in song_ids.iter().enumerate() {
                 sqlx::query(
-                    "insert into radio_album_tracks (album_id, song_id, position) values (?, ?, ?)"
+                    "insert into radio_album_tracks (album_id, song_id, position) values (?, ?, ?)",
                 )
                 .bind(&album_id)
                 .bind(song_id)
@@ -253,17 +274,44 @@ impl RadioService {
             set last_album_id = null, last_track_position = 0
             where last_album_id is not null
               and last_album_id not in (select id from radio_albums)
-            "#
+            "#,
         )
         .execute(&mut *tx)
         .await
         .context("cleaning up invalid radio_loop_state cursor")?;
 
-        tx.commit().await.context("committing auto-sync transaction")?;
+        tx.commit()
+            .await
+            .context("committing auto-sync transaction")?;
 
         Ok(())
     }
 
+    fn resolve_album_title_conflict(titles: &[String]) -> String {
+        if titles.is_empty() {
+            return String::new();
+        }
+
+        let mut counts = std::collections::HashMap::new();
+        for t in titles {
+            *counts.entry(t.as_str()).or_insert(0) += 1;
+        }
+
+        let mut best_title = titles[0].as_str();
+        let mut best_count = 0;
+
+        for (&t, &count) in &counts {
+            if count > best_count {
+                best_title = t;
+                best_count = count;
+            } else if count == best_count {
+                if t < best_title {
+                    best_title = t;
+                }
+            }
+        }
+        best_title.to_string()
+    }
 
     /// Measures and stores loudness for every song missing a `loudness_lufs` value.
     pub(crate) async fn backfill_missing_loudness_on_boot(&self) -> anyhow::Result<usize> {
@@ -308,7 +356,6 @@ impl RadioService {
         album_loops(&self.db).await
     }
 
-
     /// Lists all saved playlists.
     pub(crate) async fn playlists(&self) -> anyhow::Result<Vec<Playlist>> {
         let mut playlists = sqlx::query_as::<_, Playlist>(
@@ -345,7 +392,11 @@ impl RadioService {
     }
 
     /// Creates a new playlist from explicit song ids.
-    pub(crate) async fn create_playlist(&self, name: &str, song_ids: &[String]) -> anyhow::Result<Playlist> {
+    pub(crate) async fn create_playlist(
+        &self,
+        name: &str,
+        song_ids: &[String],
+    ) -> anyhow::Result<Playlist> {
         let song_ids: Vec<String> = song_ids
             .iter()
             .map(|song_id| song_id.trim().to_owned())
@@ -416,7 +467,7 @@ impl RadioService {
         admin_did: &str,
     ) -> anyhow::Result<RadioSnapshot> {
         let song_ids = sqlx::query_scalar::<_, String>(
-            "select song_id from playlist_tracks where playlist_id = ? order by position asc"
+            "select song_id from playlist_tracks where playlist_id = ? order by position asc",
         )
         .bind(id)
         .fetch_all(self.db.pool())
@@ -437,8 +488,6 @@ impl RadioService {
         self.enqueue_songs(&song_ids, admin_did).await
     }
 
-
-
     /// Deletes an album loop and clears the album field from associated songs.
     pub(crate) async fn delete_album(&self, album_id: &str) -> anyhow::Result<Vec<RadioAlbum>> {
         let mut tx = self
@@ -448,11 +497,12 @@ impl RadioService {
             .await
             .context("starting delete_album transaction")?;
 
-        let album_title: Option<String> = sqlx::query_scalar("select title from radio_albums where id = ?")
-            .bind(album_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .context("finding album title for delete")?;
+        let album_title: Option<String> =
+            sqlx::query_scalar("select title from radio_albums where id = ?")
+                .bind(album_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .context("finding album title for delete")?;
 
         if let Some(title) = album_title {
             sqlx::query("update songs set album = null where trim(album) = ? or lower(album) = ?")
@@ -469,12 +519,111 @@ impl RadioService {
             .await
             .context("deleting album")?;
 
-        tx.commit().await.context("committing delete_album transaction")?;
+        tx.commit()
+            .await
+            .context("committing delete_album transaction")?;
 
-        tracing::info!(album_id, "album deleted and associated songs' album tags cleared");
+        tracing::info!(
+            album_id,
+            "album deleted and associated songs' album tags cleared"
+        );
         self.albums().await
     }
 
+    /// Merges a duplicate source album into a target album.
+    /// Combines their songs and updates loop state.
+    pub(crate) async fn merge_albums(
+        &self,
+        source_id: &str,
+        target_id: &str,
+    ) -> anyhow::Result<Vec<RadioAlbum>> {
+        if source_id == target_id {
+            return Err(anyhow::anyhow!("cannot merge an album into itself"));
+        }
+
+        let mut tx = self
+            .db
+            .pool()
+            .begin()
+            .await
+            .context("starting merge_albums transaction")?;
+
+        // 1. Get the title of the target album
+        let target_title: Option<String> =
+            sqlx::query_scalar("select title from radio_albums where id = ?")
+                .bind(target_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .context("finding target album title")?;
+
+        let target_title = match target_title {
+            Some(t) => t,
+            None => return Err(anyhow::anyhow!("target album not found")),
+        };
+
+        // 2. Get the title of the source album
+        let source_title: Option<String> =
+            sqlx::query_scalar("select title from radio_albums where id = ?")
+                .bind(source_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .context("finding source album title")?;
+
+        let source_title = match source_title {
+            Some(t) => t,
+            None => return Err(anyhow::anyhow!("source album not found")),
+        };
+
+        // 3. Update all songs that have the source album title to use the target title
+        sqlx::query("update songs set album = ? where trim(album) = ? or lower(album) = ?")
+            .bind(&target_title)
+            .bind(&source_title)
+            .bind(source_title.to_lowercase())
+            .execute(&mut *tx)
+            .await
+            .context("updating songs from source album to target album title")?;
+
+        // Also update any song that is linked to the source album but might have a different/missing title
+        sqlx::query(
+            r#"
+            update songs
+            set album = ?
+            where id in (
+                select song_id from radio_album_tracks where album_id = ?
+            )
+            "#,
+        )
+        .bind(&target_title)
+        .bind(source_id)
+        .execute(&mut *tx)
+        .await
+        .context("updating songs linked to source album tracks")?;
+
+        // 4. Update the radio loop state if it references the source album to the target album
+        sqlx::query("update radio_loop_state set last_album_id = ? where last_album_id = ?")
+            .bind(target_id)
+            .bind(source_id)
+            .execute(&mut *tx)
+            .await
+            .context("updating loop state cursor from source to target album")?;
+
+        // 5. Delete the source album
+        sqlx::query("delete from radio_albums where id = ?")
+            .bind(source_id)
+            .execute(&mut *tx)
+            .await
+            .context("deleting source album")?;
+
+        tx.commit()
+            .await
+            .context("committing merge_albums transaction")?;
+
+        // Run auto-sync to rebuild tracks for the target album and do cleanup
+        self.auto_sync_albums().await?;
+
+        tracing::info!(source_id, target_id, "albums merged successfully");
+        self.albums().await
+    }
 
     /// Enables or disables an album loop.
     pub(crate) async fn set_album_enabled(
@@ -763,23 +912,6 @@ impl RadioService {
         ));
 
         Ok(song)
-    }
-
-    /// Adds an existing song to the bottom of the queue.
-    pub(crate) async fn enqueue_song(
-        &self,
-        song_id: &str,
-        admin_did: &str,
-    ) -> anyhow::Result<RadioSnapshot> {
-        if find_song(&self.db, song_id).await?.is_none() {
-            return Err(anyhow!("song not found"));
-        }
-
-        append_queue_item(&self.db, song_id, admin_did).await?;
-        play_next_if_idle(&self.db, admin_did).await?;
-        tracing::info!(song_id, admin_did, "queued song");
-        self.broadcast_snapshot().await;
-        self.snapshot().await
     }
 
     /// Appends multiple songs to the queue in order with a single broadcast.
@@ -1694,5 +1826,146 @@ async fn reset_current(db: &Database, admin_did: &str) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    // Tests moved to tests module
+    use super::*;
+    use crate::db::Database;
+    use crate::chat::ChatService;
+    use tempfile::tempdir;
+
+    async fn setup_test_service() -> (RadioService, Database) {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        db.prepare().await.unwrap();
+
+        // Initialize required radio_state and radio_loop_state
+        sqlx::query("insert or ignore into radio_state (id, status) values (1, 'stopped')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        sqlx::query("insert or ignore into radio_loop_state (id) values (1)")
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        let chat = ChatService::new(db.clone());
+        let tmp = tempdir().unwrap();
+        let service = RadioService::new(db.clone(), tmp.into_path(), chat);
+        (service, db)
+    }
+
+    #[tokio::test]
+    async fn test_album_normalization() {
+        assert_eq!(crate::radio::helpers::normalize_album_title("À cause des garçons"), "a cause des garcons");
+        assert_eq!(crate::radio::helpers::normalize_album_title("À cause des garçons"), "a cause des garcons"); // NFD
+        assert_eq!(crate::radio::helpers::normalize_album_title("Ægætis byrjun"), "ægætis byrjun");
+        assert_eq!(crate::radio::helpers::normalize_album_title("  Ægætis byrjun   "), "ægætis byrjun");
+    }
+
+    #[tokio::test]
+    async fn test_auto_sync_deduplication() {
+        let (service, db) = setup_test_service().await;
+
+        // Insert songs with conflicting metadata (casing/accents/NFC/NFD)
+        // Note: they should converge on one album.
+        sqlx::query("insert into songs (id, title, artist, album, file_path, added_by_did, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+            .bind("song-1")
+            .bind("Track 1")
+            .bind("Artist")
+            .bind("À cause des garçons")
+            .bind("path1.mp3")
+            .bind("did")
+            .bind(100)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        sqlx::query("insert into songs (id, title, artist, album, file_path, added_by_did, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+            .bind("song-2")
+            .bind("Track 2")
+            .bind("Artist")
+            .bind("À cause des garçons") // NFD spelling
+            .bind("path2.mp3")
+            .bind("did")
+            .bind(101)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        service.auto_sync_albums().await.unwrap();
+
+        // Verify there is only one album record in the database
+        let albums = service.albums().await.unwrap();
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].tracks.len(), 2);
+
+        // Verify that the songs' album tags have been converged to the resolved title
+        let resolved_title: String = sqlx::query_scalar("select album from songs where id = 'song-1'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        let resolved_title_2: String = sqlx::query_scalar("select album from songs where id = 'song-2'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(resolved_title, resolved_title_2);
+    }
+
+    #[tokio::test]
+    async fn test_merge_albums() {
+        let (service, db) = setup_test_service().await;
+
+        // Create two duplicate albums in the database:
+        // We do this by inserting songs with different album tags to force two separate albums,
+        // then we merge them.
+        sqlx::query("insert into songs (id, title, artist, album, file_path, added_by_did, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+            .bind("song-1")
+            .bind("Track 1")
+            .bind("Artist")
+            .bind("Album A")
+            .bind("path1.mp3")
+            .bind("did")
+            .bind(100)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        sqlx::query("insert into songs (id, title, artist, album, file_path, added_by_did, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+            .bind("song-2")
+            .bind("Track 2")
+            .bind("Artist")
+            .bind("Album B")
+            .bind("path2.mp3")
+            .bind("did")
+            .bind(101)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        service.auto_sync_albums().await.unwrap();
+
+        let initial_albums = service.albums().await.unwrap();
+        assert_eq!(initial_albums.len(), 2);
+
+        let album_a = initial_albums.iter().find(|a| a.title == "Album A").unwrap();
+        let album_b = initial_albums.iter().find(|a| a.title == "Album B").unwrap();
+
+        // Point loop state cursor to Album B
+        sqlx::query("update radio_loop_state set last_album_id = ?, last_track_position = 1 where id = 1")
+            .bind(&album_b.id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        // Merge Album B into Album A
+        let remaining_albums = service.merge_albums(&album_b.id, &album_a.id).await.unwrap();
+        assert_eq!(remaining_albums.len(), 1);
+        assert_eq!(remaining_albums[0].title, "Album A");
+        assert_eq!(remaining_albums[0].tracks.len(), 2);
+
+        // Verify loop state was updated to target album (Album A)
+        let loop_cursor: (Option<String>, i64) = sqlx::query_as("select last_album_id, last_track_position from radio_loop_state where id = 1")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(loop_cursor.0.unwrap(), album_a.id);
+        assert_eq!(loop_cursor.1, 1);
+    }
 }

@@ -1,5 +1,5 @@
-use tokio::io::AsyncReadExt;
 use super::types::NewSongUpload;
+use tokio::io::AsyncReadExt;
 
 pub(crate) fn has_playlist_extension(file_path: &str) -> bool {
     file_path
@@ -62,4 +62,27 @@ pub(crate) fn file_extension(filename: Option<&str>, fallback: &str) -> String {
 
 pub(crate) fn now() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
+}
+
+pub(crate) fn normalize_album_title(title: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+
+    let nfd_stripped: String = title
+        .nfd()
+        .filter(|c| !('\u{0300}'..='\u{036F}').contains(c))
+        .collect();
+
+    let lower = nfd_stripped.to_lowercase();
+
+    let mut normalized = String::with_capacity(lower.len());
+    for c in lower.chars() {
+        if c.is_alphanumeric() || c.is_whitespace() {
+            normalized.push(c);
+        }
+    }
+
+    normalized
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ")
 }

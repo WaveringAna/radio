@@ -1,19 +1,38 @@
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from 'solid-js'
-import { ListPlus, Pause, Play, SkipForward, Trash2, UploadCloud } from 'lucide-solid'
+import {
+  CircleUserRound,
+  GripVertical,
+  ListPlus,
+  LoaderCircle,
+  LockKeyhole,
+  Pause,
+  Play,
+  Plus,
+  RadioTower,
+  SkipForward,
+  Trash2,
+  UploadCloud,
+  X,
+} from 'lucide-solid'
 import { AdminUploadPanel } from '../../features/upload/AdminUploadPanel'
 import { ChatModerationPanel } from './ChatModerationPanel'
 import { PaginationRow } from '../../shared/components/PaginationRow'
 import { ProfileAvatar } from '../../shared/components/ProfileAvatar'
 import { SearchableDropdown } from '../../shared/components/SearchableDropdown'
 import { resolveAtprotoProfile, type AtprotoProfile } from '../../shared/lib/atproto'
+import { fetchAdminPermissions, type SessionResponse } from '../../shared/lib/auth'
 import {
-  API_BASE,
+  canUseRadioXrpcTarget,
   clearQueue,
   controlRadio,
   deleteSong,
   enqueueAlbum,
   enqueueSong,
+  fetchSyndicatedStations,
   fetchAlbums,
+  deleteAlbum,
+  setAlbumEnabled,
+  mergeAlbums,
   fetchRadioSnapshot,
   fetchSongs,
   openRadioSocket,
@@ -25,14 +44,29 @@ import {
   createPlaylist,
   deletePlaylist,
   loadPlaylist,
+  songCoverThumbnailUrl,
+  songCoverUrl,
+  SYNDICATION_WORKER_BASE,
   type QueueItem,
   type RadioEvent,
+  type RadioTarget,
   type Song,
 } from '../../shared/lib/radio'
+import {
+  labelFromStationUrl,
+  readSelectedStationUrl,
+  selectedTuneInStationFrom,
+  stationRadioTarget,
+  stationResourceKey,
+  TUNE_IN_CHANGED_EVENT,
+  tuneInStationsFrom,
+  type TuneInStation,
+} from '../../shared/lib/stationSelection'
 import { createPagedList } from '../../shared/primitives/createPagedList'
 
 interface QueueControlPageProps {
-  isAdmin: boolean
+  session?: SessionResponse
+  sessionLoading: boolean
 }
 
 type SearchMode = 'songs' | 'albums' | 'playlists'
@@ -55,10 +89,36 @@ function formatTime(seconds: number | null | undefined): string {
  * @returns The queue-control admin page view.
  */
 export default function QueueControlPage(props: QueueControlPageProps) {
-  const [snapshot, { mutate, refetch }] = createResource(() => props.isAdmin, (enabled) => (enabled ? fetchRadioSnapshot() : undefined))
-  const [songs, { refetch: refetchSongs }] = createResource(() => props.isAdmin, (enabled) => (enabled ? fetchSongs() : []))
-  const [albums, { refetch: refetchAlbums }] = createResource(() => props.isAdmin, (enabled) => (enabled ? fetchAlbums() : []))
-  const [playlists, { refetch: refetchPlaylists }] = createResource(() => props.isAdmin, (enabled) => (enabled ? fetchPlaylists() : []))
+  const [selectedStationUrl, setSelectedStationUrl] = createSignal(readSelectedStationUrl())
+  const [syndicatedStations] = createResource(
+    () => SYNDICATION_WORKER_BASE || 'disabled',
+    (workerBase) => workerBase === 'disabled' ? Promise.resolve([]) : fetchSyndicatedStations(workerBase),
+  )
+  const tuneInStations = (): TuneInStation[] => tuneInStationsFrom(syndicatedStations() ?? [])
+  const selectedStation = createMemo<TuneInStation>(() => selectedTuneInStationFrom(tuneInStations(), selectedStationUrl()))
+  const selectedApiBase = () => selectedStation().apiBase
+  const selectedStationKey = () => stationResourceKey(selectedStation())
+  const selectedRadioTarget = (): RadioTarget => stationRadioTarget(selectedStation())
+  const selectedRadioCanUseXrpc = () => canUseRadioXrpcTarget(selectedRadioTarget())
+  const adminProbeSource = () => props.session?.authenticated && selectedRadioCanUseXrpc() ? selectedStationKey() : null
+  const [adminStatus] = createResource(adminProbeSource, async () => {
+    try {
+      await fetchAdminPermissions(selectedRadioTarget())
+      return { isAdmin: true, message: null as string | null }
+    } catch (error) {
+      console.warn('radio admin probe failed', error)
+      return {
+        isAdmin: false,
+        message: 'you are not an admin of the radio you are currently tuned into.',
+      }
+    }
+  })
+  const isAdmin = () => adminStatus()?.isAdmin === true
+  const adminResourceSource = () => isAdmin() ? selectedStationKey() : null
+  const [snapshot, { mutate, refetch }] = createResource(adminResourceSource, () => fetchRadioSnapshot(selectedRadioTarget(), true))
+  const [songs, { refetch: refetchSongs }] = createResource(adminResourceSource, () => fetchSongs(selectedRadioTarget(), true))
+  const [albums, { refetch: refetchAlbums }] = createResource(adminResourceSource, () => fetchAlbums(selectedRadioTarget()))
+  const [playlists, { refetch: refetchPlaylists }] = createResource(adminResourceSource, () => fetchPlaylists(selectedRadioTarget()))
   const [profiles, setProfiles] = createSignal<Record<string, AtprotoProfile>>({})
   const [pageError, setPageError] = createSignal<string | null>(null)
   const [songFilterTitle, setSongFilterTitle] = createSignal('')
@@ -66,8 +126,19 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const [songFilterGenre, setSongFilterGenre] = createSignal('')
   const [songFilterDid, setSongFilterDid] = createSignal('')
   const [albumFilter, setAlbumFilter] = createSignal('')
+  const [expandedAlbumId, setExpandedAlbumId] = createSignal<string | null>(null)
+  const normalizeTitleForUi = (title: string): string => {
+    return title
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .trim()
+      .replace(/\s+/g, ' ');
+  }
   const [searchMode, setSearchMode] = createSignal<SearchMode>('songs')
   const [libraryAction, setLibraryAction] = createSignal<LibraryAction>('queue')
+  const [showIntake, setShowIntake] = createSignal(false)
   const [selectedSongIds, setSelectedSongIds] = createSignal<string[]>([])
   const [editingSongId, setEditingSongId] = createSignal<string | null>(null)
   const [editTitle, setEditTitle] = createSignal('')
@@ -87,6 +158,19 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const profileFor = (did: string) => profiles()[did] ?? fallbackProfile(did)
 
   createEffect(() => {
+    const syncSelectedStation = () => {
+      setSelectedStationUrl(readSelectedStationUrl())
+      setPageError(null)
+    }
+    window.addEventListener('storage', syncSelectedStation)
+    window.addEventListener(TUNE_IN_CHANGED_EVENT, syncSelectedStation)
+    onCleanup(() => {
+      window.removeEventListener('storage', syncSelectedStation)
+      window.removeEventListener(TUNE_IN_CHANGED_EVENT, syncSelectedStation)
+    })
+  })
+
+  createEffect(() => {
     const interval = window.setInterval(() => setClock(Date.now()), 1000)
     onCleanup(() => window.clearInterval(interval))
   })
@@ -96,7 +180,8 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   })
 
   createEffect(() => {
-    if (!props.isAdmin) return
+    if (!isAdmin()) return
+    const socketBase = selectedApiBase()
     let socket: WebSocket | null = null
     let reconnectTimer: number | null = null
     let reconnectAttempt = 0
@@ -104,7 +189,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
     const connect = () => {
       if (cancelled) return
-      socket = openRadioSocket()
+      socket = openRadioSocket(socketBase)
       socket.addEventListener('open', () => {
         reconnectAttempt = 0
       })
@@ -200,10 +285,16 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     return Math.max(0, state.positionSeconds + Math.floor((now - snapshotSyncedAt()) / 1000))
   }
 
+  const liveProgressPercent = () => {
+    const duration = snapshot()?.currentSong?.durationSeconds
+    if (!duration || duration <= 0) return 0
+    return Math.min(100, Math.max(0, (livePositionSeconds() / duration) * 100))
+  }
+
   const sendControl = async (action: 'play' | 'pause' | 'stop' | 'skip') => {
     try {
       setPageError(null)
-      mutate(await controlRadio(action, 'explicit_admin_action'))
+      mutate(await controlRadio(action, 'explicit_admin_action', selectedRadioTarget()))
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'radio control faceplanted.')
     }
@@ -212,7 +303,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const addSongToQueue = async (songId: string) => {
     try {
       setPageError(null)
-      mutate(await enqueueSong(songId))
+      mutate(await enqueueSong(songId, selectedRadioTarget()))
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'queue add faceplanted.')
     }
@@ -221,9 +312,44 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const addAlbumToQueue = async (songIds: string[]) => {
     try {
       setPageError(null)
-      mutate(await enqueueAlbum(songIds))
+      mutate(await enqueueAlbum(songIds, selectedRadioTarget()))
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'album queue add faceplanted.')
+    }
+  }
+
+  const handleSetAlbumEnabled = async (albumId: string, enabled: boolean) => {
+    try {
+      setPageError(null)
+      await setAlbumEnabled(albumId, enabled, selectedRadioTarget())
+      void refetchAlbums()
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'failed to toggle album looping.')
+    }
+  }
+
+  const handleDeleteAlbum = async (albumId: string) => {
+    if (!confirm('Are you sure you want to delete this album loop? The associated songs will not be deleted, but they will no longer be grouped as an album loop.')) {
+      return
+    }
+    try {
+      setPageError(null)
+      await deleteAlbum(albumId, selectedRadioTarget())
+      void refetchAlbums()
+      void refetchSongs()
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'failed to delete album loop.')
+    }
+  }
+
+  const handleMergeAlbums = async (sourceId: string, targetId: string) => {
+    try {
+      setPageError(null)
+      await mergeAlbums(sourceId, targetId, selectedRadioTarget())
+      void refetchAlbums()
+      void refetchSongs()
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'failed to merge albums.')
     }
   }
 
@@ -232,7 +358,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     if (ids.length === 0) return
     try {
       setPageError(null)
-      mutate(await enqueueAlbum(ids))
+      mutate(await enqueueAlbum(ids, selectedRadioTarget()))
       setSelectedSongIds([])
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'multi add faceplanted.')
@@ -265,9 +391,9 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     try {
       setPageError(null)
       if (replace) {
-        await clearQueue()
+        await clearQueue(selectedRadioTarget())
       }
-      mutate(await enqueueAlbum(shuffled))
+      mutate(await enqueueAlbum(shuffled, selectedRadioTarget()))
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'shuffle genre failed')
     }
@@ -285,9 +411,9 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     try {
       setPageError(null)
       if (replace) {
-        await clearQueue()
+        await clearQueue(selectedRadioTarget())
       }
-      mutate(await enqueueAlbum(shuffled))
+      mutate(await enqueueAlbum(shuffled, selectedRadioTarget()))
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'shuffle artist failed')
     }
@@ -301,7 +427,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
     try {
       setPageError(null)
-      await createPlaylist(name, songIds)
+      await createPlaylist(name, songIds, selectedRadioTarget())
       setNewPlaylistName('')
       setSavingQueue(false)
       await refetchPlaylists()
@@ -318,7 +444,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
     try {
       setPageError(null)
-      await createPlaylist(name, songIds)
+      await createPlaylist(name, songIds, selectedRadioTarget())
       setNewPlaylistName('')
       setSavingSelection(false)
       setSelectedSongIds([])
@@ -331,7 +457,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const removePlaylist = async (id: string) => {
     try {
       setPageError(null)
-      await deletePlaylist(id)
+      await deletePlaylist(id, selectedRadioTarget())
       await refetchPlaylists()
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'failed to delete set')
@@ -341,7 +467,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const loadPlaylistToQueue = async (id: string, replace: boolean) => {
     try {
       setPageError(null)
-      mutate(await loadPlaylist(id, replace))
+      mutate(await loadPlaylist(id, replace, selectedRadioTarget()))
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'failed to load set')
     }
@@ -350,7 +476,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const removeFromQueue = async (queueId: string) => {
     try {
       setPageError(null)
-      mutate(await removeQueueItem(queueId))
+      mutate(await removeQueueItem(queueId, selectedRadioTarget()))
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'queue remove faceplanted.')
     }
@@ -359,7 +485,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const clearTheQueue = async () => {
     try {
       setPageError(null)
-      mutate(await clearQueue())
+      mutate(await clearQueue(selectedRadioTarget()))
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'clear queue faceplanted.')
     }
@@ -383,7 +509,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     reordered.splice(targetIndex, 0, sourceId)
     try {
       setPageError(null)
-      mutate(await reorderQueue(reordered))
+      mutate(await reorderQueue(reordered, selectedRadioTarget()))
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'reorder faceplanted.')
     }
@@ -393,7 +519,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     await Promise.all([refetchSongs(), refetchAlbums()])
   }
 
-  const coverUrl = (song: Song) => `${API_BASE}/api/songs/${song.id}/cover/thumbnail?v=${coverVersions()[song.id] ?? song.createdAt}`
+  const coverUrl = (song: Song) => `${songCoverThumbnailUrl(song.id, selectedApiBase())}?v=${coverVersions()[song.id] ?? song.createdAt}`
 
   const beginSongEdit = (song: Song) => {
     setEditingSongId(song.id)
@@ -422,7 +548,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
         album: editAlbum() || null,
         genre: editGenre() || null,
         durationSeconds: currentSong?.durationSeconds ?? null,
-      })
+      }, selectedRadioTarget())
       cancelSongEdit()
       await refreshLibrary()
       void refetch()
@@ -435,7 +561,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     if (!file) return
     try {
       setPageError(null)
-      await uploadSongCover(songId, file)
+      await uploadSongCover(songId, file, selectedRadioTarget())
       setCoverVersions((current) => ({ ...current, [songId]: Date.now() }))
       await refetchSongs()
       void refetch()
@@ -447,12 +573,34 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const removeSong = async (songId: string) => {
     try {
       setPageError(null)
-      await deleteSong(songId)
+      await deleteSong(songId, selectedRadioTarget())
       await refreshLibrary()
       void refetch()
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'song delete faceplanted.')
     }
+  }
+
+  const queueControlGate = () => {
+    const station = labelFromStationUrl(selectedStation().url)
+    if (props.sessionLoading) {
+      return { kind: 'checking', station, title: 'checking access', message: 'reading your current session.' } as const
+    }
+    if (!props.session?.authenticated) {
+      return { kind: 'signed-out', station, title: 'sign in to continue', message: `queue control for ${station} requires an authenticated account.` } as const
+    }
+    if (!selectedRadioCanUseXrpc()) {
+      return { kind: 'read-only', station, title: 'this station is read only', message: `${station} does not advertise a public radio XRPC endpoint.` } as const
+    }
+    if (adminStatus.loading) {
+      return { kind: 'checking', station, title: 'checking station access', message: `asking ${station} for your permissions.` } as const
+    }
+    return {
+      kind: 'not-admin',
+      station,
+      title: 'no admin access',
+      message: adminStatus()?.message ?? 'you are not an admin of the radio you are currently tuned into.',
+    } as const
   }
 
   const renderQueueItem = (item: QueueItem, index: () => number) => {
@@ -472,6 +620,9 @@ export default function QueueControlPage(props: QueueControlPageProps) {
         }}
         onDragEnd={() => setDraggingQueueId(null)}
       >
+        <span class="queue-drag-handle" aria-hidden="true">
+          <GripVertical size={14} strokeWidth={1.7} />
+        </span>
         <span class="queue-number">{queuePaging.page() * pageSize + index() + 1}</span>
         <ProfileAvatar profile={profile()} />
         <div class="song-copy">
@@ -488,60 +639,126 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
   return (
     <section class="queue-control-page">
-      <Show when={props.isAdmin} fallback={<p class="glass-card queue-control-empty">queue control is admin-only.</p>}>
+      <Show
+        when={isAdmin()}
+        fallback={(
+          <section
+            class="queue-control-gate"
+            classList={{ 'is-checking': queueControlGate().kind === 'checking' }}
+            role="status"
+            aria-live="polite"
+          >
+            <span class="queue-control-gate-icon" aria-hidden="true">
+              <Show when={queueControlGate().kind === 'checking'}>
+                <LoaderCircle size={20} strokeWidth={1.8} />
+              </Show>
+              <Show when={queueControlGate().kind === 'signed-out'}>
+                <CircleUserRound size={20} strokeWidth={1.8} />
+              </Show>
+              <Show when={queueControlGate().kind === 'read-only'}>
+                <RadioTower size={20} strokeWidth={1.8} />
+              </Show>
+              <Show when={queueControlGate().kind === 'not-admin'}>
+                <LockKeyhole size={20} strokeWidth={1.8} />
+              </Show>
+            </span>
+            <div class="queue-control-gate-copy">
+              <p class="eyebrow">{queueControlGate().station}</p>
+              <h1>{queueControlGate().title}</h1>
+              <p>{queueControlGate().message}</p>
+              <Show when={queueControlGate().kind === 'signed-out'}>
+                <a class="queue-control-gate-action" href="/auth">sign in</a>
+              </Show>
+            </div>
+          </section>
+        )}
+      >
         <Show when={pageError()}>{(message) => <p class="error-copy queue-control-error">{message()}</p>}</Show>
 
         <div class="qc-split">
-          <div class="qc-left">
-            <section class="qc-now">
-              <div class="qc-art">
-                <Show
-                  when={snapshot()?.currentSong?.hasCover}
-                  fallback={<div class="qc-art-glow" aria-hidden="true" />}
+          <section class="qc-now">
+              <header class="qc-station-bar">
+                <div class="qc-station-identity">
+                  <span class="qc-live-mark" aria-hidden="true" />
+                  <strong>{selectedStation().name}</strong>
+                  <span title={selectedStation().url}>{labelFromStationUrl(selectedStation().url)}</span>
+                </div>
+                <span
+                  class="qc-station-state"
+                  classList={{ 'is-playing': snapshot()?.state.status === 'playing' }}
                 >
-                  <img class="qc-art-cover" src={`${API_BASE}/api/songs/${snapshot()?.currentSong?.id}/cover`} alt="" />
-                </Show>
+                  <span aria-hidden="true" />
+                  {snapshot()?.state.status ?? 'connecting'}
+                </span>
+              </header>
+
+              <div class="qc-on-air">
+                <div class="qc-art">
+                  <Show
+                    when={snapshot()?.currentSong?.hasCover}
+                    fallback={<div class="qc-art-glow" aria-hidden="true" />}
+                  >
+                    <img class="qc-art-cover" src={songCoverUrl(snapshot()?.currentSong?.id ?? '', selectedApiBase())} alt="" />
+                  </Show>
+                </div>
+
+                <div class="qc-on-air-copy">
+                  <p class="eyebrow qc-eyebrow">now playing</p>
+                  <Show
+                    when={snapshot()?.currentSong}
+                    fallback={<h2 class="qc-title qc-title-empty">nothing playing yet</h2>}
+                  >
+                    {(song) => (
+                      <>
+                        <h2 class="qc-title" title={song().title}>{song().title}</h2>
+                        <p class="qc-artist">{song().artist}</p>
+                        <Show when={song().album}>{(album) => <p class="qc-album">{album()}</p>}</Show>
+                        <div class="qc-progress-group">
+                          <div
+                            class="qc-progress-track"
+                            role="progressbar"
+                            aria-label="song progress"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            aria-valuenow={Math.round(liveProgressPercent())}
+                          >
+                            <span style={`width: ${liveProgressPercent()}%`} />
+                          </div>
+                          <div class="qc-time-row">
+                            <span>{formatTime(Math.min(livePositionSeconds(), song().durationSeconds ?? Infinity))}</span>
+                            <span>{formatTime(song().durationSeconds)}</span>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </Show>
+                </div>
+
+                <div class="qc-on-air-actions">
+                  <div class="queue-transport-panel" aria-label="radio transport controls">
+                    <button class="icon-button primary" type="button" aria-label="play" title="play" onClick={() => void sendControl('play')}>
+                      <Play size={18} fill="currentColor" />
+                    </button>
+                    <button class="icon-button" type="button" aria-label="pause" title="pause" onClick={() => void sendControl('pause')}>
+                      <Pause size={16} />
+                    </button>
+                    <button class="icon-button" type="button" aria-label="skip" title="skip" onClick={() => void sendControl('skip')}>
+                      <SkipForward size={16} />
+                    </button>
+                  </div>
+                </div>
               </div>
+          </section>
 
-              <p class="eyebrow qc-eyebrow">now playing // live rite</p>
-              <Show
-                when={snapshot()?.currentSong}
-                fallback={<h2 class="qc-title qc-title-empty">nothing playing yet</h2>}
-              >
-                {(song) => (
-                  <>
-                    <h2 class="qc-title" title={song().title}>{song().title}</h2>
-                    <p class="qc-artist">{song().artist}</p>
-                    <Show when={song().album}>{(album) => <p class="qc-album">{album()}</p>}</Show>
-                  </>
-                )}
-              </Show>
-
-              <div class="qc-transport-strip">
-                <div class="queue-transport-panel" aria-label="radio transport controls">
-                  <button class="icon-button primary" type="button" aria-label="play" onClick={() => void sendControl('play')}>
-                    <Play size={18} fill="currentColor" />
-                  </button>
-                  <button class="icon-button" type="button" aria-label="pause" onClick={() => void sendControl('pause')}>
-                    <Pause size={16} />
-                  </button>
-                  <button class="icon-button" type="button" aria-label="skip" onClick={() => void sendControl('skip')}>
-                    <SkipForward size={16} />
-                  </button>
+          <div class="qc-left">
+            <section class="qc-queue">
+              <div class="section-heading qc-queue-heading">
+                <div class="qc-heading-copy">
+                  <p class="eyebrow">up next</p>
+                  <span>{snapshot()?.queue.length ?? 0} queued</span>
                 </div>
                 <Show
-                  when={snapshot()?.currentSong}
-                  fallback={<small class="qc-time">—:— / —:—</small>}
-                >
-                  {(song) => (
-                    <small class="qc-time">
-                      {formatTime(Math.min(livePositionSeconds(), song().durationSeconds ?? Infinity))} / {formatTime(song().durationSeconds)}
-                    </small>
-                  )}
-                </Show>
-                <Show
                   when={(snapshot()?.queue.length ?? 0) > 0}
-                  fallback={<span class="qc-clear-spacer" aria-hidden="true" />}
                 >
                   <div class="queue-action-buttons">
                     <button class="pill-button subtle" type="button" onClick={() => { setSavingQueue(!savingQueue()); setNewPlaylistName(''); }}>
@@ -570,13 +787,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                   </button>
                 </div>
               </Show>
-            </section>
-
-            <section class="qc-queue">
-              <div class="section-heading">
-                <p class="eyebrow">up next</p>
-                <span class="qc-hint">drag to reorder</span>
-              </div>
               <Show when={!snapshot.loading} fallback={<p class="list-empty">loading queue...</p>}>
                 <ul class="song-list queue-control-list">
                   <For each={queuePaging.paged()} fallback={<li class="list-empty">queue is empty</li>}>
@@ -589,18 +799,49 @@ export default function QueueControlPage(props: QueueControlPageProps) {
               </Show>
             </section>
 
-            <ChatModerationPanel />
+            <ChatModerationPanel apiBase={selectedApiBase()} stationKey={selectedStationKey()} target={selectedRadioTarget()} />
           </div>
 
           <div class="qc-right">
-            <AdminUploadPanel onSongAdded={() => void refreshLibrary()} error={pageError()} onError={setPageError} />
-
             <section class="library-control-card">
-              <div class="section-heading">
-                <p class="eyebrow">
-                  library · {searchMode() === 'songs' ? filteredSongs().length : searchMode() === 'albums' ? filteredAlbums().length : (playlists() ?? []).length}
-                </p>
-                <div class="upload-mode-tabs library-tabs" role="tablist" aria-label="library search mode">
+              <div class="section-heading qc-library-heading">
+                <div class="qc-heading-copy">
+                  <p class="eyebrow">library</p>
+                  <span>
+                    {searchMode() === 'songs'
+                      ? `${filteredSongs().length} songs`
+                      : searchMode() === 'albums'
+                        ? `${filteredAlbums().length} albums`
+                        : `${(playlists() ?? []).length} sets`}
+                  </span>
+                </div>
+                <button
+                  class="icon-button qc-intake-toggle"
+                  classList={{ 'is-active': showIntake() }}
+                  type="button"
+                  aria-label={showIntake() ? 'close add music' : 'add music'}
+                  aria-pressed={showIntake()}
+                  title={showIntake() ? 'close add music' : 'add music'}
+                  onClick={() => setShowIntake(!showIntake())}
+                >
+                  <Show when={showIntake()} fallback={<Plus size={18} strokeWidth={1.8} />}>
+                    <X size={18} strokeWidth={1.8} />
+                  </Show>
+                </button>
+              </div>
+              <Show when={showIntake()}>
+                <div class="qc-intake" aria-label="add music">
+                  <div class="section-heading">
+                    <p class="eyebrow">add music</p>
+                  </div>
+                  <AdminUploadPanel
+                    target={selectedRadioTarget()}
+                    onSongAdded={() => void refreshLibrary()}
+                    onError={setPageError}
+                  />
+                </div>
+              </Show>
+              <div class="upload-mode-tabs library-tabs" role="tablist" aria-label="library search mode">
                   <button class="pill-button" classList={{ subtle: searchMode() !== 'songs' }} type="button" role="tab" aria-selected={searchMode() === 'songs'} onClick={() => setSearchMode('songs')}>
                     songs
                   </button>
@@ -640,7 +881,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                   >
                     edit
                   </button>
-                </div>
               </div>
 
               <Show when={searchMode() === 'songs'}>
@@ -781,23 +1021,131 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                 <Show when={!albums.loading} fallback={<p class="list-empty">loading albums...</p>}>
                   <ul class="song-list album-loop-list">
                     <For each={albumsPaging.paged()} fallback={<li class="list-empty">no albums match</li>}>
-                      {(album) => (
-                        <li>
-                          <div class="song-copy">
-                            <span>{album.title}</span>
-                            <small>{album.tracks.length} tracks · {album.tracks.map((track) => track.title).join(' → ')}</small>
-                          </div>
-                          <button
-                            class="icon-button"
-                            type="button"
-                            aria-label="queue album"
-                            disabled={album.tracks.length === 0}
-                            onClick={() => void addAlbumToQueue(album.tracks.map((track) => track.id))}
-                          >
-                            <ListPlus size={18} />
-                          </button>
-                        </li>
-                      )}
+                      {(album) => {
+                        const isExpanded = () => expandedAlbumId() === album.id;
+                        const duplicate = () => (albums() ?? []).find(a => a.id !== album.id && normalizeTitleForUi(a.title) === normalizeTitleForUi(album.title));
+
+                        return (
+                          <li class="album-item-container" style="display: flex; flex-direction: column; align-items: stretch; gap: 0.5rem; padding: 0.75rem; border-bottom: 1px solid var(--hairline);">
+                            <div class="album-row-header" style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; width: 100%;">
+                              <div
+                                class="song-copy"
+                                style="cursor: pointer; flex-grow: 1; min-width: 0;"
+                                onClick={() => setExpandedAlbumId(isExpanded() ? null : album.id)}
+                              >
+                                <span style="font-weight: bold; display: flex; align-items: center; gap: 0.5rem; color: var(--text);">
+                                  {album.title}
+                                  <Show when={album.isEnabled}>
+                                    <span style="font-size: 0.7rem; padding: 0.1rem 0.3rem; border-radius: 4px; background: rgba(0,200,0,0.15); color: #00cc00; font-weight: normal;">looping</span>
+                                  </Show>
+                                  <Show when={duplicate()}>
+                                    <span style="font-size: 0.7rem; padding: 0.1rem 0.3rem; border-radius: 4px; background: rgba(255,165,0,0.15); color: #ffa500; font-weight: normal;">duplicate</span>
+                                  </Show>
+                                </span>
+                                <small style="display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                  {album.tracks.length} tracks · {album.tracks.map((track) => track.title).join(' → ')}
+                                </small>
+                              </div>
+                              <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
+                                <button
+                                  class="icon-button"
+                                  type="button"
+                                  aria-label="queue album"
+                                  disabled={album.tracks.length === 0}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void addAlbumToQueue(album.tracks.map((track) => track.id));
+                                  }}
+                                >
+                                  <ListPlus size={18} />
+                                </button>
+                              </div>
+                            </div>
+
+                            <Show when={isExpanded()}>
+                              <div class="album-details" style="display: flex; flex-direction: column; gap: 0.75rem; border-top: 1px solid var(--hairline); padding-top: 0.75rem; margin-top: 0.25rem;">
+                                <div class="album-actions-row" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem;">
+                                  <div style="display: flex; align-items: center; gap: 0.75rem;">
+                                    <label class="inline-check" style="margin: 0; display: flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; cursor: pointer; color: var(--text);">
+                                      <input
+                                        type="checkbox"
+                                        checked={album.isEnabled}
+                                        onChange={(e) => void handleSetAlbumEnabled(album.id, e.currentTarget.checked)}
+                                      />
+                                      loop this album
+                                    </label>
+                                    <button
+                                      class="pill-button subtle"
+                                      style="color: var(--error); border-color: rgba(255, 0, 0, 0.2); padding: 0.25rem 0.5rem; font-size: 0.85rem;"
+                                      type="button"
+                                      onClick={() => void handleDeleteAlbum(album.id)}
+                                    >
+                                      clear album loop
+                                    </button>
+                                  </div>
+
+                                  <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <Show when={duplicate()}>
+                                      {(dup) => (
+                                        <button
+                                          class="pill-button"
+                                          style="background: #ffa500; color: #000; font-size: 0.85rem; padding: 0.25rem 0.5rem; border: none; font-weight: bold;"
+                                          type="button"
+                                          onClick={() => {
+                                            if (confirm(`Merge this album "${album.title}" into the duplicate "${dup().title}"? All tracks will be combined under "${dup().title}".`)) {
+                                              void handleMergeAlbums(album.id, dup().id);
+                                            }
+                                          }}
+                                        >
+                                          merge duplicate
+                                        </button>
+                                      )}
+                                    </Show>
+
+                                    <div style="display: flex; align-items: center; gap: 0.25rem;">
+                                      <select
+                                        style="padding: 0.25rem 0.5rem; font-size: 0.85rem; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--text);"
+                                        onChange={(e) => {
+                                          const val = e.currentTarget.value;
+                                          if (val) {
+                                            const target = (albums() ?? []).find(a => a.id === val);
+                                            if (target && confirm(`Merge this album "${album.title}" into "${target.title}"? All tracks will be combined under "${target.title}".`)) {
+                                              void handleMergeAlbums(album.id, val);
+                                            }
+                                            e.currentTarget.value = "";
+                                          }
+                                        }}
+                                      >
+                                        <option value="" style="color: #000;">merge into...</option>
+                                        <For each={(albums() ?? []).filter(a => a.id !== album.id)}>
+                                          {(other) => <option value={other.id} style="color: #000;">{other.title}</option>}
+                                        </For>
+                                      </select>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div class="album-tracks-list" style="display: flex; flex-direction: column; gap: 0.25rem; background: rgba(0,0,0,0.1); padding: 0.5rem; border-radius: 4px; max-height: 12rem; overflow-y: auto;">
+                                  <span style="font-size: 0.8rem; font-weight: bold; opacity: 0.7; margin-bottom: 0.25rem; color: var(--text);">tracks:</span>
+                                  <For each={album.tracks}>
+                                    {(track, idx) => (
+                                      <div style="display: flex; align-items: center; justify-content: space-between; font-size: 0.85rem; padding: 0.15rem 0; color: var(--text);">
+                                        <span style="text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 75%;">
+                                          <span style="opacity: 0.5; margin-right: 0.35rem;">{idx() + 1}.</span>
+                                          {track.title}
+                                        </span>
+                                        <span style="opacity: 0.6; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 25%; font-size: 0.8rem;">
+                                          {track.artist}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </For>
+                                </div>
+                              </div>
+                            </Show>
+                          </li>
+                        );
+                      }}
                     </For>
                   </ul>
                   <Show when={albumsPaging.pageCount() > 1}>
