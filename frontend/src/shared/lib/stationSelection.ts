@@ -20,14 +20,20 @@ export function normalizeStationUrl(url: string | null | undefined): string {
   const trimmed = (url ?? '').trim()
   if (!trimmed) return ''
 
+  let normalized = ''
   try {
     const parsed = new URL(trimmed)
     parsed.hash = ''
     parsed.search = ''
-    return parsed.href.replace(/\/+$/, '')
+    normalized = parsed.href.replace(/\/+$/, '')
   } catch {
-    return trimmed.replace(/\/+$/, '')
+    normalized = trimmed.replace(/\/+$/, '')
   }
+
+  if (STANDALONE && typeof window !== 'undefined' && normalized === window.location.origin.replace(/\/+$/, '')) {
+    return ''
+  }
+  return normalized
 }
 
 export function stationListKey(url: string): string {
