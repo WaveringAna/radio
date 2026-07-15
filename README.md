@@ -17,16 +17,15 @@ To run your own radio station and have it syndicated (so it automatically shows 
    Your station must be publicly reachable over standard HTTPS on a public domain name so ATProto relays and directory workers can crawl it. Setting up a reverse proxy (like Caddy or Nginx) or routing traffic through a Cloudflare Tunnel is the easiest way to expose it.
 
 3. **Configure your `.env`:**
-   Configure your public domain endpoints (you can use the exact same domain name for all of them!):
+   Configure your public domain endpoints (you can use the exact same domain name for all of them!) and add your ATProto DID to the admin allowlist (comma-separated for multiple admins):
    ```env
    APP_URL=https://radio.yourdomain.com
    SERVICE_DID=did:web:radio.yourdomain.com
    STATION_URL=https://radio.yourdomain.com
    STATION_ANNOUNCE_WORKERS=https://syndication.sharkgirl.pet
+   ADMIN_DIDS=did:plc:abc123xyz...
    ```
 
-4. **Grant Admin Privileges:**
-   Add your ATProto DID to the `ADMIN_DIDS` environment variable in `.env` (comma-separated for multiple admins) and restart the backend.
 When the backend starts up, it will automatically register your station's metadata and notify the syndication workers to crawl it. 
 
 You can also trigger a manual crawl announcement directly to the public worker:
