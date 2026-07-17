@@ -16,6 +16,33 @@ export interface TuneInStation {
   local: boolean
 }
 
+/**
+ * Compares the rendered station fields so directory polling does not replace
+ * an otherwise identical station list with fresh object identities.
+ */
+export function sameTuneInStation(left: TuneInStation | undefined, right: TuneInStation | undefined): boolean {
+  return left === right || (
+    left !== undefined &&
+    right !== undefined &&
+    left.did === right.did &&
+    left.url === right.url &&
+    left.apiBase === right.apiBase &&
+    left.name === right.name &&
+    left.description === right.description &&
+    left.updatedAt === right.updatedAt &&
+    left.indexedAt === right.indexedAt &&
+    left.local === right.local
+  )
+}
+
+/** Returns whether two rendered station lists carry the same directory data. */
+export function sameTuneInStations(left: TuneInStation[], right: TuneInStation[]): boolean {
+  return left === right || (
+    left.length === right.length &&
+    left.every((station, index) => sameTuneInStation(station, right[index]))
+  )
+}
+
 export function normalizeStationUrl(url: string | null | undefined): string {
   const trimmed = (url ?? '').trim()
   if (!trimmed) return ''

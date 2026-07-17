@@ -31,6 +31,8 @@ import {
   normalizeStationUrl,
   readSelectedStationUrl,
   selectedTuneInStationFrom,
+  sameTuneInStation,
+  sameTuneInStations,
   stationListKey,
   stationRadioTarget,
   stationResourceKey as tuneInStationResourceKey,
@@ -241,8 +243,19 @@ export default function RadioPage(props: RadioPageProps) {
     () => SYNDICATION_WORKER_BASE || 'disabled',
     (workerBase) => workerBase === 'disabled' ? Promise.resolve([]) : fetchSyndicatedStations(workerBase),
   )
-  const tuneInStations = createMemo(() => tuneInStationsFrom(syndicatedStations() ?? []))
-  const selectedStation = createMemo(() => selectedTuneInStationFrom(tuneInStations(), selectedStationUrl()))
+  // The worker returns a new JSON array on every poll. Keep the derived
+  // directory stable when its values have not changed so polling cannot
+  // restart station-bound effects (notably the live listener socket).
+  const tuneInStations = createMemo(
+    () => tuneInStationsFrom(syndicatedStations() ?? []),
+    undefined,
+    { equals: sameTuneInStations },
+  )
+  const selectedStation = createMemo(
+    () => selectedTuneInStationFrom(tuneInStations(), selectedStationUrl()),
+    undefined,
+    { equals: sameTuneInStation },
+  )
   const selectedApiBase = createMemo(() => selectedStation().apiBase)
   const selectedStationKey = createMemo(() => tuneInStationResourceKey(selectedStation()))
   const selectedRadioTarget = createMemo(
