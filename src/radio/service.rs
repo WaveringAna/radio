@@ -96,7 +96,7 @@ impl RadioService {
 
     /// Fetches and stores genres for songs where genre is currently empty.
     pub(crate) async fn backfill_missing_genres_on_boot(&self) -> anyhow::Result<usize> {
-        let missing = sqlx::query_as::<_, MissingGenreSong>(
+        let missing = sqlx::query_as::<_, MissingMetadataSong>(
             r#"
             select id, title, artist, album
             from songs
@@ -132,6 +132,52 @@ impl RadioService {
             .await
             .with_context(|| format!("updating genre for song {}", song.id))?;
             updated += result.rows_affected() as usize;
+        }
+
+        Ok(updated)
+    }
+
+    /// Searches for and stores artwork for songs where cover art is missing.
+    pub(crate) async fn backfill_missing_covers_on_boot(&self) -> anyhow::Result<usize> {
+        let missing = sqlx::query_as::<_, MissingMetadataSong>(
+            r#"
+            select id, title, artist, album
+            from songs
+            where cover_path is null
+            "#,
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .context("listing songs missing cover art")?;
+
+        let total = missing.len();
+        let client = reqwest::Client::builder()
+            .user_agent("radio/0.1")
+            .build()
+            .context("building cover backfill client")?;
+        let mut updated = 0usize;
+
+        for (index, song) in missing.into_iter().enumerate() {
+            if let Some((cover_bytes, cover_mime)) =
+                metadata::fetch_ytdlp_cover(&client, &song.artist, &song.title).await
+            {
+                match self
+                    .set_song_cover(&song.id, None, Some(cover_mime), cover_bytes)
+                    .await
+                {
+                    Ok(_) => updated += 1,
+                    Err(error) => tracing::warn!(
+                        %error,
+                        song_id = %song.id,
+                        "failed to store backfilled song cover"
+                    ),
+                }
+            }
+
+            let processed = index + 1;
+            if processed % 25 == 0 || processed == total {
+                tracing::info!(processed, total, updated, "cover backfill progress");
+            }
         }
 
         Ok(updated)

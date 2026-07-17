@@ -49,7 +49,7 @@ pub(crate) struct StoredAudioFile {
 }
 
 #[derive(Clone, Debug, FromRow)]
-pub(crate) struct MissingGenreSong {
+pub(crate) struct MissingMetadataSong {
     pub(crate) id: String,
     pub(crate) title: String,
     pub(crate) artist: String,

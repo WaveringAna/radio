@@ -163,11 +163,20 @@ async fn main() -> anyhow::Result<()> {
         Err(error) => tracing::warn!(%error, "failed to auto-sync album loops on boot"),
     }
 
-    // Genre backfill hits an online metadata service per missing song, so run
-    // it in the background to keep the HTTP listener responsive at boot.
-    let genre_radio = radio.clone();
+    // Cover and genre backfills hit online metadata services per missing song,
+    // so run them in the background to keep the HTTP listener responsive at
+    // boot. Covers run first because yt-dlp imports can leave a large artwork
+    // backlog while the station remains otherwise usable.
+    let metadata_radio = radio.clone();
     tokio::spawn(async move {
-        match genre_radio.backfill_missing_genres_on_boot().await {
+        tracing::info!("starting cover backfill in background");
+        match metadata_radio.backfill_missing_covers_on_boot().await {
+            Ok(0) => tracing::info!("cover backfill: nothing to do"),
+            Ok(updated) => tracing::info!(updated, "cover backfill complete"),
+            Err(error) => tracing::warn!(%error, "cover backfill failed"),
+        }
+
+        match metadata_radio.backfill_missing_genres_on_boot().await {
             Ok(0) => {}
             Ok(updated) => tracing::info!(updated, "backfilled missing song genres on boot"),
             Err(error) => tracing::warn!(%error, "failed to backfill missing song genres on boot"),
