@@ -704,16 +704,24 @@ export default function RadioPage(props: RadioPageProps) {
     setShouldMarqueeTitle(false)
     const measure = () => {
       const overflowing = text.scrollWidth > heading.clientWidth + 1
-      if (overflowing) {
-        // Pixel-exact loop: shift by one copy plus the separator gap, at a
-        // constant speed regardless of title length. Percentage-based shifts
-        // drift against the flex gap and make the copies collide.
-        const gapPx = 4 * 16
-        const shift = text.scrollWidth + gapPx
-        heading.style.setProperty('--marquee-shift', `${shift}px`)
-        heading.style.setProperty('--marquee-duration', `${Math.min(40, Math.max(9, shift / 55))}s`)
-      }
       setShouldMarqueeTitle(overflowing)
+      if (!overflowing) return
+      // Seamless loop: once the duplicate copy has mounted, measure the real
+      // rendered distance between the two copies and scroll by exactly that.
+      // Computing it (text width + assumed gap) breaks whenever rem doesn't
+      // resolve to 16px, e.g. with mobile text-size settings. The rect delta
+      // is transform-invariant, so measuring mid-animation is safe.
+      requestAnimationFrame(() => {
+        const track = text.parentElement
+        if (!track || track.children.length < 2) return
+        const first = track.children[0].getBoundingClientRect()
+        const second = track.children[1].getBoundingClientRect()
+        const shift = second.left - first.left
+        if (shift > 0) {
+          heading.style.setProperty('--marquee-shift', `${shift}px`)
+          heading.style.setProperty('--marquee-duration', `${Math.min(40, Math.max(9, shift / 55))}s`)
+        }
+      })
     }
     const raf = requestAnimationFrame(measure)
     const observer = new ResizeObserver(measure)

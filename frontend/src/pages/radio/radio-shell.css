@@ -356,7 +356,8 @@
 .marquee-track {
   display: inline-flex;
   width: max-content;
-  /* Must equal the gapPx the measurement code bakes into --marquee-shift. */
+  /* Separation between the two copies; the shift is measured from the
+     rendered layout, so this can change freely. */
   gap: 4rem;
 }
 
