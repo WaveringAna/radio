@@ -1044,6 +1044,16 @@ export default function RadioPage(props: RadioPageProps) {
     return `${minutes}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`
   }
   const [showRemaining, setShowRemaining] = createSignal(false)
+  // Station-log style: when this song hit the air, in wall-clock time.
+  // Derived from the displayed position so it always agrees with the bar.
+  const songStartedLabel = () => {
+    const at = new Date(Date.now() - liveDisplayPosition() * 1000)
+    let hours = at.getHours()
+    const minutes = at.getMinutes()
+    const ampm = hours >= 12 ? 'pm' : 'am'
+    hours = hours % 12 || 12
+    return `${hours}:${minutes < 10 ? '0' + minutes : minutes} ${ampm}`
+  }
 
   // Deterministic rotation peek, so an empty queue can still say what's next.
   const [rotationInfo, { refetch: refetchRotationInfo }] = createResource(
@@ -1355,7 +1365,7 @@ export default function RadioPage(props: RadioPageProps) {
                 <span style={`width: ${displayProgressPercent()}%`} />
               </div>
               <div class="nowplaying-time-row">
-                <span>{formatClock(Math.min(liveDisplayPosition(), currentSong()?.durationSeconds ?? Infinity))}</span>
+                <span title="when this song started">started {songStartedLabel()}</span>
                 <button
                   class="nowplaying-duration"
                   type="button"
