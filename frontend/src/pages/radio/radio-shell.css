@@ -884,24 +884,19 @@ h1.marquee .marquee-track {
   margin-top: 0.8rem;
 }
 
+/* Built exactly like the volume slider below it — same box, same border,
+   fill painted as a gradient under the border — so the two bars align and
+   match thickness by construction rather than by compensation. */
 .nowplaying-progress-track {
   width: 100%;
-  /* 6px of fill + the borders: the volume slider's gradient paints its full
-     6px box, so the inner fill here needs 6px of content to look identical. */
-  height: 8px;
-  overflow: hidden;
+  height: 6px;
   border: 1px solid var(--hairline);
-  border-radius: 4px;
-  background: var(--surface-soft);
-}
-
-.nowplaying-progress-track span {
-  display: block;
-  height: 100%;
   border-radius: 3px;
-  background: var(--accent);
-  box-shadow: 0 0 0.5rem rgb(var(--accent-rgb) / 45%);
-  transition: width 250ms linear;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0 var(--progress-pct, 0%),
+    var(--surface-soft) var(--progress-pct, 0%) 100%
+  );
 }
 
 .nowplaying-time-row {

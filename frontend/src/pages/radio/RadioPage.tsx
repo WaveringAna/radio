@@ -1383,9 +1383,8 @@ export default function RadioPage(props: RadioPageProps) {
                 aria-valuemin="0"
                 aria-valuemax="100"
                 aria-valuenow={Math.round(displayProgressPercent())}
-              >
-                <span style={`width: ${displayProgressPercent()}%`} />
-              </div>
+                style={`--progress-pct: ${displayProgressPercent()}%`}
+              />
               <div class="nowplaying-time-row">
                 <span title="when this song started">started {songStartedLabel()}</span>
                 <button
