@@ -716,6 +716,27 @@ h1.marquee .marquee-track {
   height: 1.25rem;
 }
 
+.volume-mute-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.volume-mute-btn:hover {
+  opacity: 0.8;
+}
+
+.volume-mute-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .volume-control input {
   width: 100%;
   accent-color: var(--accent);

@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, Show, untrack } from 'solid-js'
-import { AudioLines, ChevronLeft, ChevronRight, Eye, Play, RadioTower, Send, Volume2 } from 'lucide-solid'
+import { AudioLines, ChevronLeft, ChevronRight, Eye, Play, RadioTower, Send, Volume2, VolumeX } from 'lucide-solid'
 import { resolveAtprotoProfile, type AtprotoProfile } from '../../shared/lib/atproto'
 import {
   fetchRadioSnapshot,
@@ -284,6 +284,17 @@ export default function RadioPage(props: RadioPageProps) {
   const [profiles, setProfiles] = createSignal<Record<string, AtprotoProfile>>({})
   const inFlightDids = new Set<string>()
   const [volume, setVolume] = createSignal(readVolumeCookie())
+  // Level to restore when un-muting; the createEffect on volume() applies any
+  // change (cookie, equalizer, element volume), so mute is just volume 0.
+  let preMuteVolume = volume() > 0 ? volume() : 0.8
+  const toggleMute = () => {
+    if (volume() > 0) {
+      preMuteVolume = volume()
+      setVolume(0)
+    } else {
+      setVolume(preMuteVolume > 0 ? preMuteVolume : 0.8)
+    }
+  }
   const [hasStarted, setHasStarted] = createSignal(false)
   const [isAudioPlaying, setIsAudioPlaying] = createSignal(false)
   const [viewerCount, setViewerCount] = createSignal(0)
@@ -1307,10 +1318,22 @@ export default function RadioPage(props: RadioPageProps) {
               }}
             </Show>
           </div>
-          <label class="volume-control local-volume">
-            <Volume2 size={17} />
+          <div class="volume-control local-volume">
+            <button
+              type="button"
+              class="volume-mute-btn"
+              aria-label={volume() === 0 ? 'unmute' : 'mute'}
+              aria-pressed={volume() === 0}
+              title={volume() === 0 ? 'unmute' : 'mute'}
+              onClick={toggleMute}
+            >
+              <Show when={volume() === 0} fallback={<Volume2 size={17} />}>
+                <VolumeX size={17} />
+              </Show>
+            </button>
             <input
               type="range"
+              aria-label="volume"
               min="0"
               max="1"
               step="0.01"
@@ -1325,7 +1348,7 @@ export default function RadioPage(props: RadioPageProps) {
                 }
               }}
             />
-          </label>
+          </div>
         </section>
         <audio
           ref={audioRef}
