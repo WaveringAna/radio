@@ -1657,7 +1657,18 @@
   cursor: grab;
 }
 
+/* HTML5 drag-and-drop never fires on touch screens, so the handle is a dead
+   ornament there — the arrow buttons are the touch reorder mechanism. */
+@media (hover: none) {
+  .qc-queue-grip {
+    display: none;
+  }
+}
+
 .qc-queue-index {
+  /* flex would squish the circle under long titles — by different amounts
+     per digit count, which made the badges look mismatched */
+  flex: 0 0 24px;
   width: 24px;
   height: 24px;
   border: 1px solid var(--line);
@@ -1665,7 +1676,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
   font-weight: 700;
 }
