@@ -381,14 +381,6 @@
   gap: 0.55rem;
 }
 
-.song-edit-form input {
-  min-width: 0;
-  height: 2.3rem;
-  padding: 0 0.72rem;
-  border: 1px solid var(--line);
-  color: var(--text);
-  background: var(--surface);
-}
 
 .song-edit-actions {
   grid-column: 1 / -1;
@@ -468,10 +460,11 @@
   border-bottom-color: var(--accent);
 }
 
-.queue-control-page .song-filters input,
-.queue-control-page .upload-form > input,
-.queue-control-page .metadata-prompt input,
-.queue-control-page .song-edit-form input {
+/* Flush variant: fields on this page sit in dense rows, so they wear a bottom
+   rule instead of a full box. Anything that wants the boxed look back scopes
+   itself under .queue-control-page to outrank this. */
+.queue-control-page input:not([type='checkbox'], [type='radio'], [type='range'], [type='file']),
+.queue-control-page select {
   border: 0;
   border-bottom: 1px solid var(--line);
   border-radius: 0;
@@ -479,11 +472,8 @@
   box-shadow: none;
 }
 
-.queue-control-page .song-filters input:focus,
-.queue-control-page .upload-form > input:focus,
-.queue-control-page .metadata-prompt input:focus,
-.queue-control-page .song-edit-form input:focus {
-  outline: 0;
+.queue-control-page input:focus,
+.queue-control-page select:focus {
   border-bottom-color: var(--accent);
   background: rgb(var(--accent-rgb) / 4%);
 }
@@ -1001,21 +991,6 @@
   gap: 0.4rem;
 }
 
-.chat-moderation-ban-form input {
-  min-width: 0;
-  padding: 0.45rem 0;
-  font-size: 0.85rem;
-  border: 0;
-  border-bottom: 1px solid var(--hairline);
-  border-radius: 0;
-  background: transparent;
-  color: var(--text);
-}
-
-.chat-moderation-ban-form input:focus {
-  outline: none;
-  border-color: rgb(var(--accent-rgb) / 60%);
-}
 
 /* Playlists & Shuffle controls styling */
 .qc-shuffle-bar {
@@ -1057,20 +1032,8 @@
 
 .searchable-dropdown-input {
   width: 100%;
-  height: 2.2rem;
-  padding: 0 1.5rem 0 0.5rem;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  background: transparent;
-  color: var(--text);
-  font-size: 0.85rem;
-  font-family: inherit;
-}
-
-.searchable-dropdown-input:focus {
-  outline: none;
-  border-bottom-color: var(--accent);
-  background: rgb(var(--accent-rgb) / 4%);
+  /* right gutter clears the chevron */
+  padding-right: 1.5rem;
 }
 
 .searchable-dropdown-arrow {
@@ -1143,21 +1106,6 @@
   margin-top: 0.5rem;
 }
 
-.playlist-save-inline input {
-  flex: 1;
-  height: 2rem;
-  border: 0;
-  border-bottom: 1px solid var(--line) !important;
-  background: transparent !important;
-  color: var(--text);
-  font-size: 0.82rem;
-  padding: 0 0.4rem;
-}
-
-.playlist-save-inline input:focus {
-  outline: none;
-  border-bottom-color: var(--accent) !important;
-}
 
 .playlist-list {
   list-style: none;
@@ -1741,20 +1689,16 @@
   color: var(--muted);
 }
 
-.qc-search-input-wrapper input {
+.queue-control-page .qc-search-input-wrapper input {
   width: 100%;
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 10px 16px 10px 42px;
-  color: var(--text);
-  font-size: 0.95rem;
-  outline: none;
-  transition: border-color 150ms var(--ease-out), background 150ms var(--ease-out);
+  /* left gutter clears the search icon */
+  padding: 0.5rem 1rem 0.5rem 42px;
 }
 
-.qc-search-input-wrapper input:focus {
-  border-color: var(--accent);
+.queue-control-page .qc-search-input-wrapper input:focus {
   background: var(--surface);
 }
 

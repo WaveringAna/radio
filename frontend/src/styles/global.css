@@ -16,6 +16,8 @@
   --nav-bg: rgb(30 30 30 / 88%);
   --art-bg-a: #2a2727;
   --art-bg-b: #403939;
+  --field-pad: 0.5rem 0.72rem;
+  --field-radius: 0.35rem;
 }
 
 * {
@@ -53,6 +55,36 @@ button,
 input,
 select {
   font: inherit;
+}
+
+/* Every text field and select shares this one definition. Features place and
+   size their fields; they don't restate the border, colours, or padding.
+   Text never drops below 16px — smaller makes mobile Safari zoom on focus. */
+input:not([type='checkbox'], [type='radio'], [type='range'], [type='file']),
+select,
+textarea {
+  min-width: 0;
+  padding: var(--field-pad);
+  border: 1px solid var(--line);
+  border-radius: var(--field-radius);
+  color: var(--text);
+  background: var(--surface);
+  font-size: max(16px, 1em);
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 0;
+  border-color: var(--accent);
+  background: var(--surface-soft);
+  box-shadow: 0 0 0 1px var(--accent-line);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
 }
 
 button {
@@ -441,22 +473,7 @@ main > section {
   font-size: 0.75rem;
 }
 
-.account-field input {
-  min-width: 0;
-  height: 2.35rem;
-  padding: 0 0.7rem;
-  border: 1px solid var(--line);
-  border-radius: 0.35rem;
-  outline: none;
-  color: var(--text);
-  background: rgb(255 255 255 / 5%);
-  font-family: inherit;
-  font-size: 0.84rem;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
-}
-
 .account-field input:focus {
-  border-color: var(--accent);
   box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 12%);
 }
 
