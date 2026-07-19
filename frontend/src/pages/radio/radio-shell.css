@@ -345,10 +345,9 @@
   padding-bottom: 0.08em;
   overflow: hidden;
   white-space: nowrap;
-  font-family: var(--sans);
   font-size: clamp(1.45rem, 2.2vw, 2.2rem);
-  font-weight: 800;
-  letter-spacing: -0.025em;
+  font-weight: 700;
+  letter-spacing: 0;
   line-height: 1.1;
   text-shadow: 0 0 40px rgba(var(--accent-rgb), 0.22);
 }
@@ -916,14 +915,9 @@ h1.marquee .marquee-track {
 .nowplaying-eyebrow {
   margin: 0.9rem 0 0;
   color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.nowplaying-artist-album {
-  font-family: var(--sans);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
 }
 
 .nowplaying-progress {
@@ -947,16 +941,58 @@ h1.marquee .marquee-track {
   display: block;
   height: 100%;
   border-radius: 3px;
-  background: var(--text);
+  background: var(--accent);
+  box-shadow: 0 0 0.5rem rgb(var(--accent-rgb) / 45%);
   transition: width 250ms linear;
 }
 
 .nowplaying-time-row {
   display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 0.5rem;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 0.78rem;
+}
+
+/* Duration flips to time-remaining on tap; keep it looking like text. */
+.nowplaying-duration {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+
+.nowplaying-on-air {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--accent);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+}
+
+.nowplaying-on-air::before {
+  content: '';
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0.45rem rgb(var(--accent-rgb) / 60%);
+  animation: on-air-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes on-air-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nowplaying-on-air::before {
+    animation: none;
+  }
 }
 
 @media (max-width: 520px) {

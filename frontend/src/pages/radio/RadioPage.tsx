@@ -1043,6 +1043,7 @@ export default function RadioPage(props: RadioPageProps) {
     const minutes = Math.floor(seconds / 60)
     return `${minutes}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`
   }
+  const [showRemaining, setShowRemaining] = createSignal(false)
 
   // Deterministic rotation peek, so an empty queue can still say what's next.
   const [rotationInfo, { refetch: refetchRotationInfo }] = createResource(
@@ -1355,7 +1356,19 @@ export default function RadioPage(props: RadioPageProps) {
               </div>
               <div class="nowplaying-time-row">
                 <span>{formatClock(Math.min(liveDisplayPosition(), currentSong()?.durationSeconds ?? Infinity))}</span>
-                <span>{formatClock(currentSong()?.durationSeconds)}</span>
+                <Show when={isAudioPlaying()}>
+                  <span class="nowplaying-on-air">on air</span>
+                </Show>
+                <button
+                  class="nowplaying-duration"
+                  type="button"
+                  title={showRemaining() ? 'show duration' : 'show time remaining'}
+                  onClick={() => setShowRemaining((prev) => !prev)}
+                >
+                  {showRemaining()
+                    ? `-${formatClock(Math.max(0, (currentSong()?.durationSeconds ?? 0) - liveDisplayPosition()))}`
+                    : formatClock(currentSong()?.durationSeconds)}
+                </button>
               </div>
             </div>
           </Show>
