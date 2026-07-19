@@ -13,6 +13,10 @@ pub(crate) struct RadioState {
     pub(crate) paused_at: Option<i64>,
     pub(crate) position_seconds: i64,
     pub(crate) updated_by_did: Option<String>,
+    /// When true, the empty-queue fallback plays a random song from the whole
+    /// library instead of stepping through album loops.
+    #[serde(default)]
+    pub(crate) shuffle: bool,
 }
 
 /// Song metadata stored by the backend.
@@ -63,6 +67,10 @@ pub(crate) struct QueueItem {
     pub(crate) id: String,
     pub(crate) position: i64,
     pub(crate) queued_by_did: String,
+    /// True when this row was auto-filled by shuffle mode rather than queued by
+    /// an admin. Manual items sort ahead of shuffle items.
+    #[serde(default)]
+    pub(crate) is_shuffle: bool,
     pub(crate) song_id: String,
     pub(crate) title: String,
     pub(crate) artist: String,
@@ -149,6 +157,8 @@ pub(crate) enum RadioControlAction {
     Stop,
     Skip,
     Previous,
+    /// Toggles station-wide shuffle mode.
+    Shuffle,
 }
 
 /// A saved playlist/set of songs.

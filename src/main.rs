@@ -172,6 +172,11 @@ async fn main() -> anyhow::Result<()> {
         Err(error) => tracing::warn!(%error, "failed to auto-sync album loops on boot"),
     }
 
+    match radio.reconcile_shuffle_on_boot().await {
+        Ok(()) => {}
+        Err(error) => tracing::warn!(%error, "failed to reconcile shuffle queue on boot"),
+    }
+
     // Cover and genre backfills hit online metadata services per missing song,
     // so run them in the background to keep the HTTP listener responsive at
     // boot. Covers run first because yt-dlp imports can leave a large artwork

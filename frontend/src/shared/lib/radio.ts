@@ -62,6 +62,8 @@ export interface QueueItem {
   id: string
   position: number
   queuedByDid: string
+  /** True when the row was auto-filled by shuffle mode rather than queued by an admin. */
+  isShuffle?: boolean
   songId: string
   song?: Song
   title: string
@@ -78,6 +80,8 @@ export interface RadioState {
   pausedAt?: number | null
   positionSeconds: number
   updatedByDid?: string | null
+  /** Station-wide shuffle mode: empty-queue fallback plays random songs. */
+  shuffle?: boolean
 }
 
 export interface RadioSeek {
@@ -603,7 +607,7 @@ export async function uploadSongFromUrl(input: UrlSongInput, target?: RadioTarge
 }
 
 export async function controlRadio(
-  action: 'play' | 'pause' | 'stop' | 'skip',
+  action: 'play' | 'pause' | 'stop' | 'skip' | 'shuffle',
   intent: 'explicit_admin_action',
   target?: RadioTarget,
 ): Promise<RadioSnapshot> {

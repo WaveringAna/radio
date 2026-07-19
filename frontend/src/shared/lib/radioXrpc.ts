@@ -257,7 +257,7 @@ export async function xrpcReorderQueue(queueIds: string[], target?: RadioTarget)
 }
 
 export async function xrpcControlRadio(
-  action: 'play' | 'pause' | 'stop' | 'skip',
+  action: 'play' | 'pause' | 'stop' | 'skip' | 'shuffle',
   intent: 'explicit_admin_action',
   target?: RadioTarget,
 ): Promise<RadioSnapshot> {
@@ -795,6 +795,7 @@ function normalizeQueueItem(value: unknown): QueueItem {
     id: stringValue(data.id),
     position: numberValue(data.position),
     queuedByDid: stringValue(data.queuedByDid),
+    isShuffle: Boolean(data.isShuffle),
     songId: stringValue(data.songId),
     song: data.song ? normalizeSong(data.song) : undefined,
     title: stringValue(data.title),

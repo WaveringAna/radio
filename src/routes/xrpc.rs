@@ -873,6 +873,9 @@ pub(crate) async fn xrpc_control(
         XrpcControlAction::Stop => RadioControlAction::Stop,
         XrpcControlAction::Skip => RadioControlAction::Skip,
         XrpcControlAction::Previous => RadioControlAction::Previous,
+        XrpcControlAction::Other(action) if action.as_ref() == "shuffle" => {
+            RadioControlAction::Shuffle
+        }
         XrpcControlAction::Other(action) => {
             return Err(xrpc_typed_error(
                 StatusCode::BAD_REQUEST,
@@ -1747,12 +1750,14 @@ mod tests {
                 paused_at: None,
                 position_seconds: 0,
                 updated_by_did: Some("did:plc:admin".into()),
+                shuffle: false,
             },
             current_song: Some(song.clone()),
             queue: vec![QueueItem {
                 id: "queue-1".into(),
                 position: 1,
                 queued_by_did: "did:plc:admin".into(),
+                is_shuffle: false,
                 song_id: song.id.clone(),
                 title: song.title.clone(),
                 artist: song.artist.clone(),

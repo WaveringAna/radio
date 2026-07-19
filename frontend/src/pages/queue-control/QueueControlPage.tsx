@@ -9,6 +9,7 @@ import {
   Play,
   RadioTower,
   SkipForward,
+  Shuffle,
   Trash2,
   UploadCloud,
   X,
@@ -377,14 +378,22 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     return Math.min(100, Math.max(0, (livePositionSeconds() / duration) * 100))
   }
 
-  const sendControl = async (action: 'play' | 'pause' | 'stop' | 'skip') => {
+  const sendControl = async (action: 'play' | 'pause' | 'stop' | 'skip' | 'shuffle') => {
     try {
       setPageError(null)
-      mutate(await controlRadio(action, 'explicit_admin_action', selectedRadioTarget()))
+      const next = await controlRadio(action, 'explicit_admin_action', selectedRadioTarget())
+      // The XRPC control response omits the shuffle flag (it isn't part of the
+      // lexicon snapshot). Rely on the websocket snapshot broadcast for shuffle
+      // state, and preserve the last-known shuffle value across other controls
+      // so the toggle doesn't flicker off.
+      if (action !== 'shuffle') {
+        mutate((prev) => ({ ...next, state: { ...next.state, shuffle: prev?.state?.shuffle ?? next.state.shuffle } }))
+      }
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'radio control faceplanted.')
     }
   }
+  const shuffleOn = () => Boolean(snapshot()?.state.shuffle)
 
   const addSongToQueue = async (songId: string) => {
     try {
@@ -683,8 +692,18 @@ export default function QueueControlPage(props: QueueControlPageProps) {
         </div>
         <div class="qc-queue-index">{queuePaging.page() * pageSize + index() + 1}</div>
         <div class="qc-queue-copy">
-          <span class="qc-queue-title">{item.title}</span>
-          <span class="qc-queue-artist">{item.artist}{profile().handle ? ` · @${profile().handle}` : ''}</span>
+          <span class="qc-queue-title">
+            {item.title}
+            <Show when={item.isShuffle}>
+              <span
+                title="auto-filled by shuffle"
+                style="display:inline-flex;align-items:center;gap:2px;margin-left:6px;font-size:0.7em;color:#34d399;opacity:0.9;vertical-align:middle"
+              >
+                <Shuffle size={11} /> shuffle
+              </span>
+            </Show>
+          </span>
+          <span class="qc-queue-artist">{item.artist}{!item.isShuffle && profile().handle ? ` · @${profile().handle}` : ''}</span>
         </div>
         <div class="qc-queue-actions">
           <button class="qc-arrow-btn" type="button" aria-label="move up" onClick={() => void moveQueueItemUp(item.id)}>
@@ -822,6 +841,17 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                 </Show>
                 <button class="qc-control-btn" type="button" aria-label="skip" title="skip" onClick={() => void sendControl('skip')}>
                   <SkipForward size={20} />
+                </button>
+                <button
+                  class="qc-control-btn"
+                  type="button"
+                  aria-label="shuffle all songs"
+                  aria-pressed={shuffleOn()}
+                  title={shuffleOn() ? 'shuffle: on (playing random songs)' : 'shuffle: off'}
+                  onClick={() => void sendControl('shuffle')}
+                  style={shuffleOn() ? 'color: #34d399' : ''}
+                >
+                  <Shuffle size={20} />
                 </button>
               </div>
 

@@ -1179,6 +1179,7 @@ impl RadioService {
             RadioControlAction::Stop => "stop",
             RadioControlAction::Skip => "skip",
             RadioControlAction::Previous => "previous",
+            RadioControlAction::Shuffle => "shuffle",
         };
         match action {
             RadioControlAction::Play => play_or_resume(&self.db, admin_did).await?,
@@ -1186,6 +1187,7 @@ impl RadioService {
             RadioControlAction::Stop => set_status(&self.db, "stopped", admin_did).await?,
             RadioControlAction::Skip => skip_to_next(&self.db, admin_did).await?,
             RadioControlAction::Previous => reset_current(&self.db, admin_did).await?,
+            RadioControlAction::Shuffle => toggle_shuffle(&self.db, admin_did).await?,
         }
         tracing::info!(action = action_name, admin_did, "playback control");
 
@@ -1207,6 +1209,24 @@ impl RadioService {
         self.events.subscribe()
     }
 
+    /// Repopulates the shuffle lookahead on startup if shuffle is enabled, so a
+    /// restart doesn't leave the queue empty while shuffle mode is on.
+    pub(crate) async fn reconcile_shuffle_on_boot(&self) -> anyhow::Result<()> {
+        if !shuffle_enabled(&self.db).await? {
+            return Ok(());
+        }
+        let admin = sqlx::query_scalar::<_, Option<String>>(
+            "select updated_by_did from radio_state where id = 1",
+        )
+        .fetch_one(self.db.pool())
+        .await
+        .context("loading shuffle reconcile admin")?
+        .unwrap_or_else(|| "system".to_owned());
+        refill_shuffle_queue(&self.db, &admin).await?;
+        self.broadcast_snapshot().await;
+        Ok(())
+    }
+
     async fn broadcast_snapshot(&self) {
         match self.snapshot().await {
             Ok(snapshot) => {
@@ -1222,7 +1242,7 @@ impl RadioService {
 async fn radio_state(db: &Database) -> anyhow::Result<RadioState> {
     let mut state = sqlx::query_as::<_, RadioState>(
         r#"
-        select current_song_id, status, started_at, paused_at, position_seconds, updated_by_did
+        select current_song_id, status, started_at, paused_at, position_seconds, updated_by_did, shuffle
         from radio_state
         where id = 1
         "#,
@@ -1464,7 +1484,7 @@ fn spawn_now_playing_announcement(db: Database, chat: ChatService, song_id: Stri
 async fn next_advance_in(db: &Database) -> anyhow::Result<Option<std::time::Duration>> {
     let raw = sqlx::query_as::<_, RadioState>(
         r#"
-        select current_song_id, status, started_at, paused_at, position_seconds, updated_by_did
+        select current_song_id, status, started_at, paused_at, position_seconds, updated_by_did, shuffle
         from radio_state
         where id = 1
         "#,
@@ -1499,7 +1519,7 @@ async fn auto_advance(db: &Database) -> anyhow::Result<()> {
     loop {
         let raw = sqlx::query_as::<_, RadioState>(
             r#"
-            select current_song_id, status, started_at, paused_at, position_seconds, updated_by_did
+            select current_song_id, status, started_at, paused_at, position_seconds, updated_by_did, shuffle
             from radio_state
             where id = 1
             "#,
@@ -1635,6 +1655,7 @@ async fn queue_items(db: &Database) -> anyhow::Result<Vec<QueueItem>> {
     sqlx::query_as::<_, QueueItem>(
         r#"
         select radio_queue.id, radio_queue.position, radio_queue.queued_by_did,
+            radio_queue.is_shuffle,
             songs.id as song_id, songs.title, songs.artist, songs.album, songs.genre,
             songs.duration_seconds, songs.mime_type,
             songs.cover_path is not null as has_cover,
@@ -1642,7 +1663,7 @@ async fn queue_items(db: &Database) -> anyhow::Result<Vec<QueueItem>> {
             songs.loudness_lufs, songs.loudness_peak
         from radio_queue
         join songs on songs.id = radio_queue.song_id
-        order by radio_queue.position asc, radio_queue.created_at asc
+        order by radio_queue.is_shuffle asc, radio_queue.position asc, radio_queue.created_at asc
         "#,
     )
     .fetch_all(db.pool())
@@ -1851,6 +1872,7 @@ async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
     let next = sqlx::query_as::<_, QueueItem>(
         r#"
         select radio_queue.id, radio_queue.position, radio_queue.queued_by_did,
+            radio_queue.is_shuffle,
             songs.id as song_id, songs.title, songs.artist, songs.album, songs.genre,
             songs.duration_seconds, songs.mime_type,
             songs.cover_path is not null as has_cover,
@@ -1858,7 +1880,7 @@ async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
             songs.loudness_lufs, songs.loudness_peak
         from radio_queue
         join songs on songs.id = radio_queue.song_id
-        order by radio_queue.position asc, radio_queue.created_at asc
+        order by radio_queue.is_shuffle asc, radio_queue.position asc, radio_queue.created_at asc
         limit 1
         "#,
     )
@@ -1896,8 +1918,13 @@ async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
                 "now playing from queue"
             );
         }
-        None => match next_album_loop_track(db).await? {
-            Some(track) => {
+        None => {
+            // Queue is empty. In shuffle mode, pick a random track from the
+            // whole library; otherwise step through album loops. Either way we
+            // funnel through a single radio_state update below.
+            let next_song_id = if shuffle_enabled(db).await? {
+                random_shuffle_song(db).await?
+            } else if let Some(track) = next_album_loop_track(db).await? {
                 sqlx::query(
                     r#"
                     update radio_loop_state
@@ -1910,47 +1937,180 @@ async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
                 .execute(db.pool())
                 .await
                 .context("updating album loop cursor")?;
-                sqlx::query(
-                    r#"
-                    update radio_state
-                    set current_song_id = ?, status = 'playing', started_at = ?, paused_at = null,
-                        position_seconds = 0, updated_by_did = ?, updated_at = ?
-                    where id = 1
-                    "#,
-                )
-                .bind(&track.song_id)
-                .bind(timestamp)
-                .bind(admin_did)
-                .bind(timestamp)
-                .execute(db.pool())
-                .await
-                .context("advancing radio state from album loop")?;
-                tracing::info!(
-                    song_id = %track.song_id,
-                    album_id = %track.album_id,
-                    track_position = track.track_position,
-                    "now playing from album loop"
-                );
+                Some(track.song_id)
+            } else {
+                None
+            };
+
+            match next_song_id {
+                Some(song_id) => {
+                    sqlx::query(
+                        r#"
+                        update radio_state
+                        set current_song_id = ?, status = 'playing', started_at = ?, paused_at = null,
+                            position_seconds = 0, updated_by_did = ?, updated_at = ?
+                        where id = 1
+                        "#,
+                    )
+                    .bind(&song_id)
+                    .bind(timestamp)
+                    .bind(admin_did)
+                    .bind(timestamp)
+                    .execute(db.pool())
+                    .await
+                    .context("advancing radio state from fallback")?;
+                    tracing::info!(song_id = %song_id, "now playing from fallback (shuffle/album loop)");
+                }
+                None => {
+                    sqlx::query(
+                        r#"
+                        update radio_state
+                        set current_song_id = null, status = 'stopped', started_at = null, paused_at = null,
+                            position_seconds = 0, updated_by_did = ?, updated_at = ?
+                        where id = 1
+                        "#,
+                    )
+                    .bind(admin_did)
+                    .bind(timestamp)
+                    .execute(db.pool())
+                    .await
+                    .context("stopping empty radio")?;
+                    tracing::info!("queue empty and no fallback track, radio stopped");
+                }
             }
-            None => {
-                sqlx::query(
-                    r#"
-                    update radio_state
-                    set current_song_id = null, status = 'stopped', started_at = null, paused_at = null,
-                        position_seconds = 0, updated_by_did = ?, updated_at = ?
-                    where id = 1
-                    "#,
-                )
-                .bind(admin_did)
-                .bind(timestamp)
-                .execute(db.pool())
-                .await
-                .context("stopping empty radio")?;
-                tracing::info!("queue + album loop empty, radio stopped");
-            }
-        },
+        }
     }
 
+    // Keep the visible shuffle lookahead topped up after consuming a track.
+    if shuffle_enabled(db).await? {
+        refill_shuffle_queue(db, admin_did).await?;
+    }
+
+    Ok(())
+}
+
+/// How many upcoming shuffle songs to keep visible in the queue.
+const SHUFFLE_LOOKAHEAD: i64 = 50;
+
+/// Reads the persisted station-wide shuffle flag.
+async fn shuffle_enabled(db: &Database) -> anyhow::Result<bool> {
+    sqlx::query_scalar::<_, bool>("select shuffle from radio_state where id = 1")
+        .fetch_one(db.pool())
+        .await
+        .context("loading shuffle flag")
+}
+
+/// Picks a random song for shuffle mode, avoiding an immediate repeat of the
+/// current song when the library has more than one track.
+async fn random_shuffle_song(db: &Database) -> anyhow::Result<Option<String>> {
+    let avoiding_current = sqlx::query_scalar::<_, String>(
+        r#"
+        select id from songs
+        where id != coalesce((select current_song_id from radio_state where id = 1), '')
+        order by random()
+        limit 1
+        "#,
+    )
+    .fetch_optional(db.pool())
+    .await
+    .context("selecting random shuffle song")?;
+    if avoiding_current.is_some() {
+        return Ok(avoiding_current);
+    }
+    // Single-song library: replaying the only track is the best we can do.
+    sqlx::query_scalar::<_, String>("select id from songs order by random() limit 1")
+        .fetch_optional(db.pool())
+        .await
+        .context("selecting any shuffle song")
+}
+
+/// Tops the queue up to `SHUFFLE_LOOKAHEAD` upcoming shuffle rows so the coming
+/// random songs are visible in the queue. Skips songs already queued and the
+/// current song to avoid near-term repeats.
+async fn refill_shuffle_queue(db: &Database, queued_by_did: &str) -> anyhow::Result<()> {
+    let existing = sqlx::query_scalar::<_, i64>("select count(*) from radio_queue where is_shuffle = 1")
+        .fetch_one(db.pool())
+        .await
+        .context("counting shuffle queue rows")?;
+    let need = SHUFFLE_LOOKAHEAD - existing;
+    if need <= 0 {
+        return Ok(());
+    }
+
+    let candidates = sqlx::query_scalar::<_, String>(
+        r#"
+        select id from songs
+        where id not in (select song_id from radio_queue)
+          and id != coalesce((select current_song_id from radio_state where id = 1), '')
+        order by random()
+        limit ?
+        "#,
+    )
+    .bind(need)
+    .fetch_all(db.pool())
+    .await
+    .context("selecting shuffle candidates")?;
+
+    let mut position = sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_queue")
+        .fetch_one(db.pool())
+        .await
+        .context("loading max queue position")?
+        .unwrap_or(0);
+    for song_id in candidates {
+        position += 1;
+        sqlx::query(
+            "insert into radio_queue (id, song_id, position, queued_by_did, is_shuffle) values (?, ?, ?, ?, 1)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&song_id)
+        .bind(position)
+        .bind(queued_by_did)
+        .execute(db.pool())
+        .await
+        .context("inserting shuffle queue row")?;
+    }
+    Ok(())
+}
+
+/// Removes shuffle-filled rows from the queue, leaving manual entries intact.
+async fn clear_shuffle_queue(db: &Database) -> anyhow::Result<()> {
+    sqlx::query("delete from radio_queue where is_shuffle = 1")
+        .execute(db.pool())
+        .await
+        .context("clearing shuffle queue rows")?;
+    Ok(())
+}
+
+/// Toggles station-wide shuffle. Turning it on fills the queue with the shuffle
+/// lookahead (and starts playback if nothing loadable is playing); turning it
+/// off clears those auto-filled rows while leaving manual entries intact.
+async fn toggle_shuffle(db: &Database, admin_did: &str) -> anyhow::Result<()> {
+    let timestamp = now();
+    let next = !shuffle_enabled(db).await?;
+    sqlx::query(
+        r#"
+        update radio_state
+        set shuffle = ?, updated_by_did = ?, updated_at = ?
+        where id = 1
+        "#,
+    )
+    .bind(next)
+    .bind(admin_did)
+    .bind(timestamp)
+    .execute(db.pool())
+    .await
+    .context("toggling shuffle")?;
+
+    if next {
+        refill_shuffle_queue(db, admin_did).await?;
+        let state = radio_state(db).await?;
+        if !current_song_is_loadable(db, &state).await? {
+            skip_to_next(db, admin_did).await?;
+        }
+    } else {
+        clear_shuffle_queue(db).await?;
+    }
+    tracing::info!(shuffle = next, admin_did, "shuffle toggled");
     Ok(())
 }
 
@@ -1998,6 +2158,65 @@ mod tests {
         let tmp = tempdir().unwrap();
         let service = RadioService::new(db.clone(), tmp.into_path(), chat);
         (service, db)
+    }
+
+    #[tokio::test]
+    async fn test_shuffle_plays_random_and_avoids_repeat() {
+        let (service, db) = setup_test_service().await;
+
+        // Three songs with no album, so the album-loop fallback is empty and
+        // only shuffle can keep the station playing.
+        for i in 1..=3 {
+            sqlx::query("insert into songs (id, title, artist, file_path, added_by_did, created_at) values (?, ?, ?, ?, ?, ?)")
+                .bind(format!("s{i}"))
+                .bind(format!("Title {i}"))
+                .bind("Artist")
+                .bind(format!("p{i}.mp3"))
+                .bind("did")
+                .bind(100 + i)
+                .execute(db.pool())
+                .await
+                .unwrap();
+        }
+
+        // Shuffle off + empty queue + no albums => station stops.
+        skip_to_next(&db, "did").await.unwrap();
+        let state = radio_state(&db).await.unwrap();
+        assert_eq!(state.status, "stopped");
+        assert!(state.current_song_id.is_none());
+        assert!(!state.shuffle);
+
+        // Toggling shuffle on from idle should immediately start a random track
+        // and fill the queue with the upcoming shuffle lookahead (all songs
+        // except the one now playing, since the library only has three).
+        service.control(RadioControlAction::Shuffle, "did").await.unwrap();
+        let state = radio_state(&db).await.unwrap();
+        assert!(state.shuffle);
+        assert_eq!(state.status, "playing");
+        let queue = queue_items(&db).await.unwrap();
+        assert!(!queue.is_empty(), "shuffle should show upcoming songs in the queue");
+        assert!(queue.iter().all(|item| item.is_shuffle), "auto-filled rows are marked shuffle");
+        let mut prev = state.current_song_id.clone().expect("shuffle should start playback");
+
+        // Advancing keeps playing and never immediately repeats the same song.
+        for _ in 0..8 {
+            skip_to_next(&db, "did").await.unwrap();
+            let state = radio_state(&db).await.unwrap();
+            assert_eq!(state.status, "playing");
+            let next = state.current_song_id.clone().unwrap();
+            assert_ne!(
+                prev, next,
+                "shuffle must not replay the current song back-to-back"
+            );
+            prev = next;
+        }
+
+        // Toggling shuffle off again clears the flag and the auto-filled rows.
+        service.control(RadioControlAction::Shuffle, "did").await.unwrap();
+        let state = radio_state(&db).await.unwrap();
+        assert!(!state.shuffle);
+        let queue = queue_items(&db).await.unwrap();
+        assert!(queue.is_empty(), "disabling shuffle clears auto-filled rows");
     }
 
     #[tokio::test]
