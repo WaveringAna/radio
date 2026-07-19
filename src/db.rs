@@ -23,7 +23,11 @@ impl Database {
         let mut options = SqliteConnectOptions::from_str(database_url)
             .with_context(|| format!("parsing DATABASE_URL {database_url}"))?
             .foreign_keys(true)
-            .journal_mode(SqliteJournalMode::Wal);
+            .journal_mode(SqliteJournalMode::Wal)
+            // Wait for the write lock instead of failing fast with SQLITE_BUSY.
+            // Lets a second process (e.g. the bulk importer) write concurrently
+            // with the running server under WAL without spurious lock errors.
+            .busy_timeout(std::time::Duration::from_secs(15));
 
         if !database_url.contains(":memory:") {
             options = options.create_if_missing(true);

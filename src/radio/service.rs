@@ -26,6 +26,24 @@ pub(crate) struct RadioService {
 impl RadioService {
     /// Creates a radio service using local disk audio storage.
     pub(crate) fn new(db: Database, audio_dir: PathBuf, chat: ChatService) -> Self {
+        let service = Self::build(db, audio_dir, chat);
+        tokio::spawn(advance_loop(
+            service.db.clone(),
+            service.events.clone(),
+            service.chat.clone(),
+        ));
+        service
+    }
+
+    /// Creates a radio service without the background advance loop. Used by the
+    /// one-shot local importer so it can insert songs without racing the running
+    /// server's playback advancement against the shared sqlite database.
+    pub(crate) fn new_offline(db: Database, audio_dir: PathBuf, chat: ChatService) -> Self {
+        Self::build(db, audio_dir, chat)
+    }
+
+    /// Shared field initialization for [`Self::new`] and [`Self::new_offline`].
+    fn build(db: Database, audio_dir: PathBuf, chat: ChatService) -> Self {
         let (events, _) = broadcast::channel(128);
         let data_dir = audio_dir
             .parent()
@@ -33,8 +51,6 @@ impl RadioService {
             .unwrap_or_else(|| PathBuf::from("data"));
         let cover_dir = data_dir.join("covers");
         let thumb_dir = data_dir.join("thumbs");
-
-        tokio::spawn(advance_loop(db.clone(), events.clone(), chat.clone()));
 
         Self {
             db,
@@ -958,6 +974,93 @@ impl RadioService {
         ));
 
         Ok(song)
+    }
+
+    /// Inserts a song whose audio stays where it already lives on disk, instead
+    /// of copying bytes into `audio_dir`. Used by the local bulk importer to
+    /// reference an existing library (e.g. files on an external drive) in place.
+    ///
+    /// Unlike [`add_song`], this never writes audio, never touches the queue,
+    /// and does not spawn per-song loudness/album/broadcast work — the caller is
+    /// expected to run those in batch (or let the boot-time backfills handle
+    /// loudness). Returns `Ok(None)` when a song with the same
+    /// title/artist/album already exists so the caller can count skips.
+    ///
+    /// [`add_song`]: Self::add_song
+    pub(crate) async fn add_referenced_song(
+        &self,
+        file_path: PathBuf,
+        upload: NewSongUpload,
+        admin_did: &str,
+    ) -> anyhow::Result<Option<Song>> {
+        let dedup_title = upload.title.trim();
+        let dedup_artist = upload.artist.trim();
+        let dedup_album = upload
+            .album
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+
+        let existing = sqlx::query_scalar::<_, String>(
+            r#"
+            select id from songs
+            where lower(title) = lower(?)
+              and lower(artist) = lower(?)
+              and (
+                (album is null and ? is null)
+                or lower(album) = lower(?)
+              )
+            limit 1
+            "#,
+        )
+        .bind(dedup_title)
+        .bind(dedup_artist)
+        .bind(dedup_album)
+        .bind(dedup_album)
+        .fetch_optional(self.db.pool())
+        .await
+        .context("checking for existing song")?;
+
+        if existing.is_some() {
+            return Ok(None);
+        }
+
+        let id = Uuid::new_v4().to_string();
+        let file_path_string = file_path.to_string_lossy().into_owned();
+        let created_at = now();
+        let album = upload.album.filter(|value| !value.trim().is_empty());
+        let genre = upload.genre.filter(|g| !g.trim().is_empty());
+
+        sqlx::query(
+            r#"
+            insert into songs (id, title, artist, album, genre, duration_seconds, file_path, mime_type, added_by_did, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&id)
+        .bind(upload.title.trim())
+        .bind(upload.artist.trim())
+        .bind(album.as_deref())
+        .bind(genre.as_deref())
+        .bind(upload.duration_seconds)
+        .bind(&file_path_string)
+        .bind(upload.mime_type.as_deref())
+        .bind(admin_did)
+        .bind(created_at)
+        .execute(self.db.pool())
+        .await
+        .context("inserting referenced song")?;
+
+        let song = find_song(&self.db, &id)
+            .await?
+            .ok_or_else(|| anyhow!("inserted song disappeared"))?;
+        Ok(Some(song))
+    }
+
+    /// Re-syncs album loops after a batch import. Exposed so the local importer
+    /// can run it once at the end instead of per song.
+    pub(crate) async fn sync_albums_after_import(&self) -> anyhow::Result<()> {
+        self.auto_sync_albums().await
     }
 
     /// Appends multiple songs to the queue in order with a single broadcast.
