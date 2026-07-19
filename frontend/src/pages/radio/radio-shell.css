@@ -704,10 +704,19 @@ h1.marquee .marquee-track {
 }
 
 /* Same track anatomy as the progress bar above it, so position and volume
-   read as two rows of one instrument. */
+   read as two rows of one instrument. The input itself is 28px tall — a
+   finger-sized touch target — while the visible 6px bar is drawn on the
+   track pseudo-element inside it. */
 .volume-control input[type='range'] {
   appearance: none;
   -webkit-appearance: none;
+  height: 28px;
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+
+.volume-control input[type='range']::-webkit-slider-runnable-track {
   height: 6px;
   border: 1px solid var(--hairline);
   border-radius: 3px;
@@ -723,6 +732,7 @@ h1.marquee .marquee-track {
   -webkit-appearance: none;
   width: 0.95rem;
   height: 0.95rem;
+  margin-top: calc((6px - 0.95rem) / 2 - 1px);
   border: 0;
   border-radius: 999px;
   background: var(--accent);
@@ -746,9 +756,14 @@ h1.marquee .marquee-track {
 }
 
 .volume-control input[type='range']::-moz-range-progress {
-  height: 0.35rem;
-  border-radius: 999px;
+  height: 6px;
+  border-radius: 3px;
   background: var(--accent);
+}
+
+.volume-mute-btn {
+  width: 2.25rem;
+  height: 2.25rem;
 }
 
 .listen-button {
