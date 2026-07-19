@@ -706,6 +706,37 @@
   padding-right: 0;
 }
 
+/* The up-next and equalizer cards join the mobile stack inside the
+   now-playing card; like tune-in and chat above, they drop their inner
+   gutters so everything shares the page's single edge-to-edge gutter. */
+.now-playing-card > .up-next-card,
+.now-playing-card > .equalizer-card {
+  margin-top: 0.8rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--hairline);
+}
+
+.now-playing-card > .up-next-card > .section-heading,
+.now-playing-card > .up-next-card .queue-list li,
+.now-playing-card > .up-next-card .queue-progress,
+.now-playing-card > .up-next-card .pagination-row,
+.now-playing-card > .up-next-card .list-empty {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.now-playing-card > .equalizer-card .equalizer-header,
+.now-playing-card > .equalizer-card .equalizer-presets,
+.now-playing-card > .equalizer-card .equalizer-graph {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.now-playing-card > .equalizer-card .equalizer-reset {
+  padding-inline: 0;
+  text-align: left;
+}
+
 .chat-log {
   flex: 1;
   min-width: 0;
