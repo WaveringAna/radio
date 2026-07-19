@@ -145,15 +145,11 @@ main > section {
     margin-inline: 0;
   }
 
+  /* The album-accent washes never worked at phone scale — full-size they haze
+     the whole screen, shrunk they read as stray grey blobs. Phones keep the
+     plain dark background; the art itself carries the color. */
   .album-ambient-layer {
-    /* 56–64rem falloffs are tuned for desktop; on a phone they exceed the
-       whole viewport and read as a haze over everything. Keep the glow near
-       the art at the top and let the rest of the page stay dark. */
-    background:
-      radial-gradient(circle at 22% 8%, var(--ambient-a-wash, transparent) 0, transparent 26rem),
-      radial-gradient(circle at 78% 4%, var(--ambient-b-wash, transparent) 0, transparent 24rem),
-      radial-gradient(circle at 50% 100%, var(--ambient-a-wash, transparent) 0, transparent 20rem),
-      linear-gradient(180deg, var(--ambient-top-wash, transparent) 0, transparent 24rem);
+    display: none;
   }
 }
 
