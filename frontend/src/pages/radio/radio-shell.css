@@ -337,9 +337,13 @@
 
 .now-playing-card h1 {
   min-width: 0;
+  /* Always constrained: overflow detection compares scrollWidth to
+     clientWidth, which only works when the heading can't grow past its
+     container. Unconstrained, a long nowrap title bleeds over neighbors. */
+  max-width: 100%;
   margin: 0.45rem 0 0 -0.05em;
   padding-bottom: 0.08em;
-  overflow: visible;
+  overflow: hidden;
   white-space: nowrap;
   font-size: clamp(1.35rem, 2vw, 2rem);
   font-weight: 600;
@@ -349,10 +353,6 @@
   text-shadow: 0 0 40px rgba(var(--accent-rgb), 0.22);
 }
 
-.now-playing-card h1.marquee {
-  max-width: 100%;
-  overflow: hidden;
-}
 
 .marquee-track {
   display: inline-flex;

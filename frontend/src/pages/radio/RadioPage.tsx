@@ -697,12 +697,19 @@ export default function RadioPage(props: RadioPageProps) {
     const text = titleTextEl()
     currentSongTitle()
     if (!heading || !text) return
+    // Drop the marquee first so a title change restarts the animation from
+    // zero instead of swapping text into a half-scrolled track, then measure
+    // on the next frame once the new title has laid out.
+    setShouldMarqueeTitle(false)
     const measure = () => setShouldMarqueeTitle(text.scrollWidth > heading.clientWidth + 1)
-    measure()
+    const raf = requestAnimationFrame(measure)
     const observer = new ResizeObserver(measure)
     observer.observe(heading)
     observer.observe(text)
-    onCleanup(() => observer.disconnect())
+    onCleanup(() => {
+      cancelAnimationFrame(raf)
+      observer.disconnect()
+    })
   })
   const viewerCountValue = () => viewerCount() ?? 0
   const viewerCountLabel = () => viewerCountValue().toString()
