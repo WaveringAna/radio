@@ -969,7 +969,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                       </div>
                     </div>
                     <Show when={savingSelection()}>
-                      <div class="playlist-save-form" style="display: flex; align-items: center; gap: 0.5rem; border-top: 1px solid var(--hairline); padding-top: 0.75rem; margin-top: 0.25rem;">
+                      <div class="playlist-save-form">
                         <input
                           type="text"
                           placeholder="name your set"
@@ -989,7 +989,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                 </Show>
 
                 <Show when={libraryAction() === 'queue'}>
-                  <div class="qc-genre-bar" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border: 1px solid var(--hairline); border-radius: 8px; margin-bottom: 1rem; background: color-mix(in srgb, var(--hairline) 8%, transparent); flex-wrap: wrap;">
+                  <div class="qc-genre-bar">
                     <span style="font-weight: 500; font-size: 0.9rem; color: var(--text); flex-shrink: 0;">queue genre:</span>
                     <div style="flex: 1; min-width: 140px; position: relative;">
                       <SearchableDropdown
@@ -1304,7 +1304,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
               </div>
 
               <Show when={savingQueue()}>
-                <div class="playlist-save-form" style="display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem; border: 1px solid var(--hairline); border-radius: 8px; margin-top: 0.75rem; margin-bottom: 0.75rem; background: color-mix(in srgb, var(--hairline) 8%, transparent);">
+                <div class="playlist-save-form">
                   <input
                     type="text"
                     placeholder="name your set"

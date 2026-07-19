@@ -911,6 +911,23 @@
     min-height: 3.75rem;
     padding-inline: 0.65rem;
   }
+
+  /* The metadata column's 10rem floor is reserved even on rows that don't fill
+     it, which leaves the title almost no room on a phone. Let it collapse. */
+  .song-list li {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    padding-inline: 0.75rem;
+  }
+
+  .song-list li > :nth-child(3):last-child {
+    justify-self: end;
+  }
+
+  .queue-list li {
+    gap: 0.5rem;
+    padding-inline: 0.75rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
