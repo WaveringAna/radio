@@ -2000,28 +2000,49 @@ async fn shuffle_enabled(db: &Database) -> anyhow::Result<bool> {
         .context("loading shuffle flag")
 }
 
+/// Shuffle respects the album rotation flags: a song is eligible when it sits
+/// in at least one enabled album, or belongs to no album at all. Songs whose
+/// every album is disabled stay out of shuffle, matching album-loop mode.
+const SHUFFLE_ELIGIBLE: &str = r#"
+    (
+        not exists (
+            select 1 from radio_album_tracks
+            where radio_album_tracks.song_id = songs.id
+        )
+        or exists (
+            select 1 from radio_album_tracks
+            join radio_albums on radio_albums.id = radio_album_tracks.album_id
+            where radio_album_tracks.song_id = songs.id
+              and radio_albums.is_enabled = 1
+        )
+    )
+"#;
+
 /// Picks a random song for shuffle mode, avoiding an immediate repeat of the
 /// current song when the library has more than one track.
 async fn random_shuffle_song(db: &Database) -> anyhow::Result<Option<String>> {
-    let avoiding_current = sqlx::query_scalar::<_, String>(
+    let avoiding_current = sqlx::query_scalar::<_, String>(&format!(
         r#"
         select id from songs
         where id != coalesce((select current_song_id from radio_state where id = 1), '')
+          and {SHUFFLE_ELIGIBLE}
         order by random()
         limit 1
         "#,
-    )
+    ))
     .fetch_optional(db.pool())
     .await
     .context("selecting random shuffle song")?;
     if avoiding_current.is_some() {
         return Ok(avoiding_current);
     }
-    // Single-song library: replaying the only track is the best we can do.
-    sqlx::query_scalar::<_, String>("select id from songs order by random() limit 1")
-        .fetch_optional(db.pool())
-        .await
-        .context("selecting any shuffle song")
+    // Single eligible song: replaying the only track is the best we can do.
+    sqlx::query_scalar::<_, String>(&format!(
+        "select id from songs where {SHUFFLE_ELIGIBLE} order by random() limit 1",
+    ))
+    .fetch_optional(db.pool())
+    .await
+    .context("selecting any shuffle song")
 }
 
 /// Tops the queue up to `SHUFFLE_LOOKAHEAD` upcoming shuffle rows so the coming
@@ -2037,15 +2058,16 @@ async fn refill_shuffle_queue(db: &Database, queued_by_did: &str) -> anyhow::Res
         return Ok(());
     }
 
-    let candidates = sqlx::query_scalar::<_, String>(
+    let candidates = sqlx::query_scalar::<_, String>(&format!(
         r#"
         select id from songs
         where id not in (select song_id from radio_queue)
           and id != coalesce((select current_song_id from radio_state where id = 1), '')
+          and {SHUFFLE_ELIGIBLE}
         order by random()
         limit ?
         "#,
-    )
+    ))
     .bind(need)
     .fetch_all(db.pool())
     .await

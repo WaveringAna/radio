@@ -440,7 +440,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
       await setAlbumEnabled(albumId, enabled, selectedRadioTarget())
       void refetchAlbums()
     } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'failed to toggle album looping.')
+      setPageError(error instanceof Error ? error.message : 'failed to update album rotation.')
     }
   }
 
@@ -1113,7 +1113,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                                 <span class="qc-album-title-row">
                                   <span class="qc-song-title">{album.title}</span>
                                   <Show when={album.isEnabled}>
-                                    <span class="qc-album-badge looping">looping</span>
+                                    <span class="qc-album-badge looping" title="plays automatically when the queue is empty">in rotation</span>
                                   </Show>
                                   <Show when={duplicate()}>
                                     <span class="qc-album-badge duplicate">duplicate</span>
@@ -1144,20 +1144,21 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                               <div class="qc-album-details">
                                 <div class="qc-album-actions">
                                   <div class="qc-album-actions-group">
-                                    <label class="inline-check qc-album-loop-check">
+                                    <label class="inline-check qc-album-loop-check" title="plays automatically when the queue is empty">
                                       <input
                                         type="checkbox"
                                         checked={album.isEnabled}
                                         onChange={(e) => void handleSetAlbumEnabled(album.id, e.currentTarget.checked)}
                                       />
-                                      loop this album
+                                      in station rotation
                                     </label>
                                     <button
                                       class="pill-button subtle danger-button"
                                       type="button"
+                                      title="delete this album grouping; the songs stay in the library"
                                       onClick={() => void handleDeleteAlbum(album.id)}
                                     >
-                                      clear album loop
+                                      ungroup album
                                     </button>
                                   </div>
 
