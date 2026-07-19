@@ -398,17 +398,6 @@
   flex-wrap: wrap;
 }
 
-.queue-drag-source {
-  opacity: 0.4;
-}
-
-.song-list li[draggable="true"] {
-  cursor: grab;
-}
-
-.song-list li[draggable="true"]:active {
-  cursor: grabbing;
-}
 
 .chat-moderation-card {
   display: block;
@@ -1584,7 +1573,14 @@
 }
 
 .qc-queue-item.queue-drag-source {
-  opacity: 0.45;
+  position: relative;
+  z-index: 5;
+  opacity: 0.85;
+  background: var(--bg);
+}
+
+.qc-queue-item.drag-over {
+  background: rgb(var(--accent-rgb) / 12%);
 }
 
 /* the row on deck — first in broadcast order */
@@ -1655,14 +1651,9 @@
 .qc-queue-grip {
   color: var(--muted);
   cursor: grab;
-}
-
-/* HTML5 drag-and-drop never fires on touch screens, so the handle is a dead
-   ornament there — the arrow buttons are the touch reorder mechanism. */
-@media (hover: none) {
-  .qc-queue-grip {
-    display: none;
-  }
+  /* pointer dragging: without this, touch-move scrolls instead of dragging */
+  touch-action: none;
+  padding: 6px 2px;
 }
 
 .qc-queue-index {
@@ -1912,4 +1903,26 @@
   .qc-album-track-artist {
     display: none;
   }
+}
+
+.qc-rotation-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 72%, transparent);
+}
+
+.qc-rotation-count {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+
+.qc-rotation-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }

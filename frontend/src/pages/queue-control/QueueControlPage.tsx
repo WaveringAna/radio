@@ -143,6 +143,8 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const [editGenre, setEditGenre] = createSignal('')
   const [coverVersions, setCoverVersions] = createSignal<Record<string, number>>({})
   const [draggingQueueId, setDraggingQueueId] = createSignal<string | null>(null)
+  const [dragOverQueueId, setDragOverQueueId] = createSignal<string | null>(null)
+  let queueListEl: HTMLUListElement | undefined
   const [clock, setClock] = createSignal(Date.now())
   const [snapshotSyncedAt, setSnapshotSyncedAt] = createSignal(Date.now())
   const inFlightDids = new Set<string>()
@@ -442,6 +444,22 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     }
   }
 
+  const setAllAlbumsEnabled = async (enabled: boolean) => {
+    const targets = (albums() ?? []).filter((album) => album.isEnabled !== enabled)
+    if (targets.length === 0) return
+    if (!enabled && !confirm(`Take all ${targets.length} albums out of rotation? The station will only autoplay from shuffle or loose singles.`)) return
+    try {
+      setPageError(null)
+      for (const album of targets) {
+        await setAlbumEnabled(album.id, enabled, selectedRadioTarget())
+      }
+      void refetchAlbums()
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'failed to update album rotation.')
+      void refetchAlbums()
+    }
+  }
+
   const handleDeleteAlbum = async (albumId: string) => {
     if (!confirm('Are you sure you want to delete this album loop? The associated songs will not be deleted, but they will no longer be grouped as an album loop.')) {
       return
@@ -652,25 +670,64 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     } as const
   }
 
+  // Pointer-based reordering: works for touch and mouse alike, unlike HTML5
+  // drag-and-drop which never fires on touch screens. The grip is the only
+  // initiator so the rest of the row still scrolls the page on a phone.
+  const startQueueDrag = (item: QueueItem, event: PointerEvent) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    const grip = event.currentTarget as HTMLElement
+    const row = grip.closest('li')
+    if (!row || !queueListEl) return
+    event.preventDefault()
+    grip.setPointerCapture(event.pointerId)
+    setDraggingQueueId(item.id)
+    const startY = event.clientY
+    let overId: string | null = null
+
+    const move = (ev: PointerEvent) => {
+      row.style.transform = `translateY(${ev.clientY - startY}px)`
+      overId = null
+      for (const li of queueListEl?.querySelectorAll<HTMLElement>('li[data-queue-id]') ?? []) {
+        if (li === row) continue
+        const rect = li.getBoundingClientRect()
+        if (ev.clientY >= rect.top && ev.clientY < rect.bottom) {
+          overId = li.dataset.queueId ?? null
+          break
+        }
+      }
+      setDragOverQueueId(overId)
+    }
+    const finish = (commit: boolean) => {
+      grip.removeEventListener('pointermove', move)
+      grip.removeEventListener('pointerup', up)
+      grip.removeEventListener('pointercancel', cancel)
+      row.style.transform = ''
+      setDragOverQueueId(null)
+      if (commit && overId) {
+        void handleQueueDrop(overId)
+      } else {
+        setDraggingQueueId(null)
+      }
+    }
+    const up = () => finish(true)
+    const cancel = () => finish(false)
+    grip.addEventListener('pointermove', move)
+    grip.addEventListener('pointerup', up)
+    grip.addEventListener('pointercancel', cancel)
+  }
+
   const renderQueueItem = (item: QueueItem, index: () => number) => {
     const profile = () => profileFor(item.queuedByDid)
     return (
       <li
-        draggable={true}
-        classList={{ 'queue-drag-source': draggingQueueId() === item.id }}
-        onDragStart={(event) => {
-          setDraggingQueueId(item.id)
-          event.dataTransfer?.setData('text/plain', item.id)
+        data-queue-id={item.id}
+        classList={{
+          'queue-drag-source': draggingQueueId() === item.id,
+          'drag-over': dragOverQueueId() === item.id,
         }}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => {
-          event.preventDefault()
-          void handleQueueDrop(item.id)
-        }}
-        onDragEnd={() => setDraggingQueueId(null)}
         class="qc-queue-item"
       >
-        <div class="qc-queue-grip">
+        <div class="qc-queue-grip" onPointerDown={(event) => startQueueDrag(item, event)}>
           <GripVertical size={16} />
         </div>
         <div class="qc-queue-index">{queuePaging.page() * pageSize + index() + 1}</div>
@@ -1074,6 +1131,21 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
               {/* Albums List */}
               <Show when={searchMode() === 'albums'}>
+                <Show when={(albums() ?? []).length > 0}>
+                  <div class="qc-rotation-bar">
+                    <span class="qc-rotation-count">
+                      {(albums() ?? []).filter((album) => album.isEnabled).length}/{(albums() ?? []).length} in rotation
+                    </span>
+                    <div class="qc-rotation-actions">
+                      <button class="pill-button subtle" type="button" onClick={() => void setAllAlbumsEnabled(true)}>
+                        add all to rotation
+                      </button>
+                      <button class="pill-button subtle danger-button" type="button" onClick={() => void setAllAlbumsEnabled(false)}>
+                        clear rotation
+                      </button>
+                    </div>
+                  </div>
+                </Show>
                 <Show when={!albums.loading} fallback={<p class="list-empty">loading albums...</p>}>
                   <ul class="qc-albums-list">
                     <For each={albumsPaging.paged()} fallback={<li class="list-empty">no albums match</li>}>
@@ -1306,7 +1378,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
               </span>
 
               <Show when={!snapshot.loading} fallback={<p class="list-empty">loading queue...</p>}>
-                <ul class="qc-queue-list">
+                <ul class="qc-queue-list" ref={queueListEl}>
                   <For each={queuePaging.paged()} fallback={<li class="list-empty">queue is empty — the station plays from rotation</li>}>
                     {renderQueueItem}
                   </For>
