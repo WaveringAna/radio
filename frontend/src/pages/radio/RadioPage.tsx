@@ -1356,9 +1356,6 @@ export default function RadioPage(props: RadioPageProps) {
               </div>
               <div class="nowplaying-time-row">
                 <span>{formatClock(Math.min(liveDisplayPosition(), currentSong()?.durationSeconds ?? Infinity))}</span>
-                <Show when={isAudioPlaying()}>
-                  <span class="nowplaying-on-air">on air</span>
-                </Show>
                 <button
                   class="nowplaying-duration"
                   type="button"

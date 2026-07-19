@@ -508,7 +508,8 @@ h1.marquee .marquee-track {
 }
 
 .nowplaying-details .local-volume {
-  margin-top: 0.65rem;
+  width: min(30rem, 100%);
+  margin-top: 0.5rem;
 }
 
 .listen-attribution-row {
@@ -741,42 +742,46 @@ h1.marquee .marquee-track {
   accent-color: var(--accent);
 }
 
+/* Same track anatomy as the progress bar above it, so position and volume
+   read as two rows of one instrument. */
 .volume-control input[type='range'] {
   appearance: none;
   -webkit-appearance: none;
-  height: 0.35rem;
-  border-radius: 999px;
+  height: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
   background: linear-gradient(
     to right,
     var(--accent) 0 var(--volume-progress, 80%),
-    #d1d1d6 var(--volume-progress, 80%) 100%
+    var(--surface-soft) var(--volume-progress, 80%) 100%
   );
 }
 
 .volume-control input[type='range']::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 0.95rem;
+  height: 0.95rem;
   border: 0;
   border-radius: 999px;
-  background: #ffffff;
-  box-shadow: 0 0.12rem 0.45rem rgb(0 0 0 / 24%);
+  background: var(--accent);
+  box-shadow: 0 0 0.5rem rgb(var(--accent-rgb) / 45%);
 }
 
 .volume-control input[type='range']::-moz-range-thumb {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 0.95rem;
+  height: 0.95rem;
   border: 0;
   border-radius: 999px;
-  background: #ffffff;
-  box-shadow: 0 0.12rem 0.45rem rgb(0 0 0 / 24%);
+  background: var(--accent);
+  box-shadow: 0 0 0.5rem rgb(var(--accent-rgb) / 45%);
 }
 
 .volume-control input[type='range']::-moz-range-track {
-  height: 0.35rem;
-  border-radius: 999px;
-  background: #d1d1d6;
+  height: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: var(--surface-soft);
 }
 
 .volume-control input[type='range']::-moz-range-progress {
@@ -834,12 +839,16 @@ h1.marquee .marquee-track {
     overflow-x: hidden;
   }
 
+  /* A touch smaller than full width so the art reads as an object on the
+     page rather than a wall-to-wall block. */
   .art-shell {
-    width: min(100%, calc(100vw - 2rem), 28rem, calc(100dvh - 24rem));
+    width: min(86%, calc(100vw - 2rem), 24rem, calc(100dvh - 24rem));
   }
 
+  /* The visualizer needs the Web Audio graph, which mobile defers until the
+     EQ is opened — so on phones the bars just sit flatlined. Drop them. */
   .nowplaying-waveform {
-    width: min(100%, calc(100vw - 2rem));
+    display: none;
   }
 
   .now-playing-card h1,
@@ -963,36 +972,6 @@ h1.marquee .marquee-track {
   color: inherit;
   background: transparent;
   font: inherit;
-}
-
-.nowplaying-on-air {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  color: var(--accent);
-  font-size: 0.68rem;
-  letter-spacing: 0.08em;
-}
-
-.nowplaying-on-air::before {
-  content: '';
-  width: 0.4rem;
-  height: 0.4rem;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0.45rem rgb(var(--accent-rgb) / 60%);
-  animation: on-air-pulse 2.2s ease-in-out infinite;
-}
-
-@keyframes on-air-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .nowplaying-on-air::before {
-    animation: none;
-  }
 }
 
 @media (max-width: 520px) {
