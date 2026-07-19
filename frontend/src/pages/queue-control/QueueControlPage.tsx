@@ -674,14 +674,19 @@ export default function QueueControlPage(props: QueueControlPageProps) {
           <GripVertical size={16} />
         </div>
         <div class="qc-queue-index">{queuePaging.page() * pageSize + index() + 1}</div>
+        <div class="qc-queue-thumb">
+          <Show
+            when={(songs() ?? []).some((song) => song.id === item.songId && song.hasCover)}
+            fallback={<div class="qc-thumb-placeholder">{item.title.slice(0, 4).toUpperCase()}</div>}
+          >
+            <img src={songCoverThumbnailUrl(item.songId, selectedApiBase())} alt="" loading="lazy" />
+          </Show>
+        </div>
         <div class="qc-queue-copy">
-          <span class="qc-queue-title">
-            {item.title}
+          <span class="qc-queue-title-row">
+            <span class="qc-queue-title">{item.title}</span>
             <Show when={item.isShuffle}>
-              <span
-                title="auto-filled by shuffle"
-                style="display:inline-flex;align-items:center;gap:2px;margin-left:6px;font-size:0.7em;color:#34d399;opacity:0.9;vertical-align:middle"
-              >
+              <span class="qc-queue-shuffle-badge" title="auto-filled by shuffle">
                 <Shuffle size={11} /> shuffle
               </span>
             </Show>
@@ -1265,12 +1270,12 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                   <h2>Up next</h2>
                 </div>
                 <Show when={(snapshot()?.queue.length ?? 0) > 0}>
-                  <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
+                  <div class="qc-column-header-actions">
                     <button class="qc-clear-btn" onClick={() => { setSavingQueue(!savingQueue()); setNewPlaylistName(''); }}>
                       Save Set
                     </button>
                     <button class="qc-clear-btn" onClick={() => void clearTheQueue()}>
-                      <Trash2 size={14} style="margin-right: 4px;" />
+                      <Trash2 size={14} />
                       Clear
                     </button>
                   </div>
@@ -1281,8 +1286,8 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                 <div class="playlist-save-form">
                   <input
                     type="text"
+                    class="qc-save-set-input"
                     placeholder="name your set"
-                    style="flex: 1; padding: 0.35rem 0.65rem; border-radius: 6px; border: 1px solid var(--hairline); background: transparent; color: var(--text); font-size: 0.9rem;"
                     value={newPlaylistName()}
                     onInput={(event) => setNewPlaylistName(event.currentTarget.value)}
                     onKeyDown={(event) => {
@@ -1296,13 +1301,13 @@ export default function QueueControlPage(props: QueueControlPageProps) {
               </Show>
 
 
-              <span class="qc-column-stats" style="margin-top: 4px; display: block;">
+              <span class="qc-column-stats qc-queue-stats">
                 {snapshot()?.queue.length ?? 0} tracks • about {queueDurationMin()} min
               </span>
 
               <Show when={!snapshot.loading} fallback={<p class="list-empty">loading queue...</p>}>
                 <ul class="qc-queue-list">
-                  <For each={queuePaging.paged()} fallback={<li class="list-empty">queue is empty</li>}>
+                  <For each={queuePaging.paged()} fallback={<li class="list-empty">queue is empty — the station plays from rotation</li>}>
                     {renderQueueItem}
                   </For>
                 </ul>
