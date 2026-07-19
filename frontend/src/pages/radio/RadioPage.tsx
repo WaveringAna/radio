@@ -1150,7 +1150,7 @@ export default function RadioPage(props: RadioPageProps) {
   const startListening = async () => {
     if (!audioRef) return
     setHasStarted(true)
-    if (!setElementVolume(audioRef, volume())) {
+    if (!setElementVolume(audioRef, volume()) && !isIosDevice()) {
       equalizer.setOutputVolume(volume())
       void equalizer.ensureGraph()
     }
@@ -1239,8 +1239,13 @@ export default function RadioPage(props: RadioPageProps) {
     const nextVolume = volume()
     writeVolumeCookie(nextVolume)
     equalizer.setOutputVolume(nextVolume)
-    if (audioRef && !setElementVolume(audioRef, nextVolume) && hasStarted()) {
-      void equalizer.ensureGraph()
+    if (audioRef) {
+      // iOS ignores element volume but honors `muted`, so mute works there
+      // without routing through Web Audio (which suspends on screen lock).
+      audioRef.muted = nextVolume === 0
+      if (!setElementVolume(audioRef, nextVolume) && hasStarted() && !isIosDevice()) {
+        void equalizer.ensureGraph()
+      }
     }
   })
 
@@ -1425,6 +1430,7 @@ export default function RadioPage(props: RadioPageProps) {
                 <VolumeX size={17} />
               </Show>
             </button>
+            <Show when={!isIosDevice()}>
             <input
               type="range"
               aria-label="volume"
@@ -1437,11 +1443,12 @@ export default function RadioPage(props: RadioPageProps) {
                 const nextVolume = event.currentTarget.valueAsNumber
                 setVolume(nextVolume)
                 equalizer.setOutputVolume(nextVolume)
-                if (audioRef && !setElementVolume(audioRef, nextVolume) && hasStarted()) {
+                if (audioRef && !setElementVolume(audioRef, nextVolume) && hasStarted() && !isIosDevice()) {
                   void equalizer.ensureGraph()
                 }
               }}
             />
+            </Show>
           </div>
           <div class="nowplaying-meta-row">
             <div class="live-viewer-counter compact-viewer-counter" aria-live="polite">
