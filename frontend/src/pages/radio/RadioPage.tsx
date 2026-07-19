@@ -1005,6 +1005,45 @@ export default function RadioPage(props: RadioPageProps) {
   const queuePageSize = 6
   const upNextPaging = createPagedList(localQueue, queuePageSize)
 
+  const upNextCard = () => (
+    <section class="glass-card up-next-card">
+      <div class="section-heading">
+        <p class="eyebrow">up next</p>
+        <span>{snapshot()?.state.status ?? 'loading'}</span>
+      </div>
+      <Show when={!snapshot.loading} fallback={<p class="muted">loading queue...</p>}>
+        <ul class="queue-list">
+          <For each={upNextPaging.paged()} fallback={<li class="muted">queue is empty</li>}>
+            {(item, index) => {
+              const profile = () => profileFor(item.queuedByDid)
+              const hasCover = () => (songs() ?? []).some((song) => song.id === item.songId && song.hasCover)
+              return (
+                <li>
+                  <span class="queue-number">{upNextPaging.page() * queuePageSize + index() + 1}</span>
+                  <SongCoverThumb songId={item.songId} hasCover={hasCover()} baseUrl={selectedApiBase()} />
+                  <div class="up-next-copy">
+                    <span class="up-next-title">{item.title}</span>
+                    <small class="up-next-artist">{item.artist || 'unknown artist'}</small>
+                  </div>
+                  <ProfileAvatar profile={profile()} class="up-next-profile-avatar" title={`@${profile().handle}`} />
+                </li>
+              )
+            }}
+          </For>
+        </ul>
+        <Show when={upNextPaging.pageCount() > 1}>
+          <PaginationRow page={upNextPaging.page()} pageCount={upNextPaging.pageCount()} onPageChange={upNextPaging.setPage} compact />
+        </Show>
+      </Show>
+    </section>
+  )
+
+  const equalizerCard = () => (
+    <section class="glass-card equalizer-card">
+      <EqualizerPanel controller={equalizer} />
+    </section>
+  )
+
   const startListening = async () => {
     if (!audioRef) return
     setHasStarted(true)
@@ -1365,47 +1404,16 @@ export default function RadioPage(props: RadioPageProps) {
         </Show>
         {onMobile && tuneInCard()}
         {onMobile && chatCard()}
+        {onMobile && upNextCard()}
+        {onMobile && equalizerCard()}
       </div>
 
       <Show when={!onMobile}>
         <aside class="radio-panel">
           {tuneInCard()}
           {chatCard()}
-
-          <section class="glass-card up-next-card">
-            <div class="section-heading">
-              <p class="eyebrow">up next</p>
-              <span>{snapshot()?.state.status ?? 'loading'}</span>
-            </div>
-            <Show when={!snapshot.loading} fallback={<p class="muted">loading queue...</p>}>
-              <ul class="queue-list">
-                <For each={upNextPaging.paged()} fallback={<li class="muted">queue is empty</li>}>
-                  {(item, index) => {
-                    const profile = () => profileFor(item.queuedByDid)
-                    const hasCover = () => (songs() ?? []).some((song) => song.id === item.songId && song.hasCover)
-                    return (
-                      <li>
-                        <span class="queue-number">{upNextPaging.page() * queuePageSize + index() + 1}</span>
-                        <SongCoverThumb songId={item.songId} hasCover={hasCover()} baseUrl={selectedApiBase()} />
-                        <div class="up-next-copy">
-                          <span class="up-next-title">{item.title}</span>
-                          <small class="up-next-artist">{item.artist || 'unknown artist'}</small>
-                        </div>
-                        <ProfileAvatar profile={profile()} class="up-next-profile-avatar" title={`@${profile().handle}`} />
-                      </li>
-                    )
-                  }}
-                </For>
-              </ul>
-              <Show when={upNextPaging.pageCount() > 1}>
-                <PaginationRow page={upNextPaging.page()} pageCount={upNextPaging.pageCount()} onPageChange={upNextPaging.setPage} compact />
-              </Show>
-            </Show>
-          </section>
-
-          <section class="glass-card equalizer-card">
-            <EqualizerPanel controller={equalizer} />
-          </section>
+          {upNextCard()}
+          {equalizerCard()}
         </aside>
       </Show>
       </section>
