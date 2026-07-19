@@ -25,21 +25,6 @@
   padding-inline: 0;
 }
 
-.library-edit-list li {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
-
-.library-edit-list li.editing {
-  align-items: start;
-  grid-template-columns: auto minmax(0, 1fr);
-}
-
-.song-edit-form {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.55rem;
-}
-
 .song-edit-actions {
   grid-column: 1 / -1;
   display: flex;
@@ -1258,11 +1243,37 @@
 }
 
 .qc-song-item {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.qc-song-row {
   display: flex;
   align-items: center;
   gap: 1.25rem;
+  min-width: 0;
   padding: 12px 0;
-  border-bottom: 1px solid var(--hairline);
+}
+
+.qc-song-select {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Inline editor, disclosed by the row's "..." button. */
+.qc-song-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.25rem 0 1rem;
+}
+
+.qc-song-editor-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
 }
 
 .qc-song-item:last-child {
@@ -1765,13 +1776,17 @@
   /* Result rows: the fixed-width trimmings (pill, duration, buttons) plus
      1.25rem gaps cost more than a phone's width before the title gets any.
      Tighten the gaps, shrink the thumb, and let the meta line carry genre. */
-  .qc-song-item {
+  .qc-song-row {
     gap: 0.6rem;
   }
 
   .qc-song-thumb {
     width: 40px;
     height: 40px;
+  }
+
+  .qc-song-editor-fields {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .qc-song-genre-pill {

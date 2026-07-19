@@ -73,7 +73,6 @@ interface QueueControlPageProps {
 }
 
 type SearchMode = 'songs' | 'albums' | 'playlists'
-type LibraryAction = 'queue' | 'edit'
 
 function fallbackProfile(did: string): AtprotoProfile {
   return { did, handle: did }
@@ -136,7 +135,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
       .replace(/\s+/g, ' ');
   }
   const [searchMode, setSearchMode] = createSignal<SearchMode>('songs')
-  const [libraryAction, setLibraryAction] = createSignal<LibraryAction>('queue')
   const [showIntake, setShowIntake] = createSignal(false)
   const [editingSongId, setEditingSongId] = createSignal<string | null>(null)
   const [editTitle, setEditTitle] = createSignal('')
@@ -906,18 +904,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                   Sets{queryWords().length > 0 ? ` (${filteredPlaylists().length})` : ''}
                 </button>
                 <button
-                  class="qc-tab-btn edit-tab-btn"
-                  classList={{ active: libraryAction() === 'edit' }}
-                  onClick={() => {
-                    const next: LibraryAction = libraryAction() === 'edit' ? 'queue' : 'edit'
-                    setLibraryAction(next)
-                    if (next === 'edit') setSearchMode('songs')
-                  }}
-                >
-                  Edit
-                </button>
-
-                <button
                   class="qc-tab-btn add-tab-btn"
                   classList={{ active: showIntake() }}
                   onClick={() => setShowIntake(!showIntake())}
@@ -938,7 +924,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
               {/* Songs List */}
               <Show when={searchMode() === 'songs'}>
-                <Show when={libraryAction() === 'queue' && selectedSongIds().length > 0}>
+                <Show when={selectedSongIds().length > 0}>
                   <div class="multi-add-row queue-selection-row" style="display: flex; flex-direction: column; gap: 0.75rem; padding: 0.75rem; border: 1px solid var(--hairline); border-radius: 8px; margin-bottom: 1rem; background: color-mix(in srgb, var(--hairline) 20%, transparent);">
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
                       <span style="font-weight: 500; font-size: 0.95rem; color: var(--text);">{selectedSongIds().length} songs selected</span>
@@ -974,111 +960,93 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                   </div>
                 </Show>
 
-                <Show when={libraryAction() === 'queue'}>
-                  <div class="qc-genre-bar">
-                    <span style="font-weight: 500; font-size: 0.9rem; color: var(--text); flex-shrink: 0;">queue genre:</span>
-                    <div style="flex: 1; min-width: 140px; position: relative;">
-                      <SearchableDropdown
-                        options={genres()}
-                        placeholder="select genre..."
-                        onSelect={(val) => setSelectedGenre(val)}
-                      />
-                    </div>
-                    <Show when={selectedGenre()}>
-                      <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
-                        <button class="pill-button subtle" type="button" onClick={() => void shuffleLibraryByGenre(selectedGenre(), false)}>
-                          append
-                        </button>
-                        <button class="pill-button subtle" type="button" onClick={() => void shuffleLibraryByGenre(selectedGenre(), true)}>
-                          play (shuffle)
-                        </button>
-                        <button class="pill-button subtle" type="button" style="padding-inline: 0.4rem;" onClick={() => setSelectedGenre('')}>
-                          <X size={15} />
-                        </button>
-                      </div>
-                    </Show>
+                <div class="qc-genre-bar">
+                  <span style="font-weight: 500; font-size: 0.9rem; color: var(--text); flex-shrink: 0;">queue genre:</span>
+                  <div style="flex: 1; min-width: 140px; position: relative;">
+                    <SearchableDropdown
+                      options={genres()}
+                      placeholder="select genre..."
+                      onSelect={(val) => setSelectedGenre(val)}
+                    />
                   </div>
-                </Show>
+                  <Show when={selectedGenre()}>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
+                      <button class="pill-button subtle" type="button" onClick={() => void shuffleLibraryByGenre(selectedGenre(), false)}>
+                        append
+                      </button>
+                      <button class="pill-button subtle" type="button" onClick={() => void shuffleLibraryByGenre(selectedGenre(), true)}>
+                        play (shuffle)
+                      </button>
+                      <button class="pill-button subtle" type="button" style="padding-inline: 0.4rem;" onClick={() => setSelectedGenre('')}>
+                        <X size={15} />
+                      </button>
+                    </div>
+                  </Show>
+                </div>
 
                 <Show when={!songs.loading} fallback={<p class="list-empty">loading songs...</p>}>
-                  <ul class="qc-songs-list" classList={{ 'library-edit-list': libraryAction() === 'edit' }}>
+                  <ul class="qc-songs-list">
                     <For each={songsPaging.paged()} fallback={<li class="list-empty">no songs match</li>}>
                       {(song) => {
                         const isQueued = () => snapshot()?.queue.some(item => item.songId === song.id)
+                        const isEditing = () => editingSongId() === song.id
                         return (
-                          <li class="qc-song-item" classList={{ editing: editingSongId() === song.id }}>
-                            <Show
-                              when={libraryAction() === 'edit'}
-                              fallback={
-                                <>
-                                  <input
-                                    type="checkbox"
-                                    style="margin: 0 0.5rem 0 0; cursor: pointer; flex-shrink: 0; width: 16px; height: 16px;"
-                                    checked={selectedSongIds().includes(song.id)}
-                                    onChange={(event) => toggleSongSelection(song.id, event.currentTarget.checked)}
-                                  />
-                                  <div class="qc-song-thumb">
-                                    <Show when={song.hasCover} fallback={<div class="qc-thumb-placeholder">{song.title.slice(0, 4).toUpperCase()}</div>}>
-                                      <img src={songCoverThumbnailUrl(song.id, selectedApiBase())} alt="" />
-                                    </Show>
-                                  </div>
-                                  <div class="qc-song-info">
-                                    <span class="qc-song-title">{song.title}</span>
-                                    <span class="qc-song-meta-line">{song.artist} • {song.album || 'Single'}</span>
-                                  </div>
-                                  <div class="qc-song-genre-pill">{song.genre || 'General'}</div>
-                                  <div class="qc-song-duration">{formatTime(song.durationSeconds)}</div>
-                                  
-                                  <button class="qc-add-btn" classList={{ 'already-queued': isQueued() }} onClick={() => void addSongToQueue(song.id)}>
-                                    + Add
-                                  </button>
-                                  <button
-                                    class="qc-more-btn"
-                                    aria-label="edit song details"
-                                    title="edit song details"
-                                    onClick={() => {
-                                      // the edit form only renders in edit mode, so switch first
-                                      setLibraryAction('edit')
-                                      beginSongEdit(song)
-                                    }}
-                                  >...</button>
-                                </>
-                              }
-                            >
-                              <Show when={song.hasCover} fallback={<span class="cover-thumb" />}>
-                                <img class="cover-thumb" src={coverUrl(song)} alt="" loading="lazy" />
-                              </Show>
-                              <Show
-                                when={editingSongId() === song.id}
-                                fallback={
-                                  <>
-                                    <div class="song-copy">
-                                      <span>{song.title}</span>
-                                      <small>{song.artist}{song.album ? ` · ${song.album}` : ''}{song.genre ? ` · ${song.genre}` : ''}</small>
-                                    </div>
-                                    <button class="pill-button subtle" type="button" onClick={() => beginSongEdit(song)}>
-                                      edit
-                                    </button>
-                                  </>
-                                }
+                          <li class="qc-song-item" classList={{ editing: isEditing() }}>
+                            <div class="qc-song-row">
+                              <input
+                                type="checkbox"
+                                class="qc-song-select"
+                                aria-label="select song"
+                                checked={selectedSongIds().includes(song.id)}
+                                onChange={(event) => toggleSongSelection(song.id, event.currentTarget.checked)}
+                              />
+                              <div class="qc-song-thumb">
+                                <Show when={song.hasCover} fallback={<div class="qc-thumb-placeholder">{song.title.slice(0, 4).toUpperCase()}</div>}>
+                                  <img src={coverUrl(song)} alt="" loading="lazy" />
+                                </Show>
+                              </div>
+                              <div class="qc-song-info">
+                                <span class="qc-song-title">{song.title}</span>
+                                <span class="qc-song-meta-line">{song.artist} • {song.album || 'Single'}</span>
+                              </div>
+                              <div class="qc-song-genre-pill">{song.genre || 'General'}</div>
+                              <div class="qc-song-duration">{formatTime(song.durationSeconds)}</div>
+                              <button class="qc-add-btn" classList={{ 'already-queued': isQueued() }} onClick={() => void addSongToQueue(song.id)}>
+                                + Add
+                              </button>
+                              <button
+                                class="qc-more-btn"
+                                aria-label={isEditing() ? 'close editor' : 'edit song details'}
+                                aria-expanded={isEditing()}
+                                title={isEditing() ? 'close editor' : 'edit song details'}
+                                onClick={() => (isEditing() ? cancelSongEdit() : beginSongEdit(song))}
+                              >...</button>
+                            </div>
+                            <Show when={isEditing()}>
+                              <form
+                                class="qc-song-editor"
+                                onSubmit={(event) => { event.preventDefault(); void saveSongEdit(song.id) }}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Escape') cancelSongEdit()
+                                }}
                               >
-                                <form class="song-edit-form" onSubmit={(event) => { event.preventDefault(); void saveSongEdit(song.id) }}>
+                                <div class="qc-song-editor-fields">
                                   <input aria-label="song title" placeholder="title" value={editTitle()} onInput={(event) => setEditTitle(event.currentTarget.value)} />
                                   <input aria-label="song artist" placeholder="artist" value={editArtist()} onInput={(event) => setEditArtist(event.currentTarget.value)} />
                                   <input aria-label="song album" placeholder="album" value={editAlbum()} onInput={(event) => setEditAlbum(event.currentTarget.value)} />
                                   <input aria-label="song genre" placeholder="genre" value={editGenre()} onInput={(event) => setEditGenre(event.currentTarget.value)} />
-                                  <div class="song-edit-actions">
-                                    <label class="pill-button subtle cover-upload inline-cover-upload">
-                                      <UploadCloud size={16} />
-                                      cover
-                                      <input type="file" accept="image/*" onChange={(event) => void replaceCover(song.id, event.currentTarget.files?.[0] ?? null)} />
-                                    </label>
-                                    <button class="pill-button" type="submit">save</button>
-                                    <button class="pill-button subtle" type="button" onClick={cancelSongEdit}>cancel</button>
-                                    <button class="pill-button subtle danger-button" type="button" onClick={() => void removeSong(song.id)}>delete</button>
-                                  </div>
-                                </form>
-                              </Show>
+                                </div>
+                                <div class="song-edit-actions">
+                                  <label class="pill-button subtle cover-upload inline-cover-upload">
+                                    <UploadCloud size={16} />
+                                    cover
+                                    <input type="file" accept="image/*" onChange={(event) => void replaceCover(song.id, event.currentTarget.files?.[0] ?? null)} />
+                                  </label>
+                                  <button class="pill-button" type="submit">save</button>
+                                  <button class="pill-button subtle" type="button" onClick={cancelSongEdit}>cancel</button>
+                                  <button class="pill-button subtle danger-button" type="button" onClick={() => void removeSong(song.id)}>delete</button>
+                                </div>
+                              </form>
                             </Show>
                           </li>
                         )
