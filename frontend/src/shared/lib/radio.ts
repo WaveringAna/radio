@@ -22,6 +22,7 @@ import {
   xrpcSearchSubsonic,
   xrpcSendChatMessage,
   xrpcSetAlbumEnabled,
+  xrpcSetAlbumWeight,
   xrpcMergeAlbums,
   xrpcSongsList,
   xrpcUpdateSongMetadata,
@@ -393,6 +394,31 @@ export async function deleteAlbum(albumId: string, target?: RadioTarget): Promis
  */
 export async function setAlbumEnabled(albumId: string, enabled: boolean, target?: RadioTarget): Promise<RadioAlbum[]> {
   return xrpcSetAlbumEnabled(albumId, enabled, target)
+}
+
+export async function setAlbumWeight(albumId: string, weight: number, target?: RadioTarget): Promise<RadioAlbum[]> {
+  return xrpcSetAlbumWeight(albumId, weight, target)
+}
+
+export interface PlayHistoryItem {
+  songId: string
+  title: string
+  artist: string
+  startedAt: number
+}
+
+export interface RotationInfo {
+  weights: Record<string, number>
+  recentlyPlayed: PlayHistoryItem[]
+}
+
+export async function fetchRotationInfo(target?: RadioTarget): Promise<RotationInfo> {
+  const base = target?.baseUrl || API_BASE
+  const response = await fetch(radioApiUrl('/api/radio/rotation-info', base), { cache: 'no-store' })
+  if (!response.ok) {
+    throw new Error('failed to load rotation info')
+  }
+  return await response.json() as RotationInfo
 }
 
 /**

@@ -43,6 +43,8 @@ import {
   updateSongMetadata,
   uploadSongCover,
   fetchPlaylists,
+  fetchRotationInfo,
+  setAlbumWeight,
   deletePlaylist,
   loadPlaylist,
   songCoverThumbnailUrl,
@@ -121,6 +123,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const [songs, { refetch: refetchSongs }] = createResource(adminResourceSource, () => fetchSongs(selectedRadioTarget(), true))
   const [albums, { refetch: refetchAlbums }] = createResource(adminResourceSource, () => fetchAlbums(selectedRadioTarget()))
   const [playlists, { refetch: refetchPlaylists }] = createResource(adminResourceSource, () => fetchPlaylists(selectedRadioTarget()))
+  const [rotationInfo, { refetch: refetchRotationInfo }] = createResource(adminResourceSource, () => fetchRotationInfo(selectedRadioTarget()))
   const [profiles, setProfiles] = createSignal<Record<string, AtprotoProfile>>({})
   const [pageError, setPageError] = createSignal<string | null>(null)
   const [libraryQuery, setLibraryQuery] = createSignal('')
@@ -257,6 +260,11 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
   createEffect(() => {
     if (snapshot()) setSnapshotSyncedAt(Date.now())
+  })
+
+  createEffect(() => {
+    void snapshot()?.currentSong?.id
+    void refetchRotationInfo()
   })
 
   createEffect(() => {
@@ -460,6 +468,16 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     }
   }
 
+  const handleSetAlbumWeight = async (albumId: string, weight: number) => {
+    try {
+      setPageError(null)
+      await setAlbumWeight(albumId, weight, selectedRadioTarget())
+      void refetchRotationInfo()
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'failed to update rotation weight.')
+    }
+  }
+
   const handleDeleteAlbum = async (albumId: string) => {
     if (!confirm('Are you sure you want to delete this album loop? The associated songs will not be deleted, but they will no longer be grouped as an album loop.')) {
       return
@@ -515,6 +533,62 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     const minutesStr = minutes < 10 ? '0' + minutes : minutes
 
     return `${hours}:${minutesStr} ${ampm}`
+  })
+
+  const formatClockTime = (msFromNow: number) => {
+    const at = new Date(Date.now() + msFromNow)
+    let hours = at.getHours()
+    const minutes = at.getMinutes()
+    const ampm = hours >= 12 ? 'PM' : 'AM'
+    hours = hours % 12 || 12
+    return `${hours}:${minutes < 10 ? '0' + minutes : minutes} ${ampm}`
+  }
+
+  // Estimated wall-clock start for each queue row: remaining current song
+  // plus every earlier queued song. Unknown durations count as zero, so
+  // times drift optimistic rather than crashing.
+  const queueAirTimes = createMemo(() => {
+    void clock()
+    const current = snapshot()?.currentSong
+    let offset = current?.durationSeconds
+      ? Math.max(0, current.durationSeconds - livePositionSeconds())
+      : 0
+    return (snapshot()?.queue ?? []).map((item) => {
+      const at = formatClockTime(offset * 1000)
+      offset += item.durationSeconds || 0
+      return at
+    })
+  })
+
+  // What the station will do once the queue drains — the priority chain is
+  // queue, then shuffle, then album loops + singles.
+  const afterQueueLabel = createMemo(() => {
+    if (snapshot()?.state.shuffle) return 'shuffle (weighted rotation)'
+    const enabledAlbums = (albums() ?? []).filter((album) => album.isEnabled).length
+    const inAlbums = new Set((albums() ?? []).flatMap((album) => album.tracks.map((track) => track.id)))
+    const singles = (songs() ?? []).filter((song) => !inAlbums.has(song.id)).length
+    if (enabledAlbums === 0 && singles === 0) return null
+    const parts = []
+    if (enabledAlbums > 0) parts.push(`${enabledAlbums} album${enabledAlbums === 1 ? '' : 's'}`)
+    if (singles > 0) parts.push(`${singles} single${singles === 1 ? '' : 's'}`)
+    return `album loops (${parts.join(' + ')})`
+  })
+
+  // Songs that can never autoplay: every album they belong to is benched.
+  const benchedSongIds = createMemo(() => {
+    const inAny = new Set<string>()
+    const inEnabled = new Set<string>()
+    for (const album of albums() ?? []) {
+      for (const track of album.tracks) {
+        inAny.add(track.id)
+        if (album.isEnabled) inEnabled.add(track.id)
+      }
+    }
+    const benched = new Set<string>()
+    for (const id of inAny) {
+      if (!inEnabled.has(id)) benched.add(id)
+    }
+    return benched
   })
 
   const queueDurationMin = createMemo(() => {
@@ -750,6 +824,9 @@ export default function QueueControlPage(props: QueueControlPageProps) {
           </span>
           <span class="qc-queue-artist">{item.artist}{!item.isShuffle && profile().handle ? ` · @${profile().handle}` : ''}</span>
         </div>
+        <span class="qc-queue-airtime" title="estimated air time">
+          {queueAirTimes()[queuePaging.page() * pageSize + index()] ?? ''}
+        </span>
         <div class="qc-queue-actions">
           <button class="qc-arrow-btn" type="button" aria-label="move up" onClick={() => void moveQueueItemUp(item.id)}>
             <ChevronUp size={16} />
@@ -1071,6 +1148,9 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                                 <span class="qc-song-title">{song.title}</span>
                                 <span class="qc-song-meta-line">{song.artist} • {song.album || 'Single'}</span>
                               </div>
+                              <Show when={benchedSongIds().has(song.id)}>
+                                <span class="qc-album-badge benched" title="every album this song belongs to is out of rotation, so it never autoplays">benched</span>
+                              </Show>
                               <div class="qc-song-genre-pill">{song.genre || 'General'}</div>
                               <div class="qc-song-duration">{formatTime(song.durationSeconds)}</div>
                               <button class="qc-add-btn" classList={{ 'already-queued': isQueued() }} onClick={() => void addSongToQueue(song.id)}>
@@ -1213,6 +1293,18 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                                         onChange={(e) => void handleSetAlbumEnabled(album.id, e.currentTarget.checked)}
                                       />
                                       in station rotation
+                                    </label>
+                                    <label class="qc-weight-label" title="how often shuffle picks from this album">
+                                      rotation
+                                      <select
+                                        class="qc-weight-select"
+                                        value={String(rotationInfo()?.weights[album.id] ?? 2)}
+                                        onChange={(e) => void handleSetAlbumWeight(album.id, Number(e.currentTarget.value))}
+                                      >
+                                        <option value="1">light</option>
+                                        <option value="2">normal</option>
+                                        <option value="4">heavy</option>
+                                      </select>
                                     </label>
                                     <button
                                       class="pill-button subtle danger-button"
@@ -1396,6 +1488,30 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                 </span>
                 <span class="qc-est-time">{estimatedEndTime()}</span>
               </div>
+
+              <div class="qc-after-queue-row" classList={{ 'is-silent': !afterQueueLabel() }}>
+                <span class="qc-est-label">After queue</span>
+                <span class="qc-after-queue-value">
+                  {afterQueueLabel() ?? '⚠ silence — nothing in rotation'}
+                </span>
+              </div>
+
+              <Show when={(rotationInfo()?.recentlyPlayed?.length ?? 0) > 0}>
+                <details class="qc-recently-played">
+                  <summary>recently played</summary>
+                  <ul>
+                    <For each={rotationInfo()?.recentlyPlayed ?? []}>
+                      {(entry) => (
+                        <li>
+                          <span class="qc-recent-time">{new Date(entry.startedAt * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                          <span class="qc-recent-title">{entry.title}</span>
+                          <span class="qc-recent-artist">{entry.artist}</span>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </details>
+              </Show>
             </div>
           </div>
 

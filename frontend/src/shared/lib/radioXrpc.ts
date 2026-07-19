@@ -216,6 +216,15 @@ export async function xrpcSetAlbumEnabled(albumId: string, enabled: boolean, tar
   return data.albums.map(normalizeAlbum)
 }
 
+export async function xrpcSetAlbumWeight(albumId: string, weight: number, target?: RadioTarget): Promise<RadioAlbum[]> {
+  const data = await radioPost<{ albums: unknown[] }>('pet.nkp.radio.albums.modify', {
+    action: 'setWeight',
+    albumId,
+    weight,
+  }, { target })
+  return data.albums.map(normalizeAlbum)
+}
+
 export async function xrpcMergeAlbums(albumId: string, targetAlbumId: string, target?: RadioTarget): Promise<RadioAlbum[]> {
   const data = await radioPost<{ albums: unknown[] }>('pet.nkp.radio.albums.modify', {
     action: 'merge',
