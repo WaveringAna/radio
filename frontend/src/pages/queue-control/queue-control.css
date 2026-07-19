@@ -1656,6 +1656,13 @@
   padding: 6px 2px;
 }
 
+/* Touch screens don't get the handle; reordering is a desktop affordance. */
+@media (hover: none) {
+  .qc-queue-grip {
+    display: none;
+  }
+}
+
 .qc-queue-index {
   /* flex would squish the circle under long titles — by different amounts
      per digit count, which made the badges look mismatched */
@@ -1715,22 +1722,6 @@
   .qc-queue-item:focus-within .qc-queue-actions {
     opacity: 1;
   }
-}
-
-.qc-arrow-btn {
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 150ms var(--ease-out);
-}
-
-.qc-arrow-btn:hover {
-  color: var(--accent);
 }
 
 .qc-delete-btn {

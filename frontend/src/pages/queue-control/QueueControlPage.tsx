@@ -14,7 +14,6 @@ import {
   X,
   Search,
   Clock,
-  ChevronUp,
   ChevronDown,
 } from 'lucide-solid'
 import { AdminUploadPanel } from '../../features/upload/AdminUploadPanel'
@@ -406,42 +405,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     }
   }
 
-  const moveQueueItemUp = async (queueId: string) => {
-    const q = snapshot()?.queue || []
-    const idx = q.findIndex(item => item.id === queueId)
-    if (idx <= 0) return
-
-    let newOrder = q.map(item => item.id)
-    const temp = newOrder[idx]
-    newOrder[idx] = newOrder[idx - 1]
-    newOrder[idx - 1] = temp
-
-    try {
-      setPageError(null)
-      mutate(await reorderQueue(newOrder, selectedRadioTarget()))
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'failed to move item up.')
-    }
-  }
-
-  const moveQueueItemDown = async (queueId: string) => {
-    const q = snapshot()?.queue || []
-    const idx = q.findIndex(item => item.id === queueId)
-    if (idx === -1 || idx >= q.length - 1) return
-
-    let newOrder = q.map(item => item.id)
-    const temp = newOrder[idx]
-    newOrder[idx] = newOrder[idx + 1]
-    newOrder[idx + 1] = temp
-
-    try {
-      setPageError(null)
-      mutate(await reorderQueue(newOrder, selectedRadioTarget()))
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'failed to move item down.')
-    }
-  }
-
   const handleSetAlbumEnabled = async (albumId: string, enabled: boolean) => {
     try {
       setPageError(null)
@@ -828,12 +791,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
           {queueAirTimes()[queuePaging.page() * pageSize + index()] ?? ''}
         </span>
         <div class="qc-queue-actions">
-          <button class="qc-arrow-btn" type="button" aria-label="move up" onClick={() => void moveQueueItemUp(item.id)}>
-            <ChevronUp size={16} />
-          </button>
-          <button class="qc-arrow-btn" type="button" aria-label="move down" onClick={() => void moveQueueItemDown(item.id)}>
-            <ChevronDown size={16} />
-          </button>
           <button class="qc-delete-btn" type="button" aria-label="remove from queue" onClick={() => void removeFromQueue(item.id)}>
             <X size={14} />
           </button>
