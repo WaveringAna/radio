@@ -1281,6 +1281,15 @@ async fn advance_loop(db: Database, events: broadcast::Sender<RadioEvent>, chat:
                 }
                 let after = current_song_id(&db).await.ok().flatten();
                 if before != after {
+                    // Natural advancement changes the snapshot just like an
+                    // admin skip does; without this broadcast, pages fed by
+                    // the websocket keep showing the previous song.
+                    match snapshot_from_db(&db).await {
+                        Ok(snapshot) => {
+                            let _ = events.send(RadioEvent::SnapshotChanged { snapshot });
+                        }
+                        Err(error) => tracing::error!(?error, "failed to broadcast advanced snapshot"),
+                    }
                     if let Some(song_id) = after {
                         spawn_now_playing_announcement(db.clone(), chat.clone(), song_id);
                     }
