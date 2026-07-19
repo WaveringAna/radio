@@ -1032,7 +1032,16 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                                   <button class="qc-add-btn" classList={{ 'already-queued': isQueued() }} onClick={() => void addSongToQueue(song.id)}>
                                     + Add
                                   </button>
-                                  <button class="qc-more-btn" onClick={() => beginSongEdit(song)}>...</button>
+                                  <button
+                                    class="qc-more-btn"
+                                    aria-label="edit song details"
+                                    title="edit song details"
+                                    onClick={() => {
+                                      // the edit form only renders in edit mode, so switch first
+                                      setLibraryAction('edit')
+                                      beginSongEdit(song)
+                                    }}
+                                  >...</button>
                                 </>
                               }
                             >
