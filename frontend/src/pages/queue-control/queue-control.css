@@ -335,11 +335,14 @@
     gap: 1.5rem;
   }
 
+  /* No page-level gutter here: .now-playing-card carries the single mobile
+     gutter, and doubling it made the radio page look more indented than the
+     queue page. */
   .radio-page {
     width: 100%;
     max-width: 100%;
     min-width: 0;
-    padding: 0 1rem;
+    padding: 0;
   }
 
   /* Hard fit: every descendant of the radio page must obey its parent's
