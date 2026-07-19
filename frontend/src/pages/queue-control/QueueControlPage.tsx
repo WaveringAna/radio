@@ -125,10 +125,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const [playlists, { refetch: refetchPlaylists }] = createResource(adminResourceSource, () => fetchPlaylists(selectedRadioTarget()))
   const [profiles, setProfiles] = createSignal<Record<string, AtprotoProfile>>({})
   const [pageError, setPageError] = createSignal<string | null>(null)
-  const [songFilterTitle, setSongFilterTitle] = createSignal('')
-  const [songFilterArtist, setSongFilterArtist] = createSignal('')
-  const [songFilterGenre, setSongFilterGenre] = createSignal('')
-  const [albumFilter, setAlbumFilter] = createSignal('')
+  const [libraryQuery, setLibraryQuery] = createSignal('')
   const [expandedAlbumId, setExpandedAlbumId] = createSignal<string | null>(null)
   const normalizeTitleForUi = (title: string): string => {
     return title
@@ -142,7 +139,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   const [searchMode, setSearchMode] = createSignal<SearchMode>('songs')
   const [libraryAction, setLibraryAction] = createSignal<LibraryAction>('queue')
   const [showIntake, setShowIntake] = createSignal(false)
-  const [songFilterDid] = createSignal('')
   const [editingSongId, setEditingSongId] = createSignal<string | null>(null)
   const [editTitle, setEditTitle] = createSignal('')
   const [editArtist, setEditArtist] = createSignal('')
@@ -319,48 +315,40 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     }
   })
 
-  const filteredSongs = createMemo(() => {
-    const title = songFilterTitle().trim().toLowerCase()
-    const artist = songFilterArtist().trim().toLowerCase()
-    const genre = songFilterGenre().trim().toLowerCase()
-    const did = songFilterDid().trim().toLowerCase()
-    return (songs() ?? []).filter((song) => {
-      if (title && !song.title.toLowerCase().includes(title)) return false
-      if (artist && !song.artist.toLowerCase().includes(artist)) return false
-      if (genre && !song.genre?.toLowerCase().includes(genre)) return false
-      if (did) {
-        const profile = profileFor(song.addedByDid)
-        if (!song.addedByDid.toLowerCase().includes(did) && !profile.handle.toLowerCase().includes(did)) return false
-      }
-      return true
-    })
-  })
+  // One query filters whichever tab is open. A song/album/set matches when
+  // every word of the query appears in some field — so "beatles help" finds
+  // the song, but searching just an artist still lists their whole catalog.
+  // Haystacks are lowercased once per data change, not per keystroke.
+  const queryWords = createMemo(() => libraryQuery().trim().toLowerCase().split(/\s+/).filter(Boolean))
+  const matchesQuery = (haystack: string) => queryWords().every((word) => haystack.includes(word))
 
-  const filteredAlbums = createMemo(() => {
-    const query = albumFilter().trim().toLowerCase()
-    if (!query) return albums() ?? []
-    return (albums() ?? []).filter((album) => {
-      const trackText = album.tracks.map((track) => `${track.title} ${track.artist}`).join(' ').toLowerCase()
-      return album.title.toLowerCase().includes(query) || trackText.includes(query)
-    })
-  })
+  const songIndex = createMemo(() => (songs() ?? []).map((song) => ({
+    song,
+    haystack: `${song.title} ${song.artist} ${song.album ?? ''} ${song.genre ?? ''}`.toLowerCase(),
+  })))
+  const albumIndex = createMemo(() => (albums() ?? []).map((album) => ({
+    album,
+    haystack: `${album.title} ${album.tracks.map((track) => `${track.title} ${track.artist}`).join(' ')}`.toLowerCase(),
+  })))
+  const playlistIndex = createMemo(() => (playlists() ?? []).map((playlist) => ({
+    playlist,
+    haystack: `${playlist.name} ${playlist.tracks.map((track) => `${track.title} ${track.artist}`).join(' ')}`.toLowerCase(),
+  })))
+
+  const filteredSongs = createMemo(() => songIndex().filter((entry) => matchesQuery(entry.haystack)).map((entry) => entry.song))
+  const filteredAlbums = createMemo(() => albumIndex().filter((entry) => matchesQuery(entry.haystack)).map((entry) => entry.album))
+  const filteredPlaylists = createMemo(() => playlistIndex().filter((entry) => matchesQuery(entry.haystack)).map((entry) => entry.playlist))
 
   const queuePaging = createPagedList(() => snapshot()?.queue ?? [], pageSize)
   const songsPaging = createPagedList(filteredSongs, pageSize)
   const albumsPaging = createPagedList(filteredAlbums, pageSize)
-  const playlistsPaging = createPagedList(() => playlists() ?? [], pageSize)
+  const playlistsPaging = createPagedList(filteredPlaylists, pageSize)
 
   createEffect(() => {
-    void songFilterTitle()
-    void songFilterArtist()
-    void songFilterGenre()
-    void songFilterDid()
+    void libraryQuery()
     songsPaging.setPage(0)
-  })
-
-  createEffect(() => {
-    void albumFilter()
     albumsPaging.setPage(0)
+    playlistsPaging.setPage(0)
   })
 
   const livePositionSeconds = () => {
@@ -873,14 +861,26 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                   <Search class="qc-search-icon" size={18} />
                   <input
                     type="text"
-                    placeholder="Search title, artist, or album"
-                    value={songFilterTitle()}
-                    onInput={(event) => {
-                      setSongFilterTitle(event.currentTarget.value)
-                      setSongFilterArtist(event.currentTarget.value)
-                      setSongFilterGenre(event.currentTarget.value)
+                    placeholder="Search songs, albums, and sets"
+                    aria-label="search the library"
+                    autocomplete="off"
+                    enterkeyhint="search"
+                    value={libraryQuery()}
+                    onInput={(event) => setLibraryQuery(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') setLibraryQuery('')
                     }}
                   />
+                  <Show when={libraryQuery()}>
+                    <button
+                      class="qc-search-clear"
+                      type="button"
+                      aria-label="clear search"
+                      onClick={() => setLibraryQuery('')}
+                    >
+                      <X size={16} />
+                    </button>
+                  </Show>
                 </div>
               </div>
 
@@ -890,21 +890,21 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                   classList={{ active: searchMode() === 'songs' }}
                   onClick={() => setSearchMode('songs')}
                 >
-                  All
+                  All{queryWords().length > 0 ? ` (${filteredSongs().length})` : ''}
                 </button>
                 <button
                   class="qc-tab-btn"
                   classList={{ active: searchMode() === 'albums' }}
                   onClick={() => setSearchMode('albums')}
                 >
-                  Albums
+                  Albums{queryWords().length > 0 ? ` (${filteredAlbums().length})` : ''}
                 </button>
                 <button
                   class="qc-tab-btn"
                   classList={{ active: searchMode() === 'playlists' }}
                   onClick={() => setSearchMode('playlists')}
                 >
-                  Sets
+                  Sets{queryWords().length > 0 ? ` (${filteredPlaylists().length})` : ''}
                 </button>
                 <button
                   class="qc-tab-btn edit-tab-btn"
@@ -1085,9 +1085,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
               {/* Albums List */}
               <Show when={searchMode() === 'albums'}>
-                <div class="song-filters album-search-row">
-                  <input placeholder="album, track, or artist" value={albumFilter()} onInput={(event) => setAlbumFilter(event.currentTarget.value)} />
-                </div>
                 <Show when={!albums.loading} fallback={<p class="list-empty">loading albums...</p>}>
                   <ul class="song-list album-loop-list">
                     <For each={albumsPaging.paged()} fallback={<li class="list-empty">no albums match</li>}>

@@ -67,10 +67,6 @@
   border-bottom: 0;
 }
 
-.album-search-row {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 /* queue control: rustic ledger / radio log; no dashboard cards */
 .queue-control-page .section-heading {
   font-family: var(--mono);
@@ -1145,11 +1141,32 @@
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 8px;
-  /* left gutter clears the search icon */
-  padding: 0.5rem 1rem 0.5rem 42px;
+  /* gutters clear the search icon on the left and the clear button on the right */
+  padding: 0.5rem 2.4rem 0.5rem 42px;
 }
 
 .queue-control-page .qc-search-input-wrapper input:focus {
+  background: var(--surface);
+}
+
+.qc-search-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  background: transparent;
+}
+
+.qc-search-clear:hover {
+  color: var(--text);
   background: var(--surface);
 }
 
@@ -1580,5 +1597,31 @@
   .qc-column-header {
     flex-wrap: wrap;
     gap: 0.35rem;
+  }
+}
+
+@media (max-width: 520px) {
+  /* Result rows: the fixed-width trimmings (pill, duration, buttons) plus
+     1.25rem gaps cost more than a phone's width before the title gets any.
+     Tighten the gaps, shrink the thumb, and let the meta line carry genre. */
+  .qc-song-item {
+    gap: 0.6rem;
+  }
+
+  .qc-song-thumb {
+    width: 40px;
+    height: 40px;
+  }
+
+  .qc-song-genre-pill {
+    display: none;
+  }
+
+  .qc-add-btn {
+    padding: 6px 10px;
+  }
+
+  .album-row-header {
+    flex-wrap: wrap;
   }
 }
