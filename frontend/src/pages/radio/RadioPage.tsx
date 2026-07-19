@@ -82,7 +82,19 @@ function writeVolumeCookie(volume: number): void {
   document.cookie = `radio_volume=${volume}; Max-Age=31536000; Path=/; SameSite=Lax`
 }
 
+// iOS silently ignores volume writes on media elements — and on some
+// versions the property still echoes the written value back, so a
+// write-then-read probe reports success while nothing audible changes.
+// Treat element volume as uncontrollable there so callers fall back to the
+// Web Audio gain, which is the only volume control iOS actually honors.
+function isIosDevice(): boolean {
+  if (typeof navigator === 'undefined') return false
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent)) return true
+  return /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1
+}
+
 function setElementVolume(audioElement: HTMLAudioElement, nextVolume: number): boolean {
+  if (isIosDevice()) return false
   audioElement.volume = nextVolume
   return Math.abs(audioElement.volume - nextVolume) < 0.001
 }
