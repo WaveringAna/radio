@@ -407,9 +407,17 @@ export interface PlayHistoryItem {
   startedAt: number
 }
 
+export interface RotationUpNext {
+  songId: string
+  title: string
+  artist: string
+  source: string
+}
+
 export interface RotationInfo {
   weights: Record<string, number>
   recentlyPlayed: PlayHistoryItem[]
+  upNext?: RotationUpNext | null
 }
 
 export async function fetchRotationInfo(target?: RadioTarget): Promise<RotationInfo> {

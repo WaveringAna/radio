@@ -1555,6 +1555,17 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                 </span>
               </div>
 
+              <Show when={rotationInfo()?.upNext}>
+                {(next) => (
+                  <div class="qc-after-queue-row">
+                    <span class="qc-est-label">Next from rotation</span>
+                    <span class="qc-after-queue-value" title={`from ${next().source}`}>
+                      {next().title} — {next().artist}
+                    </span>
+                  </div>
+                )}
+              </Show>
+
               <Show when={(rotationInfo()?.recentlyPlayed?.length ?? 0) > 0}>
                 <details class="qc-recently-played">
                   <summary>recently played</summary>

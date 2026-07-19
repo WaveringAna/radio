@@ -3,6 +3,7 @@ import { AudioLines, ChevronLeft, ChevronRight, Eye, Play, RadioTower, Send, Vol
 import { resolveAtprotoProfile, type AtprotoProfile } from '../../shared/lib/atproto'
 import {
   fetchRadioSnapshot,
+  fetchRotationInfo,
   fetchSongs,
   fetchSyndicatedStations,
   canUseRadioXrpcTarget,
@@ -1012,6 +1013,16 @@ export default function RadioPage(props: RadioPageProps) {
   const queuePageSize = 6
   const upNextPaging = createPagedList(localQueue, queuePageSize)
 
+  // Deterministic rotation peek, so an empty queue can still say what's next.
+  const [rotationInfo, { refetch: refetchRotationInfo }] = createResource(
+    stationResourceKey,
+    ({ target }) => fetchRotationInfo(target),
+  )
+  createEffect(() => {
+    void currentSong()?.id
+    void refetchRotationInfo()
+  })
+
   const upNextCard = () => (
     <section class="glass-card up-next-card">
       <div class="section-heading">
@@ -1020,7 +1031,16 @@ export default function RadioPage(props: RadioPageProps) {
       </div>
       <Show when={!snapshot.loading} fallback={<p class="muted">loading queue...</p>}>
         <ul class="queue-list">
-          <For each={upNextPaging.paged()} fallback={<li class="muted">queue is empty</li>}>
+          <For
+            each={upNextPaging.paged()}
+            fallback={
+              <li class="muted up-next-rotation-peek">
+                <Show when={rotationInfo()?.upNext} fallback={<>queue is empty</>}>
+                  {(next) => <>next from rotation: {next().title} — {next().artist}</>}
+                </Show>
+              </li>
+            }
+          >
             {(item, index) => {
               const profile = () => profileFor(item.queuedByDid)
               const hasCover = () => (songs() ?? []).some((song) => song.id === item.songId && song.hasCover)

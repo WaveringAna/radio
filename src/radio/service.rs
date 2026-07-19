@@ -722,9 +722,38 @@ impl RadioService {
         .fetch_all(self.db.pool())
         .await
         .context("loading play history")?;
+        // Peek the deterministic next loop track — only meaningful when
+        // shuffle is off (shuffle's picks already appear in the queue).
+        let up_next = if shuffle_enabled(&self.db).await? {
+            None
+        } else {
+            match next_album_loop_track(&self.db).await? {
+                Some(track) => {
+                    let song = find_song(&self.db, &track.song_id).await?;
+                    let source = if track.album_id == SINGLES_ALBUM_ID {
+                        "singles".to_string()
+                    } else {
+                        sqlx::query_scalar::<_, String>("select title from radio_albums where id = ?")
+                            .bind(&track.album_id)
+                            .fetch_optional(self.db.pool())
+                            .await
+                            .context("loading rotation album title")?
+                            .unwrap_or_else(|| "album loop".to_string())
+                    };
+                    song.map(|song| crate::radio::RotationUpNext {
+                        song_id: song.id,
+                        title: song.title,
+                        artist: song.artist,
+                        source,
+                    })
+                }
+                None => None,
+            }
+        };
         Ok(crate::radio::RotationInfo {
             weights: weights.into_iter().collect(),
             recently_played,
+            up_next,
         })
     }
 

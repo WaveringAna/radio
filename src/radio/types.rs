@@ -116,12 +116,25 @@ pub(crate) struct PlayHistoryItem {
     pub(crate) started_at: i64,
 }
 
+/// The song rotation will play next when the queue drains (loop mode only).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RotationUpNext {
+    pub(crate) song_id: String,
+    pub(crate) title: String,
+    pub(crate) artist: String,
+    /// Where it comes from: the album title, or "singles".
+    pub(crate) source: String,
+}
+
 /// Rotation metadata for the admin UI: album weights plus the recent airlog.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RotationInfo {
     pub(crate) weights: std::collections::BTreeMap<String, i64>,
     pub(crate) recently_played: Vec<PlayHistoryItem>,
+    /// Deterministic next rotation track; None while shuffle mode is on.
+    pub(crate) up_next: Option<RotationUpNext>,
 }
 
 /// Live seek position returned by the backend.
