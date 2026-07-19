@@ -1046,14 +1046,16 @@ export default function RadioPage(props: RadioPageProps) {
   const [showRemaining, setShowRemaining] = createSignal(false)
   // Station-log style: when this song hit the air, in wall-clock time.
   // Derived from the displayed position so it always agrees with the bar.
-  const songStartedLabel = () => {
-    const at = new Date(Date.now() - liveDisplayPosition() * 1000)
+  const wallClockLabel = (msFromNow: number) => {
+    const at = new Date(Date.now() + msFromNow)
     let hours = at.getHours()
     const minutes = at.getMinutes()
     const ampm = hours >= 12 ? 'pm' : 'am'
     hours = hours % 12 || 12
     return `${hours}:${minutes < 10 ? '0' + minutes : minutes} ${ampm}`
   }
+  const songStartedLabel = () => wallClockLabel(-liveDisplayPosition() * 1000)
+  const songEndsLabel = () => wallClockLabel(Math.max(0, (currentSong()?.durationSeconds ?? 0) - liveDisplayPosition()) * 1000)
 
   // Deterministic rotation peek, so an empty queue can still say what's next.
   const [rotationInfo, { refetch: refetchRotationInfo }] = createResource(
@@ -1369,16 +1371,47 @@ export default function RadioPage(props: RadioPageProps) {
                 <button
                   class="nowplaying-duration"
                   type="button"
-                  title={showRemaining() ? 'show duration' : 'show time remaining'}
+                  title={showRemaining() ? 'show end time' : 'show time remaining'}
                   onClick={() => setShowRemaining((prev) => !prev)}
                 >
                   {showRemaining()
                     ? `-${formatClock(Math.max(0, (currentSong()?.durationSeconds ?? 0) - liveDisplayPosition()))}`
-                    : formatClock(currentSong()?.durationSeconds)}
+                    : `ends ${songEndsLabel()}`}
                 </button>
               </div>
             </div>
           </Show>
+          <div class="volume-control local-volume">
+            <button
+              type="button"
+              class="volume-mute-btn"
+              aria-label={volume() === 0 ? 'unmute' : 'mute'}
+              aria-pressed={volume() === 0}
+              title={volume() === 0 ? 'unmute' : 'mute'}
+              onClick={toggleMute}
+            >
+              <Show when={volume() === 0} fallback={<Volume2 size={17} />}>
+                <VolumeX size={17} />
+              </Show>
+            </button>
+            <input
+              type="range"
+              aria-label="volume"
+              min="0"
+              max="1"
+              step="0.01"
+              value={volume()}
+              style={`--volume-progress: ${volume() * 100}%`}
+              onInput={(event) => {
+                const nextVolume = event.currentTarget.valueAsNumber
+                setVolume(nextVolume)
+                equalizer.setOutputVolume(nextVolume)
+                if (audioRef && !setElementVolume(audioRef, nextVolume) && hasStarted()) {
+                  void equalizer.ensureGraph()
+                }
+              }}
+            />
+          </div>
           <div class="nowplaying-meta-row">
             <div class="live-viewer-counter compact-viewer-counter" aria-live="polite">
               <Eye size={16} />
@@ -1440,50 +1473,6 @@ export default function RadioPage(props: RadioPageProps) {
                 </ul>
               </Show>
             </div>
-            <Show when={currentSong()}>
-              {(song) => {
-                const profile = () => profileFor(song().addedByDid)
-                return (
-                  <a class="track-attribution" href={`https://bsky.app/profile/${profile().handle}`} target="_blank" rel="noreferrer" title={`uploaded by @${profile().handle}`}>
-                    <ProfileAvatar profile={profile()} class="track-attribution-avatar" title={`@${profile().handle}`} />
-                    <span>
-                      uploaded by <strong>@{profile().handle}</strong>
-                    </span>
-                  </a>
-                )
-              }}
-            </Show>
-          </div>
-          <div class="volume-control local-volume">
-            <button
-              type="button"
-              class="volume-mute-btn"
-              aria-label={volume() === 0 ? 'unmute' : 'mute'}
-              aria-pressed={volume() === 0}
-              title={volume() === 0 ? 'unmute' : 'mute'}
-              onClick={toggleMute}
-            >
-              <Show when={volume() === 0} fallback={<Volume2 size={17} />}>
-                <VolumeX size={17} />
-              </Show>
-            </button>
-            <input
-              type="range"
-              aria-label="volume"
-              min="0"
-              max="1"
-              step="0.01"
-              value={volume()}
-              style={`--volume-progress: ${volume() * 100}%`}
-              onInput={(event) => {
-                const nextVolume = event.currentTarget.valueAsNumber
-                setVolume(nextVolume)
-                equalizer.setOutputVolume(nextVolume)
-                if (audioRef && !setElementVolume(audioRef, nextVolume) && hasStarted()) {
-                  void equalizer.ensureGraph()
-                }
-              }}
-            />
           </div>
         </section>
         <audio

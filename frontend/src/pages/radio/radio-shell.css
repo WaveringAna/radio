@@ -495,13 +495,6 @@ h1.marquee .marquee-track {
   min-height: var(--nowplaying-row-height, 2.35rem);
 }
 
-.nowplaying-meta-row .track-attribution {
-  max-width: min(100%, 27rem);
-  min-height: var(--nowplaying-row-height, 2.35rem);
-  font-size: 0.9rem;
-}
-
-.nowplaying-meta-row .track-attribution-avatar.profile-avatar,
 .listener-avatar.profile-avatar {
   width: var(--nowplaying-avatar-size, 1.65rem);
   height: var(--nowplaying-avatar-size, 1.65rem);
@@ -520,40 +513,6 @@ h1.marquee .marquee-track {
   /* Reserve the button row's height so showing/hiding the listen button as
      backend playback state changes doesn't shift the layout below. */
   min-height: 2.1rem;
-}
-
-.track-attribution {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  flex: 0 1 auto;
-  min-width: 0;
-  color: var(--muted);
-  text-align: right;
-  text-decoration: none;
-  font-size: 0.92rem;
-  font-weight: 300;
-}
-
-.track-attribution span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.track-attribution strong {
-  color: var(--accent);
-  font-weight: 400;
-}
-
-.track-attribution:hover strong {
-  text-decoration: underline;
-}
-
-.track-attribution-avatar.profile-avatar {
-  width: var(--nowplaying-avatar-size, 1.65rem);
-  height: var(--nowplaying-avatar-size, 1.65rem);
 }
 
 .radio-audio {
@@ -894,24 +853,10 @@ h1.marquee .marquee-track {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .nowplaying-meta-row .track-attribution {
-    max-width: 100%;
-    justify-self: start;
-    justify-content: flex-start;
-    text-align: left;
-  }
-
   .listener-avatars {
     flex-wrap: wrap;
     min-width: 0;
     margin-left: 0;
-  }
-
-  .track-attribution {
-    flex: 1 1 12rem;
-    min-width: 0;
-    justify-content: flex-start;
-    text-align: left;
   }
 
   .volume-control input {
