@@ -145,10 +145,12 @@ main > section {
     margin-inline: 0;
   }
 
-  /* The album-accent washes never worked at phone scale — full-size they haze
-     the whole screen, shrunk they read as stray grey blobs. Phones keep the
-     plain dark background; the art itself carries the color. */
-  .album-ambient-layer {
+  /* The ambient stack (accent washes + noise texture) never worked at phone
+     scale — the washes haze or blob, and without them the noise overlay has
+     nothing to blend into and degrades to a flat grey film over the empty
+     parts of the page. Phones get the plain dark background; the art itself
+     carries the color. */
+  .album-ambient {
     display: none;
   }
 }

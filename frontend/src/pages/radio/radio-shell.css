@@ -813,9 +813,11 @@ h1.marquee .marquee-track {
     overflow-x: clip;
   }
 
+  /* The fixed scanline overlay reads as a grey film over the empty parts of
+     the page on phones; like the ambient noise, it only earns its keep on a
+     desktop viewport. */
   .radio-page::before {
-    width: 100vw;
-    max-width: 100%;
+    display: none;
   }
 
   .bottom-radio-tools,

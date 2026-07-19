@@ -1384,6 +1384,159 @@
   transition: color 150ms var(--ease-out);
 }
 
+/* Album results share the song-row anatomy: thumb, info, add, disclosure. */
+.qc-album-item {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.qc-album-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+  padding: 12px 0;
+  cursor: pointer;
+}
+
+.qc-album-thumb {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface-soft);
+}
+
+.qc-album-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.qc-album-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.qc-album-badge {
+  flex-shrink: 0;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+
+.qc-album-badge.looping {
+  color: var(--accent);
+  background: rgb(var(--accent-rgb) / 14%);
+}
+
+.qc-album-badge.duplicate {
+  color: #ffa500;
+  background: rgb(255 165 0 / 12%);
+}
+
+.qc-album-expand {
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  transition: transform 150ms var(--ease-out);
+}
+
+.qc-album-item.expanded .qc-album-expand {
+  transform: rotate(180deg);
+}
+
+.qc-album-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem 0 1rem;
+  border-top: 1px solid color-mix(in srgb, var(--hairline) 72%, transparent);
+}
+
+.qc-album-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.qc-album-actions-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.qc-album-loop-check {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.qc-merge-duplicate-btn {
+  color: #ffa500;
+}
+
+.qc-album-merge-select {
+  max-width: 12rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.qc-album-tracks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-height: 14rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.qc-album-track {
+  display: grid;
+  grid-template-columns: 1.6rem minmax(0, 1fr) minmax(0, auto) auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.2rem 0;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.qc-album-track > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qc-album-track-num {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+.qc-album-track-artist {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.qc-album-track-duration {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+
 .qc-more-btn:hover {
   color: var(--text);
 }
@@ -1621,7 +1774,21 @@
     padding: 6px 10px;
   }
 
-  .album-row-header {
-    flex-wrap: wrap;
+  .qc-album-row {
+    gap: 0.6rem;
+  }
+
+  .qc-album-thumb {
+    width: 40px;
+    height: 40px;
+  }
+
+  /* four-column track rows don't fit; drop the artist, keep num/title/time */
+  .qc-album-track {
+    grid-template-columns: 1.6rem minmax(0, 1fr) auto;
+  }
+
+  .qc-album-track-artist {
+    display: none;
   }
 }

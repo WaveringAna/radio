@@ -2,7 +2,6 @@ import { createEffect, createMemo, createResource, createSignal, For, onCleanup,
 import {
   CircleUserRound,
   GripVertical,
-  ListPlus,
   LoaderCircle,
   LockKeyhole,
   Pause,
@@ -1092,48 +1091,60 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                         const isExpanded = () => expandedAlbumId() === album.id
                         const duplicate = () => (albums() ?? []).find(a => a.id !== album.id && normalizeTitleForUi(a.title) === normalizeTitleForUi(album.title))
 
+                        const coverTrack = () => album.tracks.find((track) => track.hasCover)
+                        const totalMinutes = () => {
+                          const seconds = album.tracks.reduce((sum, track) => sum + (track.durationSeconds ?? 0), 0)
+                          return seconds >= 60 ? Math.round(seconds / 60) : 0
+                        }
                         return (
-                          <li class="album-item-container" style="display: flex; flex-direction: column; align-items: stretch; gap: 0.5rem; padding: 0.75rem; border-bottom: 1px solid var(--hairline);">
-                            <div class="album-row-header" style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; width: 100%;">
-                              <div
-                                class="song-copy"
-                                style="cursor: pointer; flex-grow: 1; min-width: 0;"
-                                onClick={() => setExpandedAlbumId(isExpanded() ? null : album.id)}
-                              >
-                                <span style="font-weight: bold; display: flex; align-items: center; gap: 0.5rem; color: var(--text);">
-                                  {album.title}
+                          <li class="qc-album-item" classList={{ expanded: isExpanded() }}>
+                            <div
+                              class="qc-album-row"
+                              role="button"
+                              aria-expanded={isExpanded()}
+                              onClick={() => setExpandedAlbumId(isExpanded() ? null : album.id)}
+                            >
+                              <div class="qc-album-thumb">
+                                <Show when={coverTrack()} fallback={<div class="qc-thumb-placeholder">{album.title.slice(0, 4).toUpperCase()}</div>}>
+                                  {(track) => <img src={songCoverThumbnailUrl(track().id, selectedApiBase())} alt="" loading="lazy" />}
+                                </Show>
+                              </div>
+                              <div class="qc-song-info">
+                                <span class="qc-album-title-row">
+                                  <span class="qc-song-title">{album.title}</span>
                                   <Show when={album.isEnabled}>
-                                    <span style="font-size: 0.7rem; padding: 0.1rem 0.3rem; border-radius: 4px; background: rgba(0,200,0,0.15); color: #00cc00; font-weight: normal;">looping</span>
+                                    <span class="qc-album-badge looping">looping</span>
                                   </Show>
                                   <Show when={duplicate()}>
-                                    <span style="font-size: 0.7rem; padding: 0.1rem 0.3rem; border-radius: 4px; background: rgba(255,165,0,0.15); color: #ffa500; font-weight: normal;">duplicate</span>
+                                    <span class="qc-album-badge duplicate">duplicate</span>
                                   </Show>
                                 </span>
-                                <small style="display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                  {album.tracks.length} tracks · {album.tracks.map((track) => track.title).join(' → ')}
-                                </small>
+                                <span class="qc-song-meta-line">
+                                  {album.tracks.length} {album.tracks.length === 1 ? 'track' : 'tracks'}{totalMinutes() ? ` • ${totalMinutes()} min` : ''}
+                                </span>
                               </div>
-                              <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
-                                <button
-                                  class="icon-button"
-                                  type="button"
-                                  aria-label="queue album"
-                                  disabled={album.tracks.length === 0}
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    void addAlbumToQueue(album.tracks.map((track) => track.id))
-                                  }}
-                                >
-                                  <ListPlus size={18} />
-                                </button>
-                              </div>
+                              <button
+                                class="qc-add-btn"
+                                type="button"
+                                aria-label="queue album"
+                                disabled={album.tracks.length === 0}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void addAlbumToQueue(album.tracks.map((track) => track.id))
+                                }}
+                              >
+                                + Add
+                              </button>
+                              <span class="qc-more-btn qc-album-expand" aria-hidden="true">
+                                <ChevronDown size={18} />
+                              </span>
                             </div>
 
                             <Show when={isExpanded()}>
-                              <div class="album-details" style="display: flex; flex-direction: column; gap: 0.75rem; border-top: 1px solid var(--hairline); padding-top: 0.75rem; margin-top: 0.25rem;">
-                                <div class="album-actions-row" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem;">
-                                  <div style="display: flex; align-items: center; gap: 0.75rem;">
-                                    <label class="inline-check" style="margin: 0; display: flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; cursor: pointer; color: var(--text);">
+                              <div class="qc-album-details">
+                                <div class="qc-album-actions">
+                                  <div class="qc-album-actions-group">
+                                    <label class="inline-check qc-album-loop-check">
                                       <input
                                         type="checkbox"
                                         checked={album.isEnabled}
@@ -1142,8 +1153,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                                       loop this album
                                     </label>
                                     <button
-                                      class="pill-button subtle"
-                                      style="color: var(--error); border-color: rgba(255, 0, 0, 0.2); padding: 0.25rem 0.5rem; font-size: 0.85rem;"
+                                      class="pill-button subtle danger-button"
                                       type="button"
                                       onClick={() => void handleDeleteAlbum(album.id)}
                                     >
@@ -1151,12 +1161,11 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                                     </button>
                                   </div>
 
-                                  <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                  <div class="qc-album-actions-group">
                                     <Show when={duplicate()}>
                                       {(dup) => (
                                         <button
-                                          class="pill-button"
-                                          style="background: #ffa500; color: #000; font-size: 0.85rem; padding: 0.25rem 0.5rem; border: none; font-weight: bold;"
+                                          class="pill-button subtle qc-merge-duplicate-btn"
                                           type="button"
                                           onClick={() => {
                                             if (confirm(`Merge this album "${album.title}" into the duplicate "${dup().title}"? All tracks will be combined under "${dup().title}".`)) {
@@ -1169,45 +1178,40 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                                       )}
                                     </Show>
 
-                                    <div style="display: flex; align-items: center; gap: 0.25rem;">
-                                      <select
-                                        style="padding: 0.25rem 0.5rem; font-size: 0.85rem; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--text);"
-                                        onChange={(e) => {
-                                          const val = e.currentTarget.value
-                                          if (val) {
-                                            const target = (albums() ?? []).find(a => a.id === val)
-                                            if (target && confirm(`Merge this album "${album.title}" into "${target.title}"? All tracks will be combined under "${target.title}".`)) {
-                                              void handleMergeAlbums(album.id, val)
-                                            }
-                                            e.currentTarget.value = ""
+                                    <select
+                                      class="qc-album-merge-select"
+                                      aria-label="merge this album into another"
+                                      onChange={(e) => {
+                                        const val = e.currentTarget.value
+                                        if (val) {
+                                          const target = (albums() ?? []).find(a => a.id === val)
+                                          if (target && confirm(`Merge this album "${album.title}" into "${target.title}"? All tracks will be combined under "${target.title}".`)) {
+                                            void handleMergeAlbums(album.id, val)
                                           }
-                                        }}
-                                      >
-                                        <option value="" style="color: #000;">merge into...</option>
-                                        <For each={(albums() ?? []).filter(a => a.id !== album.id)}>
-                                          {(other) => <option value={other.id} style="color: #000;">{other.title}</option>}
-                                        </For>
-                                      </select>
-                                    </div>
+                                          e.currentTarget.value = ""
+                                        }
+                                      }}
+                                    >
+                                      <option value="">merge into...</option>
+                                      <For each={(albums() ?? []).filter(a => a.id !== album.id)}>
+                                        {(other) => <option value={other.id}>{other.title}</option>}
+                                      </For>
+                                    </select>
                                   </div>
                                 </div>
 
-                                <div class="album-tracks-list" style="display: flex; flex-direction: column; gap: 0.25rem; background: rgba(0,0,0,0.1); padding: 0.5rem; border-radius: 4px; max-height: 12rem; overflow-y: auto;">
-                                  <span style="font-size: 0.8rem; font-weight: bold; opacity: 0.7; margin-bottom: 0.25rem; color: var(--text);">tracks:</span>
+                                <ol class="qc-album-tracks">
                                   <For each={album.tracks}>
                                     {(track, idx) => (
-                                      <div style="display: flex; align-items: center; justify-content: space-between; font-size: 0.85rem; padding: 0.15rem 0; color: var(--text);">
-                                        <span style="text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 75%;">
-                                          <span style="opacity: 0.5; margin-right: 0.35rem;">{idx() + 1}.</span>
-                                          {track.title}
-                                        </span>
-                                        <span style="opacity: 0.6; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 25%; font-size: 0.8rem;">
-                                          {track.artist}
-                                        </span>
-                                      </div>
+                                      <li class="qc-album-track">
+                                        <span class="qc-album-track-num">{idx() + 1}</span>
+                                        <span class="qc-album-track-title">{track.title}</span>
+                                        <span class="qc-album-track-artist">{track.artist}</span>
+                                        <span class="qc-album-track-duration">{formatTime(track.durationSeconds)}</span>
+                                      </li>
                                     )}
                                   </For>
-                                </div>
+                                </ol>
                               </div>
                             </Show>
                           </li>
