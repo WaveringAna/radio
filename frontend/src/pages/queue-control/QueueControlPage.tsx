@@ -217,6 +217,25 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     return [...new Set(list)].sort()
   })
 
+  const genreCounts = createMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const genre of genres()) {
+      counts[genre] = (songs() ?? []).filter((song) => song.genre?.toLowerCase() === genre.toLowerCase()).length
+    }
+    return counts
+  })
+
+  const selectedGenreCount = () => genreCounts()[selectedGenre()] ?? 0
+
+  const [genreNotice, setGenreNotice] = createSignal<string | null>(null)
+  let genreNoticeTimer: number | undefined
+  const flashGenreNotice = (message: string) => {
+    setGenreNotice(message)
+    window.clearTimeout(genreNoticeTimer)
+    genreNoticeTimer = window.setTimeout(() => setGenreNotice(null), 4000)
+  }
+  onCleanup(() => window.clearTimeout(genreNoticeTimer))
+
   const shuffleLibraryByGenre = async (genre: string, replace: boolean) => {
     if (!genre) return
     const matchingSongIds = (songs() ?? [])
@@ -232,6 +251,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
       }
       setPageError(null)
       mutate(await enqueueAlbum(shuffled, selectedRadioTarget()))
+      flashGenreNotice(`${replace ? 'now playing' : 'queued'} ${shuffled.length} ${genre} song${shuffled.length === 1 ? '' : 's'}, shuffled`)
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'shuffle/queue genre failed')
     }
@@ -1118,26 +1138,47 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                 </Show>
 
                 <div class="qc-genre-bar">
-                  <span style="font-weight: 500; font-size: 0.9rem; color: var(--text); flex-shrink: 0;">queue genre:</span>
-                  <div style="flex: 1; min-width: 140px; position: relative;">
+                  <span class="qc-genre-bar-label">genre station</span>
+                  <div class="qc-genre-picker">
                     <SearchableDropdown
                       options={genres()}
-                      placeholder="select genre..."
+                      counts={genreCounts()}
+                      placeholder="pick a genre..."
+                      value={selectedGenre()}
                       onSelect={(val) => setSelectedGenre(val)}
                     />
                   </div>
                   <Show when={selectedGenre()}>
-                    <div style="display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;">
-                      <button class="pill-button subtle" type="button" onClick={() => void shuffleLibraryByGenre(selectedGenre(), false)}>
-                        append
+                    <div class="qc-genre-actions">
+                      <button
+                        class="pill-button subtle"
+                        type="button"
+                        disabled={selectedGenreCount() === 0}
+                        onClick={() => void shuffleLibraryByGenre(selectedGenre(), false)}
+                      >
+                        add {selectedGenreCount()} to queue
                       </button>
-                      <button class="pill-button subtle" type="button" onClick={() => void shuffleLibraryByGenre(selectedGenre(), true)}>
-                        play (shuffle)
+                      <button
+                        class="pill-button subtle"
+                        type="button"
+                        disabled={selectedGenreCount() === 0}
+                        title="clears the current queue first"
+                        onClick={() => {
+                          const queued = snapshot()?.queue.length ?? 0
+                          if (queued === 0 || confirm(`Replace the current queue (${queued} songs) with ${selectedGenreCount()} shuffled ${selectedGenre()} songs?`)) {
+                            void shuffleLibraryByGenre(selectedGenre(), true)
+                          }
+                        }}
+                      >
+                        replace queue
                       </button>
-                      <button class="pill-button subtle" type="button" style="padding-inline: 0.4rem;" onClick={() => setSelectedGenre('')}>
+                      <button class="pill-button subtle qc-genre-clear" type="button" aria-label="clear genre" onClick={() => setSelectedGenre('')}>
                         <X size={15} />
                       </button>
                     </div>
+                  </Show>
+                  <Show when={genreNotice()}>
+                    <span class="qc-genre-notice" role="status">{genreNotice()}</span>
                   </Show>
                 </div>
 
