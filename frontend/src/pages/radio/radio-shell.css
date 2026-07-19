@@ -502,7 +502,7 @@ h1.marquee .marquee-track {
 }
 
 .nowplaying-details .local-volume {
-  width: min(30rem, 100%);
+  width: 100%;
   margin-top: 0.5rem;
 }
 
@@ -879,7 +879,7 @@ h1.marquee .marquee-track {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  width: min(30rem, 100%);
+  width: 100%;
   margin-top: 0.8rem;
 }
 
