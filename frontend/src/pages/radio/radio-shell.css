@@ -886,10 +886,12 @@ h1.marquee .marquee-track {
 
 .nowplaying-progress-track {
   width: 100%;
-  height: 6px;
+  /* 6px of fill + the borders: the volume slider's gradient paints its full
+     6px box, so the inner fill here needs 6px of content to look identical. */
+  height: 8px;
   overflow: hidden;
   border: 1px solid var(--hairline);
-  border-radius: 3px;
+  border-radius: 4px;
   background: var(--surface-soft);
 }
 
