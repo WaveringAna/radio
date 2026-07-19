@@ -356,12 +356,13 @@
 .marquee-track {
   display: inline-flex;
   width: max-content;
-  gap: 2.5rem;
+  /* Must equal the gapPx the measurement code bakes into --marquee-shift. */
+  gap: 4rem;
 }
 
 h1.marquee .marquee-track {
   will-change: transform;
-  animation: title-marquee 14s linear infinite;
+  animation: title-marquee var(--marquee-duration, 14s) linear infinite;
 }
 
 .marquee-track span {
@@ -373,7 +374,7 @@ h1.marquee .marquee-track {
     transform: translateX(0);
   }
   to {
-    transform: translateX(calc(-50% - 1.25rem));
+    transform: translateX(calc(-1 * var(--marquee-shift, 50%)));
   }
 }
 

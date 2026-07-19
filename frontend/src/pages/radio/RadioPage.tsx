@@ -702,7 +702,19 @@ export default function RadioPage(props: RadioPageProps) {
     // zero instead of swapping text into a half-scrolled track, then measure
     // on the next frame once the new title has laid out.
     setShouldMarqueeTitle(false)
-    const measure = () => setShouldMarqueeTitle(text.scrollWidth > heading.clientWidth + 1)
+    const measure = () => {
+      const overflowing = text.scrollWidth > heading.clientWidth + 1
+      if (overflowing) {
+        // Pixel-exact loop: shift by one copy plus the separator gap, at a
+        // constant speed regardless of title length. Percentage-based shifts
+        // drift against the flex gap and make the copies collide.
+        const gapPx = 4 * 16
+        const shift = text.scrollWidth + gapPx
+        heading.style.setProperty('--marquee-shift', `${shift}px`)
+        heading.style.setProperty('--marquee-duration', `${Math.min(40, Math.max(9, shift / 55))}s`)
+      }
+      setShouldMarqueeTitle(overflowing)
+    }
     const raf = requestAnimationFrame(measure)
     const observer = new ResizeObserver(measure)
     observer.observe(heading)
