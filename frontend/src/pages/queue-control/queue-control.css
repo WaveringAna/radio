@@ -1575,8 +1575,10 @@
 .qc-queue-item.queue-drag-source {
   position: relative;
   z-index: 5;
-  opacity: 0.85;
+  opacity: 0.9;
   background: var(--bg);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  transform-origin: center;
 }
 
 .qc-queue-item.drag-over {
@@ -1656,7 +1658,8 @@
   padding: 6px 2px;
 }
 
-/* Touch screens don't get the handle; reordering is a desktop affordance. */
+/* Touch screens don't get the handle — long-pressing the row starts the drag
+   there instead, so the visible grip stays a desktop affordance. */
 @media (hover: none) {
   .qc-queue-grip {
     display: none;

@@ -710,19 +710,21 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   // Pointer-based reordering: works for touch and mouse alike, unlike HTML5
   // drag-and-drop which never fires on touch screens. The grip is the only
   // initiator so the rest of the row still scrolls the page on a phone.
-  const startQueueDrag = (item: QueueItem, event: PointerEvent) => {
-    if (event.pointerType === 'mouse' && event.button !== 0) return
-    const grip = event.currentTarget as HTMLElement
-    const row = grip.closest('li')
-    if (!row || !queueListEl) return
-    event.preventDefault()
-    grip.setPointerCapture(event.pointerId)
+  // Shared drag session used by both initiators: the grip (immediate, any
+  // pointer) and long-press on the row body (touch). Listeners live on the
+  // element holding pointer capture; onEnd releases initiator-side hooks.
+  const runQueueDragSession = (
+    item: QueueItem,
+    row: HTMLElement,
+    captureEl: HTMLElement,
+    originY: number,
+    onEnd?: () => void,
+  ) => {
     setDraggingQueueId(item.id)
-    const startY = event.clientY
     let overId: string | null = null
 
     const move = (ev: PointerEvent) => {
-      row.style.transform = `translateY(${ev.clientY - startY}px)`
+      row.style.transform = `translateY(${ev.clientY - originY}px)`
       overId = null
       for (const li of queueListEl?.querySelectorAll<HTMLElement>('li[data-queue-id]') ?? []) {
         if (li === row) continue
@@ -735,11 +737,12 @@ export default function QueueControlPage(props: QueueControlPageProps) {
       setDragOverQueueId(overId)
     }
     const finish = (commit: boolean) => {
-      grip.removeEventListener('pointermove', move)
-      grip.removeEventListener('pointerup', up)
-      grip.removeEventListener('pointercancel', cancel)
+      captureEl.removeEventListener('pointermove', move)
+      captureEl.removeEventListener('pointerup', up)
+      captureEl.removeEventListener('pointercancel', cancel)
       row.style.transform = ''
       setDragOverQueueId(null)
+      onEnd?.()
       if (commit && overId) {
         void handleQueueDrop(overId)
       } else {
@@ -748,9 +751,66 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     }
     const up = () => finish(true)
     const cancel = () => finish(false)
-    grip.addEventListener('pointermove', move)
-    grip.addEventListener('pointerup', up)
-    grip.addEventListener('pointercancel', cancel)
+    captureEl.addEventListener('pointermove', move)
+    captureEl.addEventListener('pointerup', up)
+    captureEl.addEventListener('pointercancel', cancel)
+  }
+
+  const startQueueDrag = (item: QueueItem, event: PointerEvent) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    const grip = event.currentTarget as HTMLElement
+    const row = grip.closest('li')
+    if (!row || !queueListEl) return
+    event.preventDefault()
+    grip.setPointerCapture(event.pointerId)
+    runQueueDragSession(item, row, grip, event.clientY)
+  }
+
+  // Long-press on the row body starts a touch drag: hold ~a third of a second
+  // without moving. A scroll gesture (movement or the browser's pointercancel)
+  // aborts the timer, so normal scrolling through the queue is unaffected.
+  const LONG_PRESS_MS = 350
+  const LONG_PRESS_SLOP_PX = 10
+  const startQueueRowLongPress = (item: QueueItem, event: PointerEvent) => {
+    if (event.pointerType !== 'touch') return
+    const row = event.currentTarget as HTMLElement
+    if ((event.target as HTMLElement | null)?.closest('button')) return
+    const startX = event.clientX
+    const startY = event.clientY
+    let lastY = startY
+    let engaged = false
+
+    // Once the drag engages, swallowing touchmove is the only way to keep the
+    // browser from turning further finger movement into a scroll.
+    const blockScroll = (ev: TouchEvent) => {
+      if (engaged) ev.preventDefault()
+    }
+    row.addEventListener('touchmove', blockScroll, { passive: false })
+
+    const abort = () => {
+      window.clearTimeout(timer)
+      row.removeEventListener('pointermove', premove)
+      row.removeEventListener('pointerup', abort)
+      row.removeEventListener('pointercancel', abort)
+      if (!engaged) row.removeEventListener('touchmove', blockScroll)
+    }
+    const premove = (ev: PointerEvent) => {
+      lastY = ev.clientY
+      if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > LONG_PRESS_SLOP_PX) abort()
+    }
+    row.addEventListener('pointermove', premove)
+    row.addEventListener('pointerup', abort)
+    row.addEventListener('pointercancel', abort)
+
+    const timer = window.setTimeout(() => {
+      engaged = true
+      abort()
+      navigator.vibrate?.(12)
+      row.setPointerCapture(event.pointerId)
+      runQueueDragSession(item, row, row, lastY, () => {
+        row.removeEventListener('touchmove', blockScroll)
+      })
+    }, LONG_PRESS_MS)
   }
 
   const renderQueueItem = (item: QueueItem, index: () => number) => {
@@ -758,6 +818,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     return (
       <li
         data-queue-id={item.id}
+        onPointerDown={(event) => startQueueRowLongPress(item, event)}
         classList={{
           'queue-drag-source': draggingQueueId() === item.id,
           'drag-over': dragOverQueueId() === item.id,
