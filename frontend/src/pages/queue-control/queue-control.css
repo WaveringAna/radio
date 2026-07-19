@@ -989,9 +989,8 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  justify-content: center;
   gap: 1.25rem;
-  height: 100%;
-  justify-content: space-between;
 }
 
 .qc-transport-panel-new {
@@ -1041,29 +1040,10 @@
   transform: scale(0.97);
 }
 
-.qc-volume-panel {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.qc-volume-icon {
-  color: var(--muted);
-}
-
-.qc-volume-track {
-  width: 80px;
-  height: 4px;
-  background: var(--surface-soft);
-  border: 1px solid var(--hairline);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.qc-volume-fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 2px;
+/* Shuffle (and any future toggle) shows its on-state through aria-pressed,
+   so the state lives in markup semantics rather than an inline style. */
+.qc-control-btn[aria-pressed='true'] {
+  color: var(--accent);
 }
 
 .qc-end-broadcast-btn {
@@ -1558,10 +1538,33 @@
     max-width: 200px;
     height: auto;
     aspect-ratio: 1;
+    margin-inline: auto;
+  }
+
+  .qc-now-details {
+    align-items: center;
+    text-align: center;
+  }
+
+  .qc-now-title {
+    white-space: normal;
+    font-size: 1.6rem;
+  }
+
+  .qc-now-meta {
+    margin-bottom: 1rem;
+  }
+
+  .qc-now-progress-container {
+    max-width: none;
+  }
+
+  .qc-now-controls {
+    align-items: center;
   }
 
   .qc-transport-panel-new {
-    justify-content: flex-start;
+    justify-content: center;
     flex-wrap: wrap;
   }
 

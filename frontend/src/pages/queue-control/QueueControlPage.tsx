@@ -13,8 +13,6 @@ import {
   Trash2,
   UploadCloud,
   X,
-  SkipBack,
-  Volume2,
   Search,
   Clock,
   ChevronUp,
@@ -824,9 +822,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
 
             <div class="qc-now-controls">
               <div class="qc-transport-panel-new" aria-label="radio transport controls">
-                <button class="qc-control-btn" type="button" aria-label="previous" title="previous">
-                  <SkipBack size={20} />
-                </button>
                 <Show
                   when={snapshot()?.state.status === 'playing'}
                   fallback={
@@ -849,17 +844,9 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                   aria-pressed={shuffleOn()}
                   title={shuffleOn() ? 'shuffle: on (playing random songs)' : 'shuffle: off'}
                   onClick={() => void sendControl('shuffle')}
-                  style={shuffleOn() ? 'color: #34d399' : ''}
                 >
                   <Shuffle size={20} />
                 </button>
-              </div>
-
-              <div class="qc-volume-panel">
-                <Volume2 size={18} class="qc-volume-icon" />
-                <div class="qc-volume-track">
-                  <div class="qc-volume-fill" style="width: 70%"></div>
-                </div>
               </div>
 
               <button class="qc-end-broadcast-btn" type="button" onClick={() => void sendControl('stop')}>
