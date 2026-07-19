@@ -1013,6 +1013,37 @@ export default function RadioPage(props: RadioPageProps) {
   const queuePageSize = 6
   const upNextPaging = createPagedList(localQueue, queuePageSize)
 
+  // Live progress readout mirroring the queue page's banner. When actually
+  // listening, the audio element is the truth; otherwise derive the position
+  // from the snapshot state plus elapsed wall time.
+  const [clock, setClock] = createSignal(Date.now())
+  const [stateSyncedAt, setStateSyncedAt] = createSignal(Date.now())
+  {
+    const interval = window.setInterval(() => setClock(Date.now()), 1000)
+    onCleanup(() => window.clearInterval(interval))
+  }
+  createEffect(() => {
+    if (snapshot()) setStateSyncedAt(Date.now())
+  })
+  const liveDisplayPosition = () => {
+    void clock()
+    if (audioRef && isAudioPlaying()) return audioRef.currentTime
+    const state = snapshot()?.state
+    if (!state) return 0
+    if (state.status !== 'playing') return state.positionSeconds
+    return Math.max(0, state.positionSeconds + Math.floor((clock() - stateSyncedAt()) / 1000))
+  }
+  const displayProgressPercent = () => {
+    const duration = currentSong()?.durationSeconds
+    if (!duration || duration <= 0) return 0
+    return Math.min(100, Math.max(0, (liveDisplayPosition() / duration) * 100))
+  }
+  const formatClock = (seconds: number | null | undefined) => {
+    if (!seconds || seconds < 0) return '0:00'
+    const minutes = Math.floor(seconds / 60)
+    return `${minutes}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`
+  }
+
   // Deterministic rotation peek, so an empty queue can still say what's next.
   const [rotationInfo, { refetch: refetchRotationInfo }] = createResource(
     stationResourceKey,
@@ -1285,6 +1316,7 @@ export default function RadioPage(props: RadioPageProps) {
           </Index>
         </div>
         <section class="nowplaying-details" aria-label="now playing">
+          <p class="nowplaying-eyebrow">now playing</p>
           <div class="nowplaying-title-row">
             <h1 ref={setTitleHeadingEl} classList={{ marquee: shouldMarqueeTitle() }} title={currentSongTitle()}>
               <span class="marquee-track">
@@ -1309,6 +1341,24 @@ export default function RadioPage(props: RadioPageProps) {
             </Show>
           </div>
           <p class="subtitle nowplaying-artist-album" title={artistAlbumLine()}>{artistAlbumLine()}</p>
+          <Show when={currentSong()?.durationSeconds}>
+            <div class="nowplaying-progress">
+              <div
+                class="nowplaying-progress-track"
+                role="progressbar"
+                aria-label="song progress"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow={Math.round(displayProgressPercent())}
+              >
+                <span style={`width: ${displayProgressPercent()}%`} />
+              </div>
+              <div class="nowplaying-time-row">
+                <span>{formatClock(Math.min(liveDisplayPosition(), currentSong()?.durationSeconds ?? Infinity))}</span>
+                <span>{formatClock(currentSong()?.durationSeconds)}</span>
+              </div>
+            </div>
+          </Show>
           <div class="nowplaying-meta-row">
             <div class="live-viewer-counter compact-viewer-counter" aria-live="polite">
               <Eye size={16} />

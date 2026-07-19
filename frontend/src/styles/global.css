@@ -40,7 +40,8 @@ body {
   background: var(--bg);
   background-attachment: fixed;
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-family: var(--sans);
   --mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", "Courier New", monospace;
   -webkit-font-smoothing: antialiased;
 }
