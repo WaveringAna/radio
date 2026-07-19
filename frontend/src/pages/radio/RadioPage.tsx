@@ -1075,37 +1075,6 @@ export default function RadioPage(props: RadioPageProps) {
     queueMicrotask(() => void startListening())
   })
 
-  // Best-effort autoplay: as soon as the station snapshot shows something
-  // playing, try to join the stream. Browsers may block unmuted autoplay
-  // without a user gesture — in that case we leave hasStarted untouched so
-  // the listen button remains the entry point, exactly as before.
-  let autoplayAttempted = false
-  createEffect(() => {
-    if (autoplayAttempted || hasStarted()) return
-    if (!audioRef || !currentSong()) return
-    if (snapshot()?.state.status !== 'playing') return
-    autoplayAttempted = true
-    void (async () => {
-      if (!audioRef) return
-      if (!setElementVolume(audioRef, volume())) {
-        equalizer.setOutputVolume(volume())
-      }
-      const snap = snapshot()
-      if (snap?.state) {
-        await seekAudioTo(Math.max(0, snap.state.positionSeconds))
-      }
-      try {
-        await audioRef.play()
-      } catch {
-        return // autoplay blocked; wait for the tap
-      }
-      setHasStarted(true)
-      if (!isMobileDevice()) {
-        void equalizer.ensureGraph()
-      }
-    })()
-  })
-
   const advanceLocally = () => {
     const queue = localQueue()
     if (queue.length === 0) {
