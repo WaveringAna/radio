@@ -1044,7 +1044,15 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                                   </label>
                                   <button class="pill-button" type="submit">save</button>
                                   <button class="pill-button subtle" type="button" onClick={cancelSongEdit}>cancel</button>
-                                  <button class="pill-button subtle danger-button" type="button" onClick={() => void removeSong(song.id)}>delete</button>
+                                  <button
+                                    class="pill-button subtle danger-button"
+                                    type="button"
+                                    onClick={() => {
+                                      if (confirm(`Delete "${song.title}" from the library? This can't be undone.`)) {
+                                        void removeSong(song.id)
+                                      }
+                                    }}
+                                  >delete</button>
                                 </div>
                               </form>
                             </Show>
