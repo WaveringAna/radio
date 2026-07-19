@@ -227,15 +227,6 @@
   border-bottom: 1px solid var(--hairline);
 }
 
-.admin-inline-form input,
-.inline-file input[type='text'] {
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  padding: 0.72rem 0.8rem;
-  color: var(--text);
-  background: var(--surface);
-}
 
 .admin-card {
   align-self: start;
@@ -252,14 +243,6 @@
   border-bottom: 1px solid var(--hairline);
 }
 
-.album-builder input[type='text'],
-.album-builder > input {
-  min-width: 0;
-  border: 1px solid var(--line);
-  padding: 0.72rem 0.8rem;
-  color: var(--text);
-  background: var(--surface);
-}
 
 .album-file-picker {
   padding: 0;
@@ -869,18 +852,9 @@
 
 .chat-input {
   flex: 1;
-  min-width: 0;
-  padding: 0.4rem 0.65rem;
-  border: 1px solid var(--hairline);
+  border-color: var(--hairline);
   border-radius: 0.5rem;
   background: rgb(255 255 255 / 6%);
-  color: var(--text);
-  font-size: 0.9rem;
-}
-
-.chat-input:focus {
-  outline: none;
-  border-color: rgb(var(--accent-rgb) / 60%);
 }
 
 .chat-input:disabled {

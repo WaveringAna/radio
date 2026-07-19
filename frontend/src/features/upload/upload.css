@@ -42,11 +42,6 @@
 .metadata-prompt input,
 form input[type='text'] {
   width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  padding: 0.72rem 0.8rem;
-  color: var(--text);
-  background: var(--surface);
 }
 
 .inline-check {
@@ -104,20 +99,6 @@ form input[type='text'] {
 .upload-form > input {
   display: block;
   width: 100%;
-  padding: 0.72rem 1rem;
-  border: 0;
-  border-bottom: 1px solid var(--hairline);
-  color: var(--text);
-  background: transparent;
-}
-
-.upload-form > input::placeholder {
-  color: var(--muted);
-}
-
-.upload-form > input:focus {
-  outline: 0;
-  border-bottom-color: var(--accent);
 }
 
 .upload-form .inline-check {
@@ -159,29 +140,8 @@ form input[type='text'] {
   background: var(--surface-soft);
 }
 
-.song-filters input {
-  min-width: 0;
-  height: 2.2rem;
-  padding: 0 0.72rem;
-  border: 1px solid var(--line);
-  border-radius: 0.42rem;
-  color: var(--text);
-  background: var(--surface);
-  font-size: 0.92rem;
-  font-weight: 400;
-  transition: border-color 130ms ease, background-color 130ms ease, box-shadow 130ms ease;
-}
-
 .song-filters input::placeholder {
-  color: var(--muted);
   font-weight: 300;
-}
-
-.song-filters input:focus {
-  outline: 0;
-  border-color: var(--accent);
-  background: var(--surface-soft);
-  box-shadow: 0 0 0 1px var(--accent-line);
 }
 
 .song-filters input:hover {
