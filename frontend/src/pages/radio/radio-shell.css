@@ -911,6 +911,14 @@ h1.marquee .marquee-track {
   }
 }
 
+@media (max-width: 860px) {
+  /* The player copy (title, artist, controls under the art) keeps its roomier
+     inset; the section cards below it sit on the page gutter instead. */
+  .nowplaying-details {
+    padding-inline: 1rem;
+  }
+}
+
 @media (max-width: 520px) {
   /* Match the queue page's phone gutter so both pages share one edge. */
   .now-playing-card {
