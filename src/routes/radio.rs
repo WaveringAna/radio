@@ -27,6 +27,17 @@ pub(crate) async fn get_radio_state(
         .map_err(internal_api_error)
 }
 
+pub(crate) async fn get_rotation_info(
+    State(state): State<AppState>,
+) -> Result<Json<crate::radio::RotationInfo>, (StatusCode, Json<ErrorResponse>)> {
+    state
+        .radio
+        .rotation_info()
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
 pub(crate) async fn get_radio_seek(
     State(state): State<AppState>,
 ) -> Result<Json<RadioSeek>, (StatusCode, Json<ErrorResponse>)> {

@@ -977,6 +977,20 @@ pub(crate) async fn xrpc_albums_modify(
                 .merge_albums(request.album_id.as_ref(), target_album_id.as_ref())
                 .await
         }
+        AlbumsModifyAction::Other(action) if action.as_ref() == "setWeight" => {
+            let weight = request.weight.ok_or_else(|| {
+                xrpc_typed_error(
+                    StatusCode::BAD_REQUEST,
+                    AlbumsModifyError::InvalidRequest(xrpc_message(
+                        "weight is required for setWeight",
+                    )),
+                )
+            })?;
+            state
+                .radio
+                .set_album_weight(request.album_id.as_ref(), weight)
+                .await
+        }
         AlbumsModifyAction::Other(action) => {
             return Err(xrpc_typed_error(
                 StatusCode::BAD_REQUEST,

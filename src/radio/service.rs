@@ -688,6 +688,46 @@ impl RadioService {
     }
 
     /// Enables or disables an album loop.
+    pub(crate) async fn set_album_weight(
+        &self,
+        album_id: &str,
+        weight: i64,
+    ) -> anyhow::Result<Vec<RadioAlbum>> {
+        let weight = weight.clamp(1, 4);
+        sqlx::query("update radio_albums set rotation_weight = ? where id = ?")
+            .bind(weight)
+            .bind(album_id)
+            .execute(self.db.pool())
+            .await
+            .context("setting album rotation weight")?;
+        self.albums().await
+    }
+
+    /// Rotation metadata for the admin UI: per-album weights and the airlog.
+    pub(crate) async fn rotation_info(&self) -> anyhow::Result<crate::radio::RotationInfo> {
+        let weights = sqlx::query_as::<_, (String, i64)>(
+            "select id, rotation_weight from radio_albums",
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .context("loading rotation weights")?;
+        let recently_played = sqlx::query_as::<_, crate::radio::PlayHistoryItem>(
+            r#"
+            select song_id, title, artist, started_at
+            from play_history
+            order by started_at desc
+            limit 10
+            "#,
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .context("loading play history")?;
+        Ok(crate::radio::RotationInfo {
+            weights: weights.into_iter().collect(),
+            recently_played,
+        })
+    }
+
     pub(crate) async fn set_album_enabled(
         &self,
         album_id: &str,
@@ -1830,6 +1870,20 @@ async fn next_album_loop_track(db: &Database) -> anyhow::Result<Option<LoopTrack
     .await
     .context("loading album loop cursor")?;
 
+    // Loop order: every enabled album in position order, then the loose
+    // singles (songs in no album), then wrap back to the first album.
+    if cursor.0.as_deref() == Some(SINGLES_ALBUM_ID) {
+        if let Some(track) = next_single_track(db, Some(cursor.1)).await? {
+            return Ok(Some(track));
+        }
+        // Singles exhausted: wrap to the first enabled album, or back to the
+        // first single when no album is in rotation.
+        if let Some(track) = first_album_track(db).await? {
+            return Ok(Some(track));
+        }
+        return next_single_track(db, None).await;
+    }
+
     let next = if let Some(last_album_id) = cursor.0.as_deref() {
         sqlx::query_as::<_, LoopTrack>(
             r#"
@@ -1856,25 +1910,63 @@ async fn next_album_loop_track(db: &Database) -> anyhow::Result<Option<LoopTrack
         None
     };
 
-    match next {
-        Some(track) => Ok(Some(track)),
-        None => sqlx::query_as::<_, LoopTrack>(
-            r#"
-            select radio_albums.id as album_id,
-                radio_album_tracks.position as track_position,
-                radio_album_tracks.song_id as song_id
-            from radio_albums
-            join radio_album_tracks on radio_album_tracks.album_id = radio_albums.id
-            join songs on songs.id = radio_album_tracks.song_id
-            where radio_albums.is_enabled = 1
-            order by radio_albums.position asc, radio_album_tracks.position asc
-            limit 1
-            "#,
-        )
-        .fetch_optional(db.pool())
-        .await
-        .context("loading first album loop track"),
+    if let Some(track) = next {
+        return Ok(Some(track));
     }
+    // End of the albums (or no cursor yet): play the singles next, falling
+    // back to the first enabled album track when there are none.
+    if cursor.0.is_some() {
+        if let Some(track) = next_single_track(db, None).await? {
+            return Ok(Some(track));
+        }
+    }
+    if let Some(track) = first_album_track(db).await? {
+        return Ok(Some(track));
+    }
+    next_single_track(db, None).await
+}
+
+/// First track of the first enabled album, for wrapping the loop.
+async fn first_album_track(db: &Database) -> anyhow::Result<Option<LoopTrack>> {
+    sqlx::query_as::<_, LoopTrack>(
+        r#"
+        select radio_albums.id as album_id,
+            radio_album_tracks.position as track_position,
+            radio_album_tracks.song_id as song_id
+        from radio_albums
+        join radio_album_tracks on radio_album_tracks.album_id = radio_albums.id
+        join songs on songs.id = radio_album_tracks.song_id
+        where radio_albums.is_enabled = 1
+        order by radio_albums.position asc, radio_album_tracks.position asc
+        limit 1
+        "#,
+    )
+    .fetch_optional(db.pool())
+    .await
+    .context("loading first album loop track")
+}
+
+/// Next loose single after the given rowid cursor (or the first one). The
+/// cursor reuses the loop table's track_position column to store the rowid.
+async fn next_single_track(db: &Database, after_rowid: Option<i64>) -> anyhow::Result<Option<LoopTrack>> {
+    sqlx::query_as::<_, LoopTrack>(&format!(
+        r#"
+        select '{SINGLES_ALBUM_ID}' as album_id,
+            songs.rowid as track_position,
+            songs.id as song_id
+        from songs
+        where songs.rowid > ?
+          and not exists (
+            select 1 from radio_album_tracks where radio_album_tracks.song_id = songs.id
+          )
+        order by songs.rowid asc
+        limit 1
+        "#,
+    ))
+    .bind(after_rowid.unwrap_or(-1))
+    .fetch_optional(db.pool())
+    .await
+    .context("loading next single for rotation")
 }
 
 async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
@@ -1920,6 +2012,7 @@ async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
             .execute(db.pool())
             .await
             .context("advancing radio state")?;
+            record_play(db, &item.song_id).await;
             tracing::info!(
                 song_id = %item.song_id,
                 title = %item.title,
@@ -1968,6 +2061,7 @@ async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
                     .execute(db.pool())
                     .await
                     .context("advancing radio state from fallback")?;
+                    record_play(db, &song_id).await;
                     tracing::info!(song_id = %song_id, "now playing from fallback (shuffle/album loop)");
                 }
                 None => {
@@ -2027,25 +2121,117 @@ const SHUFFLE_ELIGIBLE: &str = r#"
     )
 "#;
 
+/// Pseudo-album id the loop cursor uses while stepping through songs that
+/// belong to no album. Singles are always part of rotation: they play after
+/// the enabled albums in loop mode and are always eligible for shuffle.
+const SINGLES_ALBUM_ID: &str = "__singles__";
+
+/// Seconds shuffle avoids repeating a song for (classic radio separation).
+const SHUFFLE_SEPARATION_SECS: i64 = 2 * 60 * 60;
+
+/// Records a song starting on air, for the airlog and shuffle separation.
+async fn record_play(db: &Database, song_id: &str) {
+    let result = sqlx::query(
+        r#"
+        insert into play_history (song_id, title, artist, started_at)
+        select id, title, artist, ? from songs where id = ?
+        "#,
+    )
+    .bind(now())
+    .bind(song_id)
+    .execute(db.pool())
+    .await;
+    if let Err(error) = result {
+        tracing::error!(?error, song_id, "failed to record play history");
+    }
+}
+
+/// Cheap xorshift; shuffle picks don't need cryptographic randomness.
+fn next_pseudo_random(seed: &mut u64) -> f64 {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 7;
+    *seed ^= *seed << 17;
+    ((*seed >> 11) as f64) / ((1u64 << 53) as f64)
+}
+
+fn random_seed() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x9e3779b97f4a7c15)
+        | 1
+}
+
+/// Picks one candidate index, weighted by each candidate's rotation weight.
+fn weighted_pick(candidates: &[(String, i64)], seed: &mut u64) -> Option<usize> {
+    let total: i64 = candidates.iter().map(|(_, w)| (*w).max(1)).sum();
+    if total <= 0 {
+        return None;
+    }
+    let mut roll = (next_pseudo_random(seed) * total as f64) as i64;
+    for (index, (_, weight)) in candidates.iter().enumerate() {
+        roll -= (*weight).max(1);
+        if roll < 0 {
+            return Some(index);
+        }
+    }
+    Some(candidates.len() - 1)
+}
+
+/// Shuffle candidates: eligible songs with their album rotation weight
+/// (singles weigh normal), excluding the current song, anything queued, and —
+/// unless relaxed — songs aired within the separation window.
+async fn shuffle_candidates(
+    db: &Database,
+    respect_history: bool,
+    exclude_queued: bool,
+) -> anyhow::Result<Vec<(String, i64)>> {
+    let history_clause = if respect_history {
+        "and songs.id not in (select song_id from play_history where started_at > ?)"
+    } else {
+        "and ? >= 0"
+    };
+    let queued_clause = if exclude_queued {
+        "and songs.id not in (select song_id from radio_queue)"
+    } else {
+        ""
+    };
+    let query = format!(
+        r#"
+        select songs.id, coalesce((
+            select max(radio_albums.rotation_weight)
+            from radio_album_tracks
+            join radio_albums on radio_albums.id = radio_album_tracks.album_id
+            where radio_album_tracks.song_id = songs.id
+              and radio_albums.is_enabled = 1
+        ), 2) as weight
+        from songs
+        where songs.id != coalesce((select current_song_id from radio_state where id = 1), '')
+          and {SHUFFLE_ELIGIBLE}
+          {history_clause}
+          {queued_clause}
+        "#,
+    );
+    sqlx::query_as::<_, (String, i64)>(&query)
+        .bind(now() - SHUFFLE_SEPARATION_SECS)
+        .fetch_all(db.pool())
+        .await
+        .context("loading shuffle candidates")
+}
+
 /// Picks a random song for shuffle mode, avoiding an immediate repeat of the
 /// current song when the library has more than one track.
 async fn random_shuffle_song(db: &Database) -> anyhow::Result<Option<String>> {
-    let avoiding_current = sqlx::query_scalar::<_, String>(&format!(
-        r#"
-        select id from songs
-        where id != coalesce((select current_song_id from radio_state where id = 1), '')
-          and {SHUFFLE_ELIGIBLE}
-        order by random()
-        limit 1
-        "#,
-    ))
-    .fetch_optional(db.pool())
-    .await
-    .context("selecting random shuffle song")?;
-    if avoiding_current.is_some() {
-        return Ok(avoiding_current);
+    let mut seed = random_seed();
+    // Prefer songs outside the separation window; relax when the library is
+    // too small to honor it, and finally allow replaying the current song.
+    let mut candidates = shuffle_candidates(db, true, false).await?;
+    if candidates.is_empty() {
+        candidates = shuffle_candidates(db, false, false).await?;
     }
-    // Single eligible song: replaying the only track is the best we can do.
+    if let Some(index) = weighted_pick(&candidates, &mut seed) {
+        return Ok(Some(candidates.swap_remove(index).0));
+    }
     sqlx::query_scalar::<_, String>(&format!(
         "select id from songs where {SHUFFLE_ELIGIBLE} order by random() limit 1",
     ))
@@ -2067,20 +2253,18 @@ async fn refill_shuffle_queue(db: &Database, queued_by_did: &str) -> anyhow::Res
         return Ok(());
     }
 
-    let candidates = sqlx::query_scalar::<_, String>(&format!(
-        r#"
-        select id from songs
-        where id not in (select song_id from radio_queue)
-          and id != coalesce((select current_song_id from radio_state where id = 1), '')
-          and {SHUFFLE_ELIGIBLE}
-        order by random()
-        limit ?
-        "#,
-    ))
-    .bind(need)
-    .fetch_all(db.pool())
-    .await
-    .context("selecting shuffle candidates")?;
+    let mut seed = random_seed();
+    let mut pool = shuffle_candidates(db, true, true).await?;
+    if (pool.len() as i64) < need {
+        pool = shuffle_candidates(db, false, true).await?;
+    }
+    let mut candidates = Vec::new();
+    while (candidates.len() as i64) < need {
+        match weighted_pick(&pool, &mut seed) {
+            Some(index) => candidates.push(pool.swap_remove(index).0),
+            None => break,
+        }
+    }
 
     let mut position = sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_queue")
         .fetch_one(db.pool())

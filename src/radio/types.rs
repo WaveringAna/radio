@@ -106,6 +106,24 @@ pub(crate) struct RadioSnapshot {
     pub(crate) queue: Vec<QueueItem>,
 }
 
+/// One aired song in the station's play history.
+#[derive(Clone, Debug, Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PlayHistoryItem {
+    pub(crate) song_id: String,
+    pub(crate) title: String,
+    pub(crate) artist: String,
+    pub(crate) started_at: i64,
+}
+
+/// Rotation metadata for the admin UI: album weights plus the recent airlog.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RotationInfo {
+    pub(crate) weights: std::collections::BTreeMap<String, i64>,
+    pub(crate) recently_played: Vec<PlayHistoryItem>,
+}
+
 /// Live seek position returned by the backend.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

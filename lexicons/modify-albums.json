@@ -9,11 +9,19 @@
         "encoding": "application/json",
         "schema": {
           "type": "object",
-          "required": ["action", "albumId"],
+          "required": [
+            "action",
+            "albumId"
+          ],
           "properties": {
             "action": {
               "type": "string",
-              "knownValues": ["delete", "setEnabled", "merge"]
+              "knownValues": [
+                "delete",
+                "setEnabled",
+                "merge",
+                "setWeight"
+              ]
             },
             "albumId": {
               "type": "string"
@@ -23,6 +31,12 @@
             },
             "enabled": {
               "type": "boolean"
+            },
+            "weight": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4,
+              "description": "Rotation weight for setWeight: 1 light, 2 normal, 4 heavy."
             }
           }
         }
@@ -31,7 +45,9 @@
         "encoding": "application/json",
         "schema": {
           "type": "object",
-          "required": ["albums"],
+          "required": [
+            "albums"
+          ],
           "properties": {
             "albums": {
               "type": "array",
@@ -44,9 +60,15 @@
         }
       },
       "errors": [
-        { "name": "AuthenticationRequired" },
-        { "name": "AdminRequired" },
-        { "name": "InvalidRequest" }
+        {
+          "name": "AuthenticationRequired"
+        },
+        {
+          "name": "AdminRequired"
+        },
+        {
+          "name": "InvalidRequest"
+        }
       ]
     }
   }
