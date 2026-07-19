@@ -1489,16 +1489,16 @@ export default function RadioPage(props: RadioPageProps) {
           {(url) => <audio src={url()} preload="auto" crossOrigin="anonymous" aria-hidden="true" style="display:none" />}
         </Show>
         {onMobile && tuneInCard()}
-        {onMobile && chatCard()}
         {onMobile && upNextCard()}
+        {onMobile && chatCard()}
         {onMobile && equalizerCard()}
       </div>
 
       <Show when={!onMobile}>
         <aside class="radio-panel">
           {tuneInCard()}
-          {chatCard()}
           {upNextCard()}
+          {chatCard()}
           {equalizerCard()}
         </aside>
       </Show>
