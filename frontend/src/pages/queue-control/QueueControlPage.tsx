@@ -1085,7 +1085,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
               {/* Albums List */}
               <Show when={searchMode() === 'albums'}>
                 <Show when={!albums.loading} fallback={<p class="list-empty">loading albums...</p>}>
-                  <ul class="song-list album-loop-list">
+                  <ul class="qc-albums-list">
                     <For each={albumsPaging.paged()} fallback={<li class="list-empty">no albums match</li>}>
                       {(album) => {
                         const isExpanded = () => expandedAlbumId() === album.id

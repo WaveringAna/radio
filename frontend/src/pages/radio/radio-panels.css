@@ -298,9 +298,6 @@
   padding: 0.55rem;
 }
 
-.album-loop-list li {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
 
 .cover-thumb {
   display: inline-grid;

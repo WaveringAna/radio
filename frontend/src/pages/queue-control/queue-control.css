@@ -1385,6 +1385,14 @@
 }
 
 /* Album results share the song-row anatomy: thumb, info, add, disclosure. */
+.qc-albums-list {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 0 0 1.5rem;
+  padding: 0;
+}
+
 .qc-album-item {
   border-bottom: 1px solid var(--hairline);
 }
