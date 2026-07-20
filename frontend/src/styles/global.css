@@ -172,7 +172,9 @@ main > section {
   gap: 0.35rem;
   width: fit-content;
   min-height: 2.65rem;
-  margin: 1rem auto 1.25rem;
+  /* Installed to the home screen the viewport reaches under the status bar
+     (viewport-fit=cover); the inset is 0 in a normal browser tab. */
+  margin: calc(1rem + env(safe-area-inset-top, 0px)) auto 1.25rem;
   padding: 0;
   border: 0;
   background: transparent;
