@@ -716,24 +716,14 @@ export default function RadioPage(props: RadioPageProps) {
     setShouldMarqueeTitle(false)
     const measure = () => {
       const overflowing = text.scrollWidth > heading.clientWidth + 1
+      // Classic <marquee>: enter from the right edge, travel until the tail
+      // clears the left edge, repeat. Constant px/s keeps long titles from
+      // whipping past. Values land before the marquee class flips on, so the
+      // running animation is never retargeted.
+      heading.style.setProperty('--marquee-start', `${heading.clientWidth}px`)
+      const distance = heading.clientWidth + text.scrollWidth
+      heading.style.setProperty('--marquee-duration', `${Math.min(45, Math.max(8, distance / 60))}s`)
       setShouldMarqueeTitle(overflowing)
-      if (!overflowing) return
-      // Seamless loop: once the duplicate copy has mounted, measure the real
-      // rendered distance between the two copies and scroll by exactly that.
-      // Computing it (text width + assumed gap) breaks whenever rem doesn't
-      // resolve to 16px, e.g. with mobile text-size settings. The rect delta
-      // is transform-invariant, so measuring mid-animation is safe.
-      requestAnimationFrame(() => {
-        const track = text.parentElement
-        if (!track || track.children.length < 2) return
-        const first = track.children[0].getBoundingClientRect()
-        const second = track.children[1].getBoundingClientRect()
-        const shift = second.left - first.left
-        if (shift > 0) {
-          heading.style.setProperty('--marquee-shift', `${shift}px`)
-          heading.style.setProperty('--marquee-duration', `${Math.min(40, Math.max(9, shift / 55))}s`)
-        }
-      })
     }
     const raf = requestAnimationFrame(measure)
     const observer = new ResizeObserver(measure)
@@ -1374,9 +1364,6 @@ export default function RadioPage(props: RadioPageProps) {
             <h1 ref={setTitleHeadingEl} classList={{ marquee: shouldMarqueeTitle() }} title={currentSongTitle()}>
               <span class="marquee-track">
                 <span ref={setTitleTextEl}>{currentSongTitle()}</span>
-                <Show when={shouldMarqueeTitle()}>
-                  <span aria-hidden="true">{currentSongTitle()}</span>
-                </Show>
               </span>
             </h1>
             <Show when={currentSong() && snapshot()?.state.status === 'playing'}>

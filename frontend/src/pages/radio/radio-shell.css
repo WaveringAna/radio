@@ -356,26 +356,43 @@
 .marquee-track {
   display: inline-flex;
   width: max-content;
-  /* Separation between the two copies; the shift is measured from the
-     rendered layout, so this can change freely. */
-  gap: 4rem;
 }
 
 h1.marquee .marquee-track {
-  will-change: transform;
   animation: title-marquee var(--marquee-duration, 14s) linear infinite;
+}
+
+h1.marquee {
+  /* Masking makes Safari composite the clip box itself, which pins the
+     animated track inside it; the edge fade also reads softer than a hard
+     cut against the card. */
+  -webkit-mask-image: linear-gradient(to right, transparent, black 1.25rem, black calc(100% - 1.25rem), transparent);
+  mask-image: linear-gradient(to right, transparent, black 1.25rem, black calc(100% - 1.25rem), transparent);
+}
+
+/* The phone styles ellipsize the heading, but the ellipsized line is laid out
+   from the untransformed track — iOS paints that static copy beneath the
+   animated one, doubling the title. Scoped above the mobile rule's
+   specificity so it wins inside the media query too. */
+.now-playing-card h1.marquee {
+  text-overflow: clip;
 }
 
 .marquee-track span {
   flex: 0 0 auto;
 }
 
+/* Classic <marquee>: slide in from the container's right edge (px start set
+   from the measured heading width) and travel until the text's own tail
+   (-100% of the track) clears the left edge. Values are fixed before the
+   animation starts — never retargeted mid-flight, which is what iOS Safari
+   answered with stale offset copies of the text. */
 @keyframes title-marquee {
   from {
-    transform: translateX(0);
+    transform: translate3d(var(--marquee-start, 100%), 0, 0);
   }
   to {
-    transform: translateX(calc(-1 * var(--marquee-shift, 50%)));
+    transform: translate3d(-100%, 0, 0);
   }
 }
 
@@ -453,6 +470,16 @@ h1.marquee .marquee-track {
   .station-id-card,
   .marquee-track {
     animation: none;
+  }
+
+  /* Static presentation: no edge fade, back to a plain ellipsized title. */
+  h1.marquee {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .now-playing-card h1.marquee {
+    text-overflow: ellipsis;
   }
 
   .art-crt-scanload {
