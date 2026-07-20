@@ -4,6 +4,10 @@ interface SearchableDropdownProps {
   options: string[]
   placeholder: string
   onSelect: (value: string) => void
+  /** Current selection, shown in the input while the menu is closed. */
+  value?: string
+  /** Optional per-option annotation (e.g. song counts), shown right-aligned. */
+  counts?: Record<string, number>
 }
 
 export function SearchableDropdown(props: SearchableDropdownProps) {
@@ -91,7 +95,7 @@ export function SearchableDropdown(props: SearchableDropdownProps) {
           ref={inputRef}
           type="text"
           placeholder={props.placeholder}
-          value={isOpen() ? search() : ''}
+          value={isOpen() ? search() : (props.value ?? '')}
           onInput={(e) => {
             setSearch(e.currentTarget.value)
             setIsOpen(true)
@@ -113,7 +117,10 @@ export function SearchableDropdown(props: SearchableDropdownProps) {
                 class="searchable-dropdown-item"
                 classList={{ active: idx() === activeIndex() }}
               >
-                {option}
+                <span class="searchable-dropdown-item-label">{option}</span>
+                <Show when={props.counts?.[option] !== undefined}>
+                  <span class="searchable-dropdown-item-count">{props.counts?.[option]}</span>
+                </Show>
               </li>
             )}
           </For>
