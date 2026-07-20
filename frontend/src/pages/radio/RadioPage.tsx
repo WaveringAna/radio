@@ -823,16 +823,19 @@ export default function RadioPage(props: RadioPageProps) {
     stationListKey(station.url) === stationListKey(selectedStation().url)
   const stationHost = (station: TuneInStation) => labelFromStationUrl(station.url)
   const stationSubtitle = (station: TuneInStation) => {
-    if (station.local) return 'local preview'
-
     const name = station.name.trim()
     const host = stationHost(station)
-    if (name && name.toLowerCase() !== host.toLowerCase() && name.toLowerCase() !== 'radio') {
+    if (
+      name &&
+      name.toLowerCase() !== host.toLowerCase() &&
+      name.toLowerCase() !== 'radio' &&
+      name.toLowerCase() !== 'this radio'
+    ) {
       return name
     }
 
     const description = station.description?.trim()
-    return description || 'public station'
+    return description || (station.local ? 'local preview' : 'public station')
   }
   const stationPresetName = (station: TuneInStation) => {
     const name = station.name.trim()

@@ -143,7 +143,19 @@ export function tuneInStationsFrom(syndicatedStations: SyndicatedStation[] = [])
     const url = normalizeStationUrl(station.url)
     if (!url) continue
     const key = stationListKey(url)
-    if (key === stationListKey(local.url)) continue
+    if (key === stationListKey(local.url)) {
+      // Keep the local entry (and its api base) but adopt the announced
+      // station identity so this radio is labeled like every other station.
+      stations.set(key, {
+        ...local,
+        did: station.did,
+        name: station.name || local.name,
+        description: station.description,
+        updatedAt: station.updatedAt,
+        indexedAt: station.indexedAt,
+      })
+      continue
+    }
     stations.set(key, {
       did: station.did,
       url,
