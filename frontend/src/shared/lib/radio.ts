@@ -420,13 +420,18 @@ export interface RotationInfo {
   upNext?: RotationUpNext | null
 }
 
-export async function fetchRotationInfo(target?: RadioTarget): Promise<RotationInfo> {
+export async function fetchRotationInfo(target?: RadioTarget): Promise<RotationInfo | null> {
   const base = target?.baseUrl || API_BASE
-  const response = await fetch(radioApiUrl('/api/radio/rotation-info', base), { cache: 'no-store' })
-  if (!response.ok) {
-    throw new Error('failed to load rotation info')
+  // This endpoint is ours only — upstream sister-radio stations 404 it. The
+  // rotation peek is decorative, so unavailable means null, never a throw: a
+  // rejected resource here takes the whole page's reactive graph down.
+  try {
+    const response = await fetch(radioApiUrl('/api/radio/rotation-info', base), { cache: 'no-store' })
+    if (!response.ok) return null
+    return await response.json() as RotationInfo
+  } catch {
+    return null
   }
-  return await response.json() as RotationInfo
 }
 
 /**
