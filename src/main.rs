@@ -158,9 +158,10 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    match radio.auto_sync_albums().await {
-        Ok(()) => tracing::info!("auto-synced album loops on boot"),
-        Err(error) => tracing::warn!(%error, "failed to auto-sync album loops on boot"),
+    match radio.cleanup_duplicate_songs_on_boot().await {
+        Ok(0) => {}
+        Ok(removed) => tracing::warn!(removed, "removed duplicate songs on boot"),
+        Err(error) => tracing::warn!(%error, "failed to clean up duplicate songs on boot"),
     }
 
     // Cover and genre backfills hit online metadata services per missing song,

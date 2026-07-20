@@ -8,12 +8,12 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
+use crate::pet_nkp::radio::RadioSnapshot;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Serialize, Deserialize};
-use crate::pet_nkp::radio::RadioSnapshot;
+use serde::{Deserialize, Serialize};
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic, Default)]
@@ -24,7 +24,6 @@ pub struct Control<'a> {
     #[serde(borrow)]
     pub intent: ControlIntent<'a>,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ControlAction<'a> {
@@ -129,7 +128,6 @@ impl jacquard_common::IntoStatic for ControlAction<'_> {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ControlIntent<'a> {
     ExplicitAdminAction,
@@ -213,7 +211,6 @@ impl jacquard_common::IntoStatic for ControlIntent<'_> {
     }
 }
 
-
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
 #[serde(rename_all = "camelCase")]
@@ -221,7 +218,6 @@ pub struct ControlOutput<'a> {
     #[serde(borrow)]
     pub snapshot: RadioSnapshot<'a>,
 }
-
 
 #[open_union]
 #[derive(
@@ -233,9 +229,8 @@ pub struct ControlOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic
+    IntoStatic,
 )]
-
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum ControlError<'a> {
@@ -287,9 +282,8 @@ impl jacquard_common::xrpc::XrpcResp for ControlResponse {
 
 impl<'a> jacquard_common::xrpc::XrpcRequest for Control<'a> {
     const NSID: &'static str = "pet.nkp.radio.control";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Response = ControlResponse;
 }
 
@@ -297,9 +291,8 @@ impl<'a> jacquard_common::xrpc::XrpcRequest for Control<'a> {
 pub struct ControlRequest;
 impl jacquard_common::xrpc::XrpcEndpoint for ControlRequest {
     const PATH: &'static str = "/xrpc/pet.nkp.radio.control";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Request<'de> = Control<'de>;
     type Response = ControlResponse;
 }

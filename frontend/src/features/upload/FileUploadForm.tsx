@@ -93,7 +93,7 @@ function hasRequiredMetadata(metadata: ExtractedAudioMetadata | null): boolean {
 }
 
 /**
- * Renders the file upload flow for loose songs or album-loop creation.
+ * Renders the file upload flow for loose songs or a batch of album tracks.
  * @param props Upload completion and error callbacks.
  * @returns The file upload form view.
  */
@@ -155,7 +155,6 @@ export function FileUploadForm(props: FileUploadFormProps) {
       const uploadedSongIds: string[] = []
       const albumName = albumTitle().trim()
       const albumArtistFallback = albumArtist().trim()
-      let albumLoopTitle = albumName
       const playlistFiles = selectedFiles.filter(isPlaylistFile)
       if (playlistFiles.length > 1) {
         throw new Error('upload one playlist at a time.')
@@ -203,9 +202,6 @@ export function FileUploadForm(props: FileUploadFormProps) {
         if (uploadKind() === 'album' && !resolvedAlbum) {
           throw new Error('album uploads need an album title when files do not have album tags.')
         }
-        if (uploadKind() === 'album' && !albumLoopTitle) {
-          albumLoopTitle = resolvedAlbum ?? ''
-        }
 
         const song = await uploadSong({
           file: selectedFile,
@@ -243,7 +239,7 @@ export function FileUploadForm(props: FileUploadFormProps) {
           songs
         </button>
         <button class="pill-button" classList={{ subtle: uploadKind() !== 'album' }} type="button" role="tab" aria-selected={uploadKind() === 'album'} onClick={() => setUploadKind('album')}>
-          album loop
+          album
         </button>
       </div>
 
@@ -299,7 +295,7 @@ export function FileUploadForm(props: FileUploadFormProps) {
 
       <Show when={needsAlbumFallbacks()}>
         <div class="metadata-prompt album-upload-flow">
-          <p class="muted">album mode uploads tracks, applies fallbacks when tags are missing, then creates the album loop.</p>
+          <p class="muted">album mode uploads tracks and applies fallbacks when tags are missing, so they're grouped as one album.</p>
           <input placeholder="album title fallback" value={albumTitle()} onInput={(event) => setAlbumTitle(event.currentTarget.value)} />
           <input placeholder="artist fallback" value={albumArtist()} onInput={(event) => setAlbumArtist(event.currentTarget.value)} />
         </div>

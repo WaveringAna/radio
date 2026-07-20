@@ -207,15 +207,6 @@ export async function xrpcDeleteAlbum(albumId: string, target?: RadioTarget): Pr
   return data.albums.map(normalizeAlbum)
 }
 
-export async function xrpcSetAlbumEnabled(albumId: string, enabled: boolean, target?: RadioTarget): Promise<RadioAlbum[]> {
-  const data = await radioPost<{ albums: unknown[] }>('pet.nkp.radio.albums.modify', {
-    action: 'setEnabled',
-    albumId,
-    enabled,
-  }, { target })
-  return data.albums.map(normalizeAlbum)
-}
-
 export async function xrpcMergeAlbums(albumId: string, targetAlbumId: string, target?: RadioTarget): Promise<RadioAlbum[]> {
   const data = await radioPost<{ albums: unknown[] }>('pet.nkp.radio.albums.modify', {
     action: 'merge',
@@ -832,8 +823,6 @@ function normalizeAlbum(value: unknown): RadioAlbum {
   return {
     id: stringValue(data.id),
     title: stringValue(data.title),
-    position: numberValue(data.position),
-    isEnabled: Boolean(data.isEnabled),
     tracks: Array.isArray(data.tracks) ? data.tracks.map(normalizeSong) : [],
   }
 }

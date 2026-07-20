@@ -8,12 +8,12 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
+use crate::pet_nkp::radio::RadioSnapshot;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Serialize, Deserialize};
-use crate::pet_nkp::radio::RadioSnapshot;
+use serde::{Deserialize, Serialize};
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic, Default)]
@@ -136,7 +136,6 @@ impl jacquard_common::IntoStatic for ModifyAction<'_> {
     }
 }
 
-
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
 #[serde(rename_all = "camelCase")]
@@ -144,7 +143,6 @@ pub struct ModifyOutput<'a> {
     #[serde(borrow)]
     pub snapshot: RadioSnapshot<'a>,
 }
-
 
 #[open_union]
 #[derive(
@@ -156,9 +154,8 @@ pub struct ModifyOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic
+    IntoStatic,
 )]
-
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum ModifyError<'a> {
@@ -228,9 +225,8 @@ impl jacquard_common::xrpc::XrpcResp for ModifyResponse {
 
 impl<'a> jacquard_common::xrpc::XrpcRequest for Modify<'a> {
     const NSID: &'static str = "pet.nkp.radio.queue.modify";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Response = ModifyResponse;
 }
 
@@ -238,9 +234,8 @@ impl<'a> jacquard_common::xrpc::XrpcRequest for Modify<'a> {
 pub struct ModifyRequest;
 impl jacquard_common::xrpc::XrpcEndpoint for ModifyRequest {
     const PATH: &'static str = "/xrpc/pet.nkp.radio.queue.modify";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Request<'de> = Modify<'de>;
     type Response = ModifyResponse;
 }

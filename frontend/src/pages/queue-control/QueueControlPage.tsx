@@ -35,7 +35,6 @@ import {
   fetchSyndicatedStations,
   fetchAlbums,
   deleteAlbum,
-  setAlbumEnabled,
   mergeAlbums,
   fetchRadioSnapshot,
   fetchSongs,
@@ -347,6 +346,22 @@ export default function QueueControlPage(props: QueueControlPageProps) {
   })
 
   const queuePaging = createPagedList(() => snapshot()?.queue ?? [], pageSize)
+
+  // When the real queue is empty, the backend autoqueues a random song each
+  // time the current track ends. This is a display-only preview of a few
+  // candidates for that — not a commitment to play these specific songs next.
+  const autoplayPreview = createMemo(() => {
+    if ((snapshot()?.queue ?? []).length > 0) return []
+    const currentId = snapshot()?.currentSong?.id
+    const pool = (songs() ?? []).filter((song) => song.id !== currentId)
+    const shuffled = [...pool]
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+    }
+    return shuffled.slice(0, 3)
+  })
+
   const songsPaging = createPagedList(filteredSongs, pageSize)
   const albumsPaging = createPagedList(filteredAlbums, pageSize)
   const playlistsPaging = createPagedList(() => playlists() ?? [], pageSize)
@@ -440,18 +455,8 @@ export default function QueueControlPage(props: QueueControlPageProps) {
     }
   }
 
-  const handleSetAlbumEnabled = async (albumId: string, enabled: boolean) => {
-    try {
-      setPageError(null)
-      await setAlbumEnabled(albumId, enabled, selectedRadioTarget())
-      void refetchAlbums()
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'failed to toggle album looping.')
-    }
-  }
-
   const handleDeleteAlbum = async (albumId: string) => {
-    if (!confirm('Are you sure you want to delete this album loop? The associated songs will not be deleted, but they will no longer be grouped as an album loop.')) {
+    if (!confirm('Ungroup this album? The associated songs will not be deleted, but they will no longer be grouped together.')) {
       return
     }
     try {
@@ -460,7 +465,7 @@ export default function QueueControlPage(props: QueueControlPageProps) {
       void refetchAlbums()
       void refetchSongs()
     } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'failed to delete album loop.')
+      setPageError(error instanceof Error ? error.message : 'failed to ungroup album.')
     }
   }
 
@@ -1088,9 +1093,6 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                               >
                                 <span style="font-weight: bold; display: flex; align-items: center; gap: 0.5rem; color: var(--text);">
                                   {album.title}
-                                  <Show when={album.isEnabled}>
-                                    <span style="font-size: 0.7rem; padding: 0.1rem 0.3rem; border-radius: 4px; background: rgba(0,200,0,0.15); color: #00cc00; font-weight: normal;">looping</span>
-                                  </Show>
                                   <Show when={duplicate()}>
                                     <span style="font-size: 0.7rem; padding: 0.1rem 0.3rem; border-radius: 4px; background: rgba(255,165,0,0.15); color: #ffa500; font-weight: normal;">duplicate</span>
                                   </Show>
@@ -1119,21 +1121,13 @@ export default function QueueControlPage(props: QueueControlPageProps) {
                               <div class="album-details" style="display: flex; flex-direction: column; gap: 0.75rem; border-top: 1px solid var(--hairline); padding-top: 0.75rem; margin-top: 0.25rem;">
                                 <div class="album-actions-row" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem;">
                                   <div style="display: flex; align-items: center; gap: 0.75rem;">
-                                    <label class="inline-check" style="margin: 0; display: flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; cursor: pointer; color: var(--text);">
-                                      <input
-                                        type="checkbox"
-                                        checked={album.isEnabled}
-                                        onChange={(e) => void handleSetAlbumEnabled(album.id, e.currentTarget.checked)}
-                                      />
-                                      loop this album
-                                    </label>
                                     <button
                                       class="pill-button subtle"
                                       style="color: var(--error); border-color: rgba(255, 0, 0, 0.2); padding: 0.25rem 0.5rem; font-size: 0.85rem;"
                                       type="button"
                                       onClick={() => void handleDeleteAlbum(album.id)}
                                     >
-                                      clear album loop
+                                      ungroup album
                                     </button>
                                   </div>
 
@@ -1297,13 +1291,36 @@ export default function QueueControlPage(props: QueueControlPageProps) {
               </span>
 
               <Show when={!snapshot.loading} fallback={<p class="list-empty">loading queue...</p>}>
-                <ul class="qc-queue-list">
-                  <For each={queuePaging.paged()} fallback={<li class="list-empty">queue is empty</li>}>
-                    {renderQueueItem}
-                  </For>
-                </ul>
-                <Show when={queuePaging.pageCount() > 1}>
-                  <PaginationRow page={queuePaging.page()} pageCount={queuePaging.pageCount()} onPageChange={queuePaging.setPage} compact />
+                <Show
+                  when={queuePaging.paged().length > 0}
+                  fallback={
+                    <ul class="qc-queue-list">
+                      <For each={autoplayPreview()} fallback={<li class="list-empty">queue is empty</li>}>
+                        {(song, index) => (
+                          <li class="qc-queue-item qc-queue-item-autoplay">
+                            <div class="qc-queue-index">{index() + 1}</div>
+                            <div class="qc-queue-copy">
+                              <span class="qc-queue-title">{song.title}</span>
+                              <span class="qc-queue-artist">{song.artist}</span>
+                            </div>
+                          </li>
+                        )}
+                      </For>
+                      <Show when={autoplayPreview().length > 0}>
+                        <li class="qc-queue-item qc-queue-autoplay-note list-empty">
+                          <div class="qc-queue-index">4</div>
+                          <span>autoplay — random songs shuffle in from here</span>
+                        </li>
+                      </Show>
+                    </ul>
+                  }
+                >
+                  <ul class="qc-queue-list">
+                    <For each={queuePaging.paged()}>{renderQueueItem}</For>
+                  </ul>
+                  <Show when={queuePaging.pageCount() > 1}>
+                    <PaginationRow page={queuePaging.page()} pageCount={queuePaging.pageCount()} onPageChange={queuePaging.setPage} compact />
+                  </Show>
                 </Show>
               </Show>
 

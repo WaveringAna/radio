@@ -4,7 +4,7 @@
   "defs": {
     "main": {
       "type": "query",
-      "description": "List admin-defined album loops.",
+      "description": "List albums derived from song metadata, grouped by normalized album title.",
       "output": {
         "encoding": "application/json",
         "schema": {

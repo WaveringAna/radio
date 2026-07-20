@@ -21,7 +21,6 @@ import {
   xrpcQueueList,
   xrpcSearchSubsonic,
   xrpcSendChatMessage,
-  xrpcSetAlbumEnabled,
   xrpcMergeAlbums,
   xrpcSongsList,
   xrpcUpdateSongMetadata,
@@ -53,8 +52,6 @@ export interface Song {
 export interface RadioAlbum {
   id: string
   title: string
-  position: number
-  isEnabled: boolean
   tracks: Song[]
 }
 
@@ -371,9 +368,9 @@ export async function fetchAlbums(target?: RadioTarget): Promise<RadioAlbum[]> {
 
 
 /**
- * Deletes an album loop.
- * @param albumId Album loop id.
- * @returns Remaining album loops.
+ * Ungroups an album, clearing the album tag from its songs.
+ * @param albumId Album group id.
+ * @returns Remaining albums.
  * @throws Error When the backend request fails.
  */
 export async function deleteAlbum(albumId: string, target?: RadioTarget): Promise<RadioAlbum[]> {
@@ -381,21 +378,10 @@ export async function deleteAlbum(albumId: string, target?: RadioTarget): Promis
 }
 
 /**
- * Enables or disables an album loop.
- * @param albumId Album loop id.
- * @param enabled Whether the album should loop.
- * @returns Updated album loops.
- * @throws Error When the backend request fails.
- */
-export async function setAlbumEnabled(albumId: string, enabled: boolean, target?: RadioTarget): Promise<RadioAlbum[]> {
-  return xrpcSetAlbumEnabled(albumId, enabled, target)
-}
-
-/**
  * Merges a duplicate source album into a target album.
  * @param albumId Source album id to merge and delete.
  * @param targetAlbumId Target/destination album id.
- * @returns Updated album loops.
+ * @returns Updated albums.
  * @throws Error When the backend request fails.
  */
 export async function mergeAlbums(albumId: string, targetAlbumId: string, target?: RadioTarget): Promise<RadioAlbum[]> {

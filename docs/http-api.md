@@ -117,12 +117,13 @@ interface RadioSnapshot {
 
 ### `RadioAlbum`
 
+Computed by grouping songs with matching (normalized) album tags; there is no
+persisted album entity.
+
 ```ts
 interface RadioAlbum {
   id: string
   title: string
-  position: number
-  isEnabled: boolean
   tracks: Song[]
 }
 ```
@@ -450,68 +451,6 @@ Response headers include:
 - `Content-Length`
 
 Error: `404 { "error": "cover_not_found" }`.
-
-## Album Loops
-
-Album loops are admin-only fallback playback lists.
-
-### `GET /api/radio/albums`
-
-Returns `RadioAlbum[]`.
-
-### `POST /api/radio/albums`
-
-Create an album loop.
-
-Request:
-
-```json
-{ "title": "Album Loop", "songIds": ["song-1", "song-2"] }
-```
-
-Response: created `RadioAlbum`.
-
-### `POST /api/radio/albums/from-metadata`
-
-Create an album loop from songs matching an album metadata value.
-
-Request:
-
-```json
-{ "album": "Album Name" }
-```
-
-Response: created `RadioAlbum`.
-
-### `DELETE /api/radio/albums/{albumId}`
-
-Delete an album loop.
-
-Response: remaining `RadioAlbum[]`.
-
-### `POST /api/radio/albums/{albumId}/songs`
-
-Append songs to an album loop, skipping existing tracks.
-
-Request:
-
-```json
-{ "songIds": ["song-1", "song-2"] }
-```
-
-Response: updated `RadioAlbum`.
-
-### `PUT /api/radio/albums/{albumId}/enabled`
-
-Enable or disable an album loop.
-
-Request:
-
-```json
-{ "enabled": true }
-```
-
-Response: updated `RadioAlbum[]`.
 
 ## Radio Websocket
 
