@@ -10,7 +10,7 @@ use super::helpers::{
     extension, file_extension, is_unsupported_audio_file as is_unsupported_by_ext, now,
 };
 use super::types::*;
-use crate::{chat::ChatService, db::Database, loudness, metadata};
+use crate::{chat::ChatService, db::Database, loudness, metadata, tempo};
 
 /// Service for radio state, queue, song storage, and realtime broadcasts.
 #[derive(Clone)]
@@ -407,6 +407,45 @@ impl RadioService {
                     song_id = %song.id,
                     progress = format_args!("{}/{}", index + 1, total),
                     "loudness measured"
+                );
+            }
+        }
+        Ok(updated)
+    }
+
+    /// Estimates and stores tempo for every song missing a `bpm` value.
+    /// Unconfident tracks are stored as 0 so they are not rescanned each boot.
+    pub(crate) async fn backfill_missing_bpm_on_boot(&self) -> anyhow::Result<usize> {
+        #[derive(FromRow)]
+        struct MissingBpm {
+            id: String,
+            file_path: String,
+        }
+
+        let missing = sqlx::query_as::<_, MissingBpm>(
+            r#"
+            select id, file_path
+            from songs
+            where bpm is null
+            "#,
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .context("listing songs missing bpm")?;
+
+        let total = missing.len();
+        if total > 0 {
+            tracing::info!(total, "estimating tempo for songs missing values");
+        }
+
+        let mut updated = 0usize;
+        for (index, song) in missing.into_iter().enumerate() {
+            if store_bpm(&self.db, &song.id, PathBuf::from(song.file_path)).await {
+                updated += 1;
+                tracing::debug!(
+                    song_id = %song.id,
+                    progress = format_args!("{}/{}", index + 1, total),
+                    "tempo estimated"
                 );
             }
         }
@@ -1037,6 +1076,11 @@ impl RadioService {
         self.broadcast_snapshot().await;
 
         tokio::spawn(measure_and_store_loudness(
+            self.db.clone(),
+            id.clone(),
+            PathBuf::from(file_path_string.clone()),
+        ));
+        tokio::spawn(measure_and_store_bpm(
             self.db.clone(),
             id,
             PathBuf::from(file_path_string),
@@ -1713,6 +1757,45 @@ async fn store_loudness(db: &Database, song_id: &str, file_path: PathBuf) -> boo
     }
 }
 
+async fn measure_and_store_bpm(db: Database, song_id: String, file_path: PathBuf) {
+    store_bpm(&db, &song_id, file_path).await;
+}
+
+/// Estimates and persists a song's tempo. Tracks without a confident pulse
+/// are stored as 0 ("analyzed, no tempo") so boot backfills skip them; the
+/// shuffle scoring treats non-positive values as unknown.
+async fn store_bpm(db: &Database, song_id: &str, file_path: PathBuf) -> bool {
+    let started = std::time::Instant::now();
+    let estimate = match tempo::measure(&file_path).await {
+        Ok(estimate) => estimate,
+        Err(error) => {
+            tracing::warn!(%error, song_id, "failed to estimate tempo");
+            return false;
+        }
+    };
+    let stored = estimate.unwrap_or(0.0);
+    let result = sqlx::query("update songs set bpm = ? where id = ?")
+        .bind(stored)
+        .bind(song_id)
+        .execute(db.pool())
+        .await;
+    match result {
+        Ok(_) => {
+            tracing::info!(
+                song_id,
+                bpm = stored,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "estimated tempo"
+            );
+            true
+        }
+        Err(error) => {
+            tracing::warn!(%error, song_id, "failed to persist tempo");
+            false
+        }
+    }
+}
+
 async fn find_song(db: &Database, song_id: &str) -> anyhow::Result<Option<Song>> {
     sqlx::query_as::<_, Song>(
         r#"
@@ -2191,20 +2274,144 @@ fn random_seed() -> u64 {
         | 1
 }
 
-/// Picks one candidate index, weighted by each candidate's rotation weight.
-fn weighted_pick(candidates: &[(String, i64)], seed: &mut u64) -> Option<usize> {
-    let total: i64 = candidates.iter().map(|(_, w)| (*w).max(1)).sum();
-    if total <= 0 {
+/// Picks one candidate index at random, proportionally to `scores`.
+fn weighted_pick(scores: &[f64], seed: &mut u64) -> Option<usize> {
+    let total: f64 = scores.iter().map(|score| score.max(0.0)).sum();
+    if !(total > 0.0) {
         return None;
     }
-    let mut roll = (next_pseudo_random(seed) * total as f64) as i64;
-    for (index, (_, weight)) in candidates.iter().enumerate() {
-        roll -= (*weight).max(1);
-        if roll < 0 {
+    let mut roll = next_pseudo_random(seed) * total;
+    for (index, score) in scores.iter().enumerate() {
+        roll -= score.max(0.0);
+        if roll < 0.0 {
             return Some(index);
         }
     }
-    Some(candidates.len() - 1)
+    Some(scores.len() - 1)
+}
+
+/// The song fields transition scoring compares between neighbors.
+#[derive(Clone, FromRow)]
+struct ShuffleCandidate {
+    id: String,
+    artist: String,
+    album: Option<String>,
+    genre: Option<String>,
+    duration_seconds: Option<i64>,
+    loudness_lufs: Option<f64>,
+    bpm: Option<f64>,
+    weight: i64,
+}
+
+/// How strongly recently-aired artists repel their own songs; index 0 is the
+/// artist heard most recently. Beyond the table the artist is fair game.
+const ARTIST_SEPARATION: [f64; 3] = [0.15, 0.4, 0.65];
+
+fn same_text(a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim(), b.trim());
+    !a.is_empty() && a.eq_ignore_ascii_case(b)
+}
+
+/// Scores how well `candidate` would follow `previous` on air. The base is
+/// the album rotation weight; every sequencing rule is a multiplier, so a
+/// poor transition is discouraged, never forbidden — a small library must
+/// still play something.
+fn transition_score(
+    candidate: &ShuffleCandidate,
+    previous: &ShuffleCandidate,
+    recent_artists: &[String],
+) -> f64 {
+    let mut score = candidate.weight.max(1) as f64;
+
+    // Artist separation, strongest against the artist just heard.
+    if let Some(position) = recent_artists
+        .iter()
+        .position(|artist| same_text(artist, &candidate.artist))
+    {
+        score *= ARTIST_SEPARATION.get(position).copied().unwrap_or(0.85);
+    }
+
+    // Album separation.
+    if let (Some(prev), Some(cand)) = (&previous.album, &candidate.album) {
+        if same_text(prev, cand) {
+            score *= 0.3;
+        }
+    }
+
+    // Energy smoothing: LUFS is a serviceable energy proxy, so prefer steps
+    // over cliffs between neighboring songs.
+    if let (Some(prev), Some(cand)) = (previous.loudness_lufs, candidate.loudness_lufs) {
+        let delta = (prev - cand).abs();
+        score *= if delta <= 3.0 {
+            1.0
+        } else if delta <= 6.0 {
+            0.7
+        } else {
+            0.45
+        };
+    }
+
+    // Genre adjacency: a mild pull toward same-genre sets.
+    if let (Some(prev), Some(cand)) = (&previous.genre, &candidate.genre) {
+        if same_text(prev, cand) {
+            score *= 1.6;
+        }
+    }
+
+    // Duration pacing: don't stack epics back to back.
+    if previous.duration_seconds.unwrap_or(0) > 360 && candidate.duration_seconds.unwrap_or(0) > 360
+    {
+        score *= 0.6;
+    }
+
+    // Tempo pairing. 0 means "analyzed, no confident pulse". Half and double
+    // time count as neighbors — 140 into 70 is a natural transition.
+    let previous_bpm = previous.bpm.filter(|bpm| *bpm > 0.0);
+    let candidate_bpm = candidate.bpm.filter(|bpm| *bpm > 0.0);
+    if let (Some(prev), Some(cand)) = (previous_bpm, candidate_bpm) {
+        let distance = [0.5, 1.0, 2.0]
+            .iter()
+            .map(|multiple| (cand - prev * multiple).abs())
+            .fold(f64::INFINITY, f64::min);
+        score *= if distance <= 6.0 {
+            1.5
+        } else if distance <= 16.0 {
+            1.1
+        } else {
+            0.75
+        };
+    }
+
+    score
+}
+
+/// Loads the transition fields for one song (the rotation weight is unused
+/// on the `previous` side of a comparison and loads as a placeholder).
+async fn shuffle_profile(db: &Database, song_id: &str) -> anyhow::Result<Option<ShuffleCandidate>> {
+    sqlx::query_as::<_, ShuffleCandidate>(
+        r#"
+        select songs.id, songs.artist, songs.album, songs.genre,
+            songs.duration_seconds, songs.loudness_lufs, songs.bpm,
+            2 as weight
+        from songs
+        where songs.id = ?
+        "#,
+    )
+    .bind(song_id)
+    .fetch_optional(db.pool())
+    .await
+    .context("loading shuffle transition profile")
+}
+
+/// Artists aired most recently, newest first.
+async fn recently_aired_artists(db: &Database, limit: i64) -> anyhow::Result<Vec<String>> {
+    sqlx::query_scalar::<_, String>(
+        "select artist from play_history order by started_at desc limit ?",
+    )
+    .bind(limit)
+    .fetch_all(db.pool())
+    .await
+    .context("loading recently aired artists")
 }
 
 /// Shuffle candidates: eligible songs with their album rotation weight
@@ -2214,7 +2421,7 @@ async fn shuffle_candidates(
     db: &Database,
     respect_history: bool,
     exclude_queued: bool,
-) -> anyhow::Result<Vec<(String, i64)>> {
+) -> anyhow::Result<Vec<ShuffleCandidate>> {
     let history_clause = if respect_history {
         "and songs.id not in (select song_id from play_history where started_at > ?)"
     } else {
@@ -2227,13 +2434,15 @@ async fn shuffle_candidates(
     };
     let query = format!(
         r#"
-        select songs.id, coalesce((
-            select max(radio_albums.rotation_weight)
-            from radio_album_tracks
-            join radio_albums on radio_albums.id = radio_album_tracks.album_id
-            where radio_album_tracks.song_id = songs.id
-              and radio_albums.is_enabled = 1
-        ), 2) as weight
+        select songs.id, songs.artist, songs.album, songs.genre,
+            songs.duration_seconds, songs.loudness_lufs, songs.bpm,
+            coalesce((
+                select max(radio_albums.rotation_weight)
+                from radio_album_tracks
+                join radio_albums on radio_albums.id = radio_album_tracks.album_id
+                where radio_album_tracks.song_id = songs.id
+                  and radio_albums.is_enabled = 1
+            ), 2) as weight
         from songs
         where songs.id != coalesce((select current_song_id from radio_state where id = 1), '')
           and {SHUFFLE_ELIGIBLE}
@@ -2241,15 +2450,31 @@ async fn shuffle_candidates(
           {queued_clause}
         "#,
     );
-    sqlx::query_as::<_, (String, i64)>(&query)
+    sqlx::query_as::<_, ShuffleCandidate>(&query)
         .bind(now() - SHUFFLE_SEPARATION_SECS)
         .fetch_all(db.pool())
         .await
         .context("loading shuffle candidates")
 }
 
+/// Scores every candidate against the previous song, or falls back to plain
+/// rotation weights when there is nothing to transition from.
+fn transition_scores(
+    pool: &[ShuffleCandidate],
+    previous: Option<&ShuffleCandidate>,
+    recent_artists: &[String],
+) -> Vec<f64> {
+    pool.iter()
+        .map(|candidate| match previous {
+            Some(previous) => transition_score(candidate, previous, recent_artists),
+            None => candidate.weight.max(1) as f64,
+        })
+        .collect()
+}
+
 /// Picks a random song for shuffle mode, avoiding an immediate repeat of the
-/// current song when the library has more than one track.
+/// current song when the library has more than one track. The pick is scored
+/// against the song on air so the transition flows.
 async fn random_shuffle_song(db: &Database) -> anyhow::Result<Option<String>> {
     let mut seed = random_seed();
     // Prefer songs outside the separation window; relax when the library is
@@ -2258,8 +2483,21 @@ async fn random_shuffle_song(db: &Database) -> anyhow::Result<Option<String>> {
     if candidates.is_empty() {
         candidates = shuffle_candidates(db, false, false).await?;
     }
-    if let Some(index) = weighted_pick(&candidates, &mut seed) {
-        return Ok(Some(candidates.swap_remove(index).0));
+
+    let current_id =
+        sqlx::query_scalar::<_, Option<String>>("select current_song_id from radio_state where id = 1")
+            .fetch_one(db.pool())
+            .await
+            .context("loading current song id")?;
+    let previous = match &current_id {
+        Some(id) => shuffle_profile(db, id).await?,
+        None => None,
+    };
+    let recent = recently_aired_artists(db, ARTIST_SEPARATION.len() as i64).await?;
+
+    let scores = transition_scores(&candidates, previous.as_ref(), &recent);
+    if let Some(index) = weighted_pick(&scores, &mut seed) {
+        return Ok(Some(candidates.swap_remove(index).id));
     }
     sqlx::query_scalar::<_, String>(&format!(
         "select id from songs where {SHUFFLE_ELIGIBLE} order by random() limit 1",
@@ -2287,12 +2525,47 @@ async fn refill_shuffle_queue(db: &Database, queued_by_did: &str) -> anyhow::Res
     if (pool.len() as i64) < need {
         pool = shuffle_candidates(db, false, true).await?;
     }
+
+    // Seed the transition chain from the newest queued row, else the song on
+    // air, so the first refill continues whatever the listener hears last;
+    // after that each pick chains off the one before it.
+    let chain_seed_id = sqlx::query_scalar::<_, String>(
+        "select song_id from radio_queue order by position desc, created_at desc limit 1",
+    )
+    .fetch_optional(db.pool())
+    .await
+    .context("loading last queued song id")?;
+    let chain_seed_id = match chain_seed_id {
+        Some(id) => Some(id),
+        None => sqlx::query_scalar::<_, Option<String>>(
+            "select current_song_id from radio_state where id = 1",
+        )
+        .fetch_one(db.pool())
+        .await
+        .context("loading current song id")?,
+    };
+    let mut previous = match &chain_seed_id {
+        Some(id) => shuffle_profile(db, id).await?,
+        None => None,
+    };
+    let mut recent: Vec<String> = Vec::new();
+    if let Some(previous) = &previous {
+        recent.push(previous.artist.clone());
+    }
+    recent.extend(recently_aired_artists(db, ARTIST_SEPARATION.len() as i64).await?);
+    recent.truncate(ARTIST_SEPARATION.len());
+
     let mut candidates = Vec::new();
-    while (candidates.len() as i64) < need {
-        match weighted_pick(&pool, &mut seed) {
-            Some(index) => candidates.push(pool.swap_remove(index).0),
-            None => break,
-        }
+    while (candidates.len() as i64) < need && !pool.is_empty() {
+        let scores = transition_scores(&pool, previous.as_ref(), &recent);
+        let Some(index) = weighted_pick(&scores, &mut seed) else {
+            break;
+        };
+        let picked = pool.swap_remove(index);
+        recent.insert(0, picked.artist.clone());
+        recent.truncate(ARTIST_SEPARATION.len());
+        previous = Some(picked.clone());
+        candidates.push(picked.id);
     }
 
     let mut position = sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_queue")
@@ -2423,16 +2696,17 @@ mod tests {
                 .unwrap();
         }
 
-        // Shuffle off + empty queue + no albums => station stops.
+        // Shuffle off + empty queue + no albums => the singles loop keeps the
+        // station playing (loose songs are always part of rotation).
         skip_to_next(&db, "did").await.unwrap();
         let state = radio_state(&db).await.unwrap();
-        assert_eq!(state.status, "stopped");
-        assert!(state.current_song_id.is_none());
+        assert_eq!(state.status, "playing");
+        assert!(state.current_song_id.is_some());
         assert!(!state.shuffle);
 
-        // Toggling shuffle on from idle should immediately start a random track
-        // and fill the queue with the upcoming shuffle lookahead (all songs
-        // except the one now playing, since the library only has three).
+        // Toggling shuffle on should fill the queue with the upcoming shuffle
+        // lookahead (all songs except the one now playing, since the library
+        // only has three).
         service.control(RadioControlAction::Shuffle, "did").await.unwrap();
         let state = radio_state(&db).await.unwrap();
         assert!(state.shuffle);
@@ -2579,5 +2853,67 @@ mod tests {
             .unwrap();
         assert_eq!(loop_cursor.0.unwrap(), album_a.id);
         assert_eq!(loop_cursor.1, 1);
+    }
+
+    fn candidate(artist: &str, weight: i64) -> ShuffleCandidate {
+        ShuffleCandidate {
+            id: artist.to_lowercase(),
+            artist: artist.into(),
+            album: None,
+            genre: None,
+            duration_seconds: None,
+            loudness_lufs: None,
+            bpm: None,
+            weight,
+        }
+    }
+
+    #[test]
+    fn transition_score_separates_recent_artists() {
+        let previous = candidate("The Smiths", 2);
+        let repeat = candidate("The Smiths", 2);
+        let fresh = candidate("Cocteau Twins", 2);
+        let recent = vec!["The Smiths".to_string()];
+        let repeat_score = transition_score(&repeat, &previous, &recent);
+        let fresh_score = transition_score(&fresh, &previous, &recent);
+        assert!(repeat_score < fresh_score * 0.2);
+    }
+
+    #[test]
+    fn transition_score_prefers_close_tempo_and_energy() {
+        let mut previous = candidate("A", 2);
+        previous.bpm = Some(120.0);
+        previous.loudness_lufs = Some(-10.0);
+
+        let mut near = candidate("B", 2);
+        near.bpm = Some(122.0);
+        near.loudness_lufs = Some(-11.0);
+
+        let mut far = candidate("C", 2);
+        far.bpm = Some(158.0);
+        far.loudness_lufs = Some(-20.0);
+
+        let near_score = transition_score(&near, &previous, &[]);
+        let far_score = transition_score(&far, &previous, &[]);
+        assert!(near_score > far_score * 2.0);
+    }
+
+    #[test]
+    fn transition_score_treats_half_time_as_neighbor() {
+        let mut previous = candidate("A", 2);
+        previous.bpm = Some(140.0);
+        let mut half_time = candidate("B", 2);
+        half_time.bpm = Some(70.0);
+        let boosted = transition_score(&half_time, &previous, &[]);
+        assert!(boosted > 2.0, "half time should score the close-tempo boost, got {boosted}");
+    }
+
+    #[test]
+    fn transition_score_ignores_unanalyzed_tempo() {
+        let mut previous = candidate("A", 2);
+        previous.bpm = Some(120.0);
+        let mut unknown = candidate("B", 2);
+        unknown.bpm = Some(0.0);
+        assert_eq!(transition_score(&unknown, &previous, &[]), 2.0);
     }
 }

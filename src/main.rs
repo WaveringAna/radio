@@ -7,6 +7,7 @@ mod metadata;
 mod radio;
 mod routes;
 mod subsonic;
+mod tempo;
 
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
@@ -197,16 +198,25 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Loudness backfill can take seconds-per-track via ffmpeg; run it in the
-    // background so the HTTP listener comes up immediately.
-    let loudness_radio = radio.clone();
+    // Loudness and tempo backfills can take seconds-per-track via ffmpeg; run
+    // them in the background (and one after the other, so only one ffmpeg
+    // scan hits the disk at a time) so the HTTP listener comes up immediately.
+    let analysis_radio = radio.clone();
     tokio::spawn(async move {
         tracing::info!("starting loudness backfill in background");
-        match loudness_radio.backfill_missing_loudness_on_boot().await {
+        match analysis_radio.backfill_missing_loudness_on_boot().await {
             Ok(0) => tracing::info!("loudness backfill: nothing to do"),
             Ok(updated) => tracing::info!(updated, "loudness backfill complete"),
             Err(error) => {
                 tracing::warn!(%error, "loudness backfill failed")
+            }
+        }
+        tracing::info!("starting tempo backfill in background");
+        match analysis_radio.backfill_missing_bpm_on_boot().await {
+            Ok(0) => tracing::info!("tempo backfill: nothing to do"),
+            Ok(updated) => tracing::info!(updated, "tempo backfill complete"),
+            Err(error) => {
+                tracing::warn!(%error, "tempo backfill failed")
             }
         }
     });
