@@ -96,6 +96,15 @@
   background: rgb(var(--accent-rgb) / 5%);
 }
 
+/* The empty-queue rotation preview is a single line of text, not the usual
+   number/thumb/copy/avatar row — let it span the whole row instead of
+   getting squeezed into the first 1.4rem column. Specificity has to beat
+   the type+class ".queue-list li" base rule above, hence the repeated
+   selector. */
+.queue-list li.up-next-rotation-peek {
+  display: block;
+}
+
 .queue-list li:last-child {
   border-bottom: 0;
 }
