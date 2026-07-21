@@ -1385,6 +1385,7 @@ export default function RadioPage(props: RadioPageProps) {
       <Show when={!onMobile}>
         <aside class="radio-panel">
           {tuneInCard()}
+          {chatCard()}
 
           <section class="glass-card up-next-card">
             <div class="section-heading">
@@ -1442,8 +1443,6 @@ export default function RadioPage(props: RadioPageProps) {
               </Show>
             </Show>
           </section>
-
-          {chatCard()}
 
           <section class="glass-card equalizer-card">
             <EqualizerPanel controller={equalizer} />

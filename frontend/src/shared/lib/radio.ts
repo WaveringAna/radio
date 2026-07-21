@@ -415,25 +415,12 @@ export async function fetchSyndicatedStations(
   const base = normalizeBase(workerBase)
   if (!base) return []
 
-  // The syndication worker is an optional, separately-deployed service — if
-  // it's unreachable (not running locally, network hiccup, etc.) this must
-  // resolve to an empty directory rather than reject. A rejected resource
-  // here throws when read by any of the several unguarded call sites
-  // (`syndicatedStations() ?? []`), and that throw happens inside Solid's
-  // synchronous reactive flush — which can abort unrelated pending DOM
-  // updates in the same batch (e.g. the auth page silently getting stuck
-  // on "checking session..." after a successful sign-in).
-  try {
-    const response = await fetch(`${base}/stations`, { cache: 'no-store' })
-    if (!response.ok) {
-      console.warn('failed to load syndicated stations', response.status)
-      return []
-    }
-    return (await response.json()) as SyndicatedStation[]
-  } catch (error) {
-    console.warn('failed to reach syndication worker', error)
-    return []
+  const response = await fetch(`${base}/stations`, { cache: 'no-store' })
+  if (!response.ok) {
+    throw new Error('failed to load syndicated stations')
   }
+
+  return (await response.json()) as SyndicatedStation[]
 }
 
 /**
