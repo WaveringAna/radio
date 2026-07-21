@@ -39,7 +39,10 @@ pub(crate) async fn run(
     root: &Path,
 ) -> anyhow::Result<()> {
     if !root.is_dir() {
-        return Err(anyhow!("import path is not a directory: {}", root.display()));
+        return Err(anyhow!(
+            "import path is not a directory: {}",
+            root.display()
+        ));
     }
 
     let db = Database::connect(database_url).await?;
@@ -186,7 +189,8 @@ async fn import_one(radio: &RadioService, admin_did: &str, path: &Path) -> anyho
 /// Recursively collects audio files under `dir`, skipping hidden entries and
 /// the macOS AppleDouble sidecars (`._name`) that litter exfat drives.
 fn collect_audio_files(dir: &Path, out: &mut Vec<PathBuf>) -> anyhow::Result<()> {
-    let entries = std::fs::read_dir(dir).with_context(|| format!("reading dir {}", dir.display()))?;
+    let entries =
+        std::fs::read_dir(dir).with_context(|| format!("reading dir {}", dir.display()))?;
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,

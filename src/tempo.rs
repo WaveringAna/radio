@@ -35,7 +35,14 @@ pub(crate) async fn measure(path: &Path) -> anyhow::Result<Option<f64>> {
 /// loudness scanner's approach of shelling out rather than linking decoders.
 async fn decode_mono(path: &Path) -> anyhow::Result<Vec<f32>> {
     let output = Command::new("ffmpeg")
-        .args(["-nostdin", "-hide_banner", "-nostats", "-ss", ANALYSIS_SKIP_SECS, "-i"])
+        .args([
+            "-nostdin",
+            "-hide_banner",
+            "-nostats",
+            "-ss",
+            ANALYSIS_SKIP_SECS,
+            "-i",
+        ])
         .arg(path)
         .args([
             "-t",
@@ -97,7 +104,11 @@ fn estimate_bpm(samples: &[f32]) -> Option<f64> {
     let best_index = (0..scores.len()).max_by(|&a, &b| {
         let score = |i: usize| {
             let lag = min_lag + i;
-            let harmonic = if lag * 2 <= max_lag { autocorrelation(&envelope, lag * 2) } else { 0.0 };
+            let harmonic = if lag * 2 <= max_lag {
+                autocorrelation(&envelope, lag * 2)
+            } else {
+                0.0
+            };
             scores[i] + 0.5 * harmonic
         };
         score(a).total_cmp(&score(b))
@@ -110,7 +121,11 @@ fn estimate_bpm(samples: &[f32]) -> Option<f64> {
     // envelope's frame resolution.
     let lag = min_lag + best_index;
     let refined = if best_index > 0 && best_index + 1 < scores.len() {
-        let (left, center, right) = (scores[best_index - 1], scores[best_index], scores[best_index + 1]);
+        let (left, center, right) = (
+            scores[best_index - 1],
+            scores[best_index],
+            scores[best_index + 1],
+        );
         let denominator = left - 2.0 * center + right;
         if denominator.abs() > f64::EPSILON {
             lag as f64 + 0.5 * (left - right) / denominator
@@ -123,7 +138,13 @@ fn estimate_bpm(samples: &[f32]) -> Option<f64> {
 
     let bpm = 60.0 * ENVELOPE_RATE / refined;
     // Fold extreme octaves into the common dance/rock band for stable pairing.
-    let folded = if bpm < 70.0 { bpm * 2.0 } else if bpm > 170.0 { bpm / 2.0 } else { bpm };
+    let folded = if bpm < 70.0 {
+        bpm * 2.0
+    } else if bpm > 170.0 {
+        bpm / 2.0
+    } else {
+        bpm
+    };
     Some((folded * 10.0).round() / 10.0)
 }
 

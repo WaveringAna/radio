@@ -815,7 +815,11 @@ fn endpoint_host(url: &str) -> Option<String> {
 
 fn is_public_hostname(hostname: &str) -> bool {
     let host = hostname.to_lowercase();
-    if host == "localhost" || host.ends_with(".localhost") || host == "::1" || host.starts_with("127.") {
+    if host == "localhost"
+        || host.ends_with(".localhost")
+        || host == "::1"
+        || host.starts_with("127.")
+    {
         return true;
     }
     if host == "0.0.0.0" {
@@ -937,8 +941,14 @@ mod tests {
             announce_hostname("https://radio.example.com:3000/path").as_deref(),
             Some("radio.example.com")
         );
-        assert_eq!(announce_hostname("http://127.0.0.1:3000").as_deref(), Some("127.0.0.1"));
-        assert_eq!(announce_hostname("https://localhost:3000").as_deref(), Some("localhost"));
+        assert_eq!(
+            announce_hostname("http://127.0.0.1:3000").as_deref(),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            announce_hostname("https://localhost:3000").as_deref(),
+            Some("localhost")
+        );
         assert_eq!(announce_hostname("https://10.0.0.5"), None);
         assert_eq!(announce_hostname("https://172.16.0.1"), None);
         assert_eq!(
