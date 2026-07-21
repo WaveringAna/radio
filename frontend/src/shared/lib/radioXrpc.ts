@@ -23,6 +23,7 @@ import { API_BASE, RADIO_SERVICE_DID, RADIO_SERVICE_ID } from './config'
 import type {
   ChatBan,
   ChatMessage,
+  LoopMode,
   Playlist,
   QueueItem,
   RadioAlbum,
@@ -234,10 +235,25 @@ export async function xrpcMergeAlbums(albumId: string, targetAlbumId: string, ta
   return data.albums.map(normalizeAlbum)
 }
 
-export async function xrpcEnqueueSongs(songIds: string[], target?: RadioTarget): Promise<RadioSnapshot> {
+export async function xrpcEnqueueSongs(
+  songIds: string[],
+  target?: RadioTarget,
+  atTop = false,
+  sequence = false,
+): Promise<RadioSnapshot> {
   const data = await radioPost<{ snapshot: unknown }>('pet.nkp.radio.queue.modify', {
     action: 'enqueue',
     songIds,
+    ...(atTop ? { atTop: true } : {}),
+    ...(sequence ? { sequence: true } : {}),
+  }, { target })
+  return normalizeSnapshot(data.snapshot)
+}
+
+/** Reorders the pending queue by transition score. */
+export async function xrpcSequenceQueue(target?: RadioTarget): Promise<RadioSnapshot> {
+  const data = await radioPost<{ snapshot: unknown }>('pet.nkp.radio.queue.modify', {
+    action: 'sequence',
   }, { target })
   return normalizeSnapshot(data.snapshot)
 }
@@ -347,11 +363,70 @@ export async function xrpcDeletePlaylist(playlistId: string, target?: RadioTarge
   }, { target })
 }
 
-export async function xrpcLoadPlaylist(playlistId: string, replace: boolean, target?: RadioTarget): Promise<RadioSnapshot> {
+export async function xrpcLoadPlaylist(
+  playlistId: string,
+  replace: boolean,
+  target?: RadioTarget,
+  shuffle?: boolean,
+): Promise<RadioSnapshot> {
   const data = await radioPost<{ snapshot?: unknown }>('pet.nkp.radio.playlists.modify', {
     action: 'load',
     playlistId,
     replace,
+    ...(shuffle === undefined ? {} : { shuffle }),
+  }, { target })
+  return normalizeSnapshot(data.snapshot)
+}
+
+/** Applies one of the playlist-editing actions and returns the updated set. */
+async function xrpcEditPlaylist(payload: Record<string, unknown>, target?: RadioTarget): Promise<Playlist> {
+  const data = await radioPost<{ playlist?: unknown }>('pet.nkp.radio.playlists.modify', payload, { target })
+  return normalizePlaylist(data.playlist)
+}
+
+export function xrpcRenamePlaylist(playlistId: string, name: string, target?: RadioTarget): Promise<Playlist> {
+  return xrpcEditPlaylist({ action: 'rename', playlistId, name }, target)
+}
+
+export function xrpcAddPlaylistTracks(playlistId: string, songIds: string[], target?: RadioTarget): Promise<Playlist> {
+  return xrpcEditPlaylist({ action: 'addTracks', playlistId, songIds }, target)
+}
+
+export function xrpcRemovePlaylistTrack(playlistId: string, position: number, target?: RadioTarget): Promise<Playlist> {
+  return xrpcEditPlaylist({ action: 'removeTrack', playlistId, position }, target)
+}
+
+export function xrpcReorderPlaylistTracks(playlistId: string, songIds: string[], target?: RadioTarget): Promise<Playlist> {
+  return xrpcEditPlaylist({ action: 'reorder', playlistId, songIds }, target)
+}
+
+export function xrpcDuplicatePlaylist(playlistId: string, name: string, target?: RadioTarget): Promise<Playlist> {
+  return xrpcEditPlaylist({ action: 'duplicate', playlistId, name }, target)
+}
+
+export function xrpcSequencePlaylistTracks(playlistId: string, target?: RadioTarget): Promise<Playlist> {
+  return xrpcEditPlaylist({ action: 'sequenceTracks', playlistId }, target)
+}
+
+export function xrpcSetPlaylistShuffleOnLoad(playlistId: string, shuffleOnLoad: boolean, target?: RadioTarget): Promise<Playlist> {
+  return xrpcEditPlaylist({ action: 'setShuffleOnLoad', playlistId, shuffleOnLoad }, target)
+}
+
+export async function xrpcSetLoopMode(loopMode: LoopMode, target?: RadioTarget): Promise<RadioSnapshot> {
+  const data = await radioPost<{ snapshot: unknown }>('pet.nkp.radio.control', {
+    action: 'setLoopMode',
+    intent: 'explicit_admin_action',
+    loopMode,
+  }, { target })
+  return normalizeSnapshot(data.snapshot)
+}
+
+/** Pins the set that reloads when the queue drains; `null` unpins it. */
+export async function xrpcSetLoopPlaylist(playlistId: string | null, target?: RadioTarget): Promise<RadioSnapshot> {
+  const data = await radioPost<{ snapshot: unknown }>('pet.nkp.radio.control', {
+    action: 'setLoopPlaylist',
+    intent: 'explicit_admin_action',
+    ...(playlistId ? { loopPlaylistId: playlistId } : {}),
   }, { target })
   return normalizeSnapshot(data.snapshot)
 }
@@ -824,6 +899,9 @@ function normalizeRadioState(value: unknown): RadioState {
     pausedAt: nullableNumber(data.pausedAt),
     positionSeconds: numberValue(data.positionSeconds),
     updatedByDid: nullableString(data.updatedByDid),
+    shuffle: Boolean(data.shuffle),
+    loopMode: data.loopMode === 'one' || data.loopMode === 'queue' ? data.loopMode : 'off',
+    loopPlaylistId: nullableString(data.loopPlaylistId),
   }
 }
 
@@ -854,6 +932,7 @@ function normalizePlaylist(value: unknown): Playlist {
     id: stringValue(data.id),
     name: stringValue(data.name),
     createdAt: numberValue(data.createdAt),
+    shuffleOnLoad: Boolean(data.shuffleOnLoad),
     tracks: Array.isArray(data.tracks) ? data.tracks.map(normalizeSong) : [],
   }
 }

@@ -83,7 +83,18 @@ export interface RadioState {
   updatedByDid?: string | null
   /** Station-wide shuffle mode: empty-queue fallback plays random songs. */
   shuffle?: boolean
+  /** How finished queue tracks are recycled. */
+  loopMode?: LoopMode
+  /** Set that reloads automatically whenever the queue drains. */
+  loopPlaylistId?: string | null
 }
+
+/**
+ * Queue recycling modes. `queue` sends finished tracks to the back instead of
+ * dropping them; `one` repeats the current track. Distinct from `loopPlaylistId`,
+ * which reloads a saved set once the queue is empty.
+ */
+export type LoopMode = 'off' | 'one' | 'queue'
 
 export interface RadioSeek {
   positionSeconds: number
@@ -481,17 +492,23 @@ export async function fetchSyndicatedStations(
 }
 
 /**
- * Adds an existing song to the queue.
- * @param songId Song id to enqueue.
- * @returns The created queue item.
+ * Adds existing songs to the queue.
+ * @param songIds Song ids to enqueue, in order.
+ * @param atTop Jump them ahead of everything already queued instead of appending.
+ * @returns The updated radio snapshot.
  * @throws Error When the backend request fails.
  */
-export async function enqueueAlbum(songIds: string[], target?: RadioTarget): Promise<RadioSnapshot> {
-  return xrpcEnqueueSongs(songIds, target)
+export async function enqueueAlbum(
+  songIds: string[],
+  target?: RadioTarget,
+  atTop = false,
+  sequence = false,
+): Promise<RadioSnapshot> {
+  return xrpcEnqueueSongs(songIds, target, atTop, sequence)
 }
 
-export async function enqueueSong(songId: string, target?: RadioTarget): Promise<RadioSnapshot> {
-  return xrpcEnqueueSongs([songId], target)
+export async function enqueueSong(songId: string, target?: RadioTarget, atTop = false): Promise<RadioSnapshot> {
+  return xrpcEnqueueSongs([songId], target, atTop)
 }
 
 /**
@@ -657,6 +674,8 @@ export interface Playlist {
   id: string
   name: string
   createdAt: number
+  /** Randomize this set's order every time it is loaded into the queue. */
+  shuffleOnLoad: boolean
   tracks: Song[]
 }
 
@@ -672,6 +691,24 @@ export async function deletePlaylist(playlistId: string, target?: RadioTarget): 
   await xrpcDeletePlaylist(playlistId, target)
 }
 
-export async function loadPlaylist(playlistId: string, replace: boolean, target?: RadioTarget): Promise<RadioSnapshot> {
-  return xrpcLoadPlaylist(playlistId, replace, target)
+export async function loadPlaylist(
+  playlistId: string,
+  replace: boolean,
+  target?: RadioTarget,
+  shuffle?: boolean,
+): Promise<RadioSnapshot> {
+  return xrpcLoadPlaylist(playlistId, replace, target, shuffle)
 }
+
+export {
+  xrpcRenamePlaylist as renamePlaylist,
+  xrpcAddPlaylistTracks as addPlaylistTracks,
+  xrpcRemovePlaylistTrack as removePlaylistTrack,
+  xrpcReorderPlaylistTracks as reorderPlaylistTracks,
+  xrpcDuplicatePlaylist as duplicatePlaylist,
+  xrpcSetPlaylistShuffleOnLoad as setPlaylistShuffleOnLoad,
+  xrpcSequencePlaylistTracks as sequencePlaylistTracks,
+  xrpcSequenceQueue as sequenceQueue,
+  xrpcSetLoopMode as setLoopMode,
+  xrpcSetLoopPlaylist as setLoopPlaylist,
+} from './radioXrpc'

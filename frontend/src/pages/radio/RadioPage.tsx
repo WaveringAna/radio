@@ -101,9 +101,9 @@ function setElementVolume(audioElement: HTMLAudioElement, nextVolume: number): b
 
 // Mobile browsers suspend <audio> in the background once it's routed through a
 // Web Audio graph (MediaElementSource). iOS Safari is strict about it; Android
-// is inconsistent but vulnerable on lock screen / battery saver. On mobile we
-// defer attaching the equalizer graph until the user opts in. Desktop keeps
-// visualizer + EQ from the start.
+// is inconsistent but vulnerable on lock screen / battery saver. So the EQ
+// panel is not offered on mobile at all, and the graph stays detached there.
+// Desktop keeps visualizer + EQ from the start.
 export function isMobileDevice(): boolean {
   if (typeof navigator === 'undefined') return false
   if (/Android|iPad|iPhone|iPod|Mobi/i.test(navigator.userAgent)) return true
@@ -1154,10 +1154,10 @@ export default function RadioPage(props: RadioPageProps) {
     // play() must happen synchronously inside the user-gesture call stack on
     // mobile, so do not await Web Audio setup before it.
     void audioRef.play().catch(() => undefined)
-    // On desktop, attach the equalizer graph upfront so visualizer + EQ work
-    // immediately. On mobile we defer until the user opens the EQ panel —
-    // routing through MediaElementSource makes the OS suspend audio when the
-    // tab backgrounds / screen locks.
+    // Desktop only: attach the equalizer graph upfront so visualizer + EQ work
+    // immediately. Mobile never attaches it — routing through
+    // MediaElementSource makes the OS suspend audio when the tab backgrounds
+    // or the screen locks, which is why the EQ panel is desktop-only.
     if (!isMobileDevice()) {
       void equalizer.ensureGraph()
     }
@@ -1519,7 +1519,6 @@ export default function RadioPage(props: RadioPageProps) {
         {onMobile && tuneInCard()}
         {onMobile && upNextCard()}
         {onMobile && chatCard()}
-        {onMobile && equalizerCard()}
       </div>
 
       <Show when={!onMobile}>

@@ -393,12 +393,122 @@
   }
 }
 
-.multi-add-row {
+/* Summary of the current multi-selection. Docked to the bottom of the
+   viewport so its actions stay reachable while you keep scrolling the library
+   — on desktop as a floating centred bar, on phones edge-to-edge. */
+.qc-selection-bar {
+  position: fixed;
+  z-index: 80;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  width: min(44rem, calc(100% - 3rem));
   display: flex;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 38%);
+  animation: qc-tray-in 160ms var(--ease-out);
+}
+
+/* The tray is fixed, so it would otherwise sit on top of the last rows of
+   whichever list is open. :has() lets the column reserve the space only while
+   a tray is actually rendered — no JS, and no dead gap the rest of the time.
+   Browsers without :has() simply keep the old overlap. */
+.qc-column-left:has(.qc-selection-bar) {
+  padding-bottom: 6rem;
+}
+
+@keyframes qc-tray-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qc-selection-bar {
+    animation: none;
+  }
+}
+
+@media (max-width: 860px) {
+  /* Edge-to-edge on a phone: a centred floating card would waste the width
+     the actions need, and the screen bottom is the natural thumb position. */
+  .qc-selection-bar {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    transform: none;
+    border: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 0;
+    padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom));
+    box-shadow: 0 -6px 20px rgb(0 0 0 / 30%);
+    animation: qc-tray-in-flush 160ms var(--ease-out);
+  }
+
+  @keyframes qc-tray-in-flush {
+    from {
+      opacity: 0;
+      transform: translateY(0.75rem);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* The action row scrolls sideways rather than wrapping into a tall stack
+     that would eat half the screen. */
+  .qc-selection-actions {
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+
+  .qc-selection-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .qc-selection-actions > * {
+    flex-shrink: 0;
+  }
+
+  .qc-selection-bar-row {
+    flex-wrap: nowrap;
+    gap: 0.6rem;
+  }
+}
+
+.qc-selection-bar-row {
+  display: flex;
   align-items: center;
-  margin-bottom: 0.5rem;
+  justify-content: space-between;
+  gap: 1rem;
   flex-wrap: wrap;
+}
+
+.qc-selection-count {
+  font-weight: 500;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.qc-selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 
@@ -1062,7 +1172,8 @@
 .qc-column-header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: flex-start;
+  gap: 0.75rem;
   margin-bottom: 1.25rem;
 }
 
@@ -1093,6 +1204,43 @@
   font-size: 0.85rem;
   color: var(--muted);
   font-family: var(--mono);
+}
+
+/* Panel-level mode switches (Select, Add music). Quieter than a pill button
+   so they don't compete with the queue verbs in the rows below. */
+.qc-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 150ms var(--ease-out), border-color 150ms var(--ease-out), background 150ms var(--ease-out);
+}
+
+.qc-header-btn:hover {
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.qc-header-btn.active {
+  color: var(--bg);
+  border-color: var(--accent);
+  background: var(--accent);
+  font-weight: 600;
+}
+
+.qc-header-btn.active:hover {
+  color: var(--bg);
+  border-color: var(--accent);
+  opacity: 0.9;
 }
 
 /* Search input row */
@@ -1152,20 +1300,18 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
-.qc-genre-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  margin-bottom: 1rem;
-  background: color-mix(in srgb, var(--hairline) 8%, transparent);
+.qc-tabs-row::-webkit-scrollbar {
+  display: none;
+}
+
+.qc-tabs-row .qc-tab-btn {
+  flex-shrink: 0;
 }
 
 .playlist-save-form {
@@ -1174,8 +1320,8 @@
   gap: 0.5rem;
 }
 
-/* Inside the multi-add intake it reads as a footer row of that card… */
-.queue-selection-row .playlist-save-form {
+/* Inside the selection bar it reads as a footer row of that card… */
+.qc-selection-bar .playlist-save-form {
   border-top: 1px solid var(--hairline);
   padding-top: 0.75rem;
   margin-top: 0.25rem;
@@ -1219,12 +1365,6 @@
   border-color: var(--accent);
 }
 
-.qc-tab-btn.add-tab-btn {
-  margin-left: auto;
-  border-color: var(--accent-line);
-  color: var(--accent);
-}
-
 /* Songs List inside Left Column */
 .qc-songs-list {
   display: flex;
@@ -1234,17 +1374,190 @@
   margin: 0 0 1.5rem;
 }
 
-.qc-song-item {
+/* Every library result — song, album track, album, artist, set — is a
+   LibraryRow, so the anatomy (thumb, info, trimmings, actions) is defined
+   once here and the per-list classes only vary the trimmings. */
+.qc-lib-item {
   border-bottom: 1px solid var(--hairline);
 }
 
-.qc-song-row {
+.qc-lib-row {
   display: flex;
   align-items: center;
-  gap: 1.25rem;
+  gap: 1rem;
   min-width: 0;
   padding: 12px 0;
 }
+
+.qc-lib-row.is-interactive {
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .qc-lib-row.is-interactive:hover {
+    background: rgb(var(--accent-rgb) / 4%);
+  }
+}
+
+.qc-lib-row.is-selected {
+  background: rgb(var(--accent-rgb) / 8%);
+}
+
+/* Already queued: still fully usable, just visually settled. */
+.qc-lib-item.is-dimmed .qc-song-title {
+  color: var(--muted);
+}
+
+.qc-lib-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Right-aligned duration. First thing to go when width runs short. */
+.qc-lib-detail {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+.qc-lib-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.25rem 0 1rem;
+}
+
+/* Album / singles groups inside an expanded artist. The header is a
+   disclosure, not an action — tapping it opens the tracklist. */
+.qc-subsection + .qc-subsection {
+  margin-top: 0.35rem;
+}
+
+.qc-subsection-head {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.qc-subsection-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 0;
+  padding: 0.4rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.qc-subsection-header.is-static {
+  cursor: default;
+  color: var(--muted);
+}
+
+.qc-subsection-chevron {
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 150ms var(--ease-out);
+}
+
+.qc-subsection-header[aria-expanded='true'] .qc-subsection-chevron,
+.qc-subsection-head .qc-lib-expand[aria-expanded='true'] {
+  transform: rotate(180deg);
+}
+
+.qc-subsection-head .qc-lib-expand {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+/* Album art in the group header. Smaller than a library row's thumb so the
+   nested list still reads as subordinate to the artist row above it. */
+.qc-subsection-thumb {
+  display: block;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface-soft);
+  border: 1px solid var(--hairline);
+}
+
+.qc-subsection-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.qc-subsection-thumb .qc-thumb-placeholder {
+  font-size: 0.6rem;
+}
+
+/* The Singles group has no art; an invisible spacer keeps its label on the
+   same left edge as the album labels. */
+.qc-subsection-thumb.is-empty {
+  background: none;
+  border: 0;
+}
+
+.qc-subsection-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qc-subsection-header .qc-album-badge {
+  margin-left: 0.35rem;
+}
+
+.qc-subsection-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+/* Nested one level in, so the tracks read as belonging to the group above. */
+.qc-subsection .qc-track-list {
+  padding-left: 0.6rem;
+  border-left: 1px solid var(--hairline);
+}
+
+.qc-lib-expand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: transform 150ms var(--ease-out), color 150ms var(--ease-out), background 150ms var(--ease-out);
+}
+
+.qc-lib-expand:hover {
+  color: var(--text);
+  background: rgb(var(--accent-rgb) / 10%);
+}
+
+.qc-lib-item.expanded .qc-lib-expand {
+  transform: rotate(180deg);
+}
+
 
 .qc-song-select {
   flex-shrink: 0;
@@ -1268,7 +1581,7 @@
   gap: 0.55rem;
 }
 
-.qc-song-item:last-child {
+.qc-lib-item:last-child {
   border-bottom: none;
 }
 
@@ -1324,68 +1637,17 @@
   white-space: nowrap;
 }
 
-.qc-song-genre-pill {
-  background: var(--surface-soft);
-  border: 1px solid var(--hairline);
-  border-radius: 6px;
-  color: var(--muted);
-  font-size: 0.8rem;
-  padding: 4px 10px;
-  flex-shrink: 0;
-  font-weight: 600;
+/* Badges follow the meta text inline, so they need their own breathing room —
+   there is no flex gap to lean on inside a truncating single line. */
+.qc-song-meta-line .qc-album-badge {
+  margin-left: 0.45rem;
 }
 
-.qc-song-duration {
-  font-size: 0.9rem;
-  color: var(--muted);
-  flex-shrink: 0;
-  font-family: var(--mono);
-}
 
-.qc-add-btn {
-  background: var(--accent);
-  color: var(--bg);
-  font-weight: 700;
-  border: none;
-  border-radius: 20px;
-  padding: 6px 16px;
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: transform 120ms var(--ease-out), opacity 120ms var(--ease-out);
-  flex-shrink: 0;
-}
 
-.qc-add-btn:hover {
-  transform: scale(1.05);
-  opacity: 0.9;
-}
 
-.qc-add-btn:active {
-  transform: scale(0.97);
-}
 
-.qc-add-btn.already-queued {
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-  color: var(--text);
-  border: 1px solid var(--hairline);
-  font-weight: 500;
-}
 
-.qc-add-btn.already-queued:hover {
-  background: color-mix(in srgb, var(--text) 14%, transparent);
-}
-
-.qc-more-btn {
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 4px;
-  font-size: 1.2rem;
-  font-weight: bold;
-  flex-shrink: 0;
-  transition: color 150ms var(--ease-out);
-}
 
 /* Album results share the song-row anatomy: thumb, info, add, disclosure. */
 .qc-albums-list {
@@ -1396,43 +1658,10 @@
   padding: 0;
 }
 
-.qc-album-item {
-  border-bottom: 1px solid var(--hairline);
-}
-
-.qc-album-row {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  min-width: 0;
-  padding: 12px 0;
-  cursor: pointer;
-}
-
-.qc-album-thumb {
-  flex-shrink: 0;
-  width: 48px;
-  height: 48px;
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--surface-soft);
-}
-
-.qc-album-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.qc-album-title-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-}
-
 .qc-album-badge {
+  display: inline-block;
   flex-shrink: 0;
+  vertical-align: baseline;
   padding: 0.12rem 0.45rem;
   border-radius: 999px;
   font-size: 0.68rem;
@@ -1444,20 +1673,16 @@
   background: rgb(var(--accent-rgb) / 14%);
 }
 
+/* Partly in rotation: same family as .looping but muted, so a mixed artist
+   reads as "not fully in" at a glance. */
+.qc-album-badge.partial {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 .qc-album-badge.duplicate {
   color: #ffa500;
   background: rgb(255 165 0 / 12%);
-}
-
-.qc-album-expand {
-  display: flex;
-  align-items: center;
-  color: var(--muted);
-  transition: transform 150ms var(--ease-out);
-}
-
-.qc-album-item.expanded .qc-album-expand {
-  transform: rotate(180deg);
 }
 
 .qc-album-details {
@@ -1503,62 +1728,116 @@
   font-size: 0.85rem;
 }
 
-.qc-album-tracks {
+/* Compact track lines inside an expanded album, artist, or set. */
+.qc-track-list {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  max-height: 14rem;
+  max-height: 18rem;
   margin: 0;
   padding: 0;
   overflow-y: auto;
   list-style: none;
 }
 
-.qc-album-track {
-  display: grid;
-  grid-template-columns: 1.6rem minmax(0, 1fr) minmax(0, auto) auto;
-  gap: 0.5rem;
+.qc-track-row {
+  display: flex;
   align-items: center;
-  padding: 0.2rem 0;
-  font-size: 0.85rem;
-  color: var(--text);
+  gap: 0.35rem;
+  min-width: 0;
 }
 
-.qc-album-track > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.qc-track-main {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  text-align: left;
 }
 
-.qc-album-track-num {
+@media (hover: hover) and (pointer: fine) {
+  .qc-track-main:hover .qc-track-title {
+    color: var(--accent);
+  }
+}
+
+.qc-track-row.is-selected {
+  background: rgb(var(--accent-rgb) / 8%);
+}
+
+.qc-track-row.is-queued .qc-track-title {
+  color: var(--muted);
+}
+
+.qc-track-num {
+  flex-shrink: 0;
+  width: 1.5rem;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 0.75rem;
   text-align: right;
 }
 
-.qc-album-track-artist {
-  color: var(--muted);
-  font-size: 0.8rem;
+/* Title over artist, both truncating — the phone-safe shape. */
+.qc-track-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
 }
 
-.qc-album-track-duration {
+.qc-track-title,
+.qc-track-secondary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qc-track-title {
+  font-size: 0.88rem;
+  color: var(--text);
+}
+
+.qc-track-secondary {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.qc-track-duration {
+  flex-shrink: 0;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 0.75rem;
 }
 
-.qc-more-btn:hover {
-  color: var(--text);
+.qc-track-move {
+  display: flex;
+  flex-direction: column;
+  line-height: 0.8;
+  flex-shrink: 0;
 }
 
+.qc-track-move .qc-move-btn {
+  font-size: 0.7rem;
+  padding: 0 2px;
+}
+
+
 /* Queue List inside Right Column */
+/* Without pagination the queue can be arbitrarily long, so it scrolls in
+   place — that's what makes dragging from the top to the bottom possible. */
 .qc-queue-list {
   display: flex;
   flex-direction: column;
   list-style: none;
   padding: 0;
   margin: 1rem 0;
+  max-height: 32rem;
+  overflow-y: auto;
 }
 
 .qc-queue-item {
@@ -1609,13 +1888,6 @@
   object-fit: cover;
 }
 
-.qc-queue-title-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-width: 0;
-}
-
 .qc-queue-shuffle-badge {
   display: inline-flex;
   flex-shrink: 0;
@@ -1646,6 +1918,11 @@
 
 .qc-save-set-input {
   flex: 1;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--text);
   font-size: 0.9rem;
 }
 
@@ -1697,9 +1974,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text);
-  font-size: 0.95rem;
+  font-size: 0.92rem;
 }
 
 .qc-queue-artist {
@@ -1710,24 +1987,11 @@
   color: var(--muted);
 }
 
-.qc-queue-actions {
+.qc-queue-title-row {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-}
-
-/* On pointer devices the reorder/remove cluster shows on hover or focus;
-   touch screens keep it always visible since there is no hover. */
-@media (hover: hover) and (pointer: fine) {
-  .qc-queue-actions {
-    opacity: 0;
-    transition: opacity 130ms var(--ease-out);
-  }
-
-  .qc-queue-item:hover .qc-queue-actions,
-  .qc-queue-item:focus-within .qc-queue-actions {
-    opacity: 1;
-  }
+  gap: 0.4rem;
+  min-width: 0;
 }
 
 .qc-delete-btn {
@@ -1745,6 +2009,82 @@
 .qc-delete-btn:hover {
   color: var(--danger);
 }
+
+/* Move-to-top / move-to-bottom, and the set-track reorder arrows. */
+.qc-move-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 150ms var(--ease-out);
+}
+
+.qc-move-btn:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.qc-move-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+/* Queue-wide verbs: shuffle the pending order, cycle the loop mode, and
+   surface whichever set is pinned to reload when the queue drains. */
+.qc-queue-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0 0.25rem;
+}
+
+.qc-queue-toolbar .pill-button svg,
+.qc-album-actions .pill-button svg {
+  vertical-align: -2px;
+  margin-right: 0.25rem;
+}
+
+/* Same reasoning as .qc-header-btn.active: an engaged toggle inverts rather
+   than tinting, so it stays legible against the dark page. */
+.queue-control-page .pill-button.is-active {
+  color: var(--bg);
+  border-color: var(--accent);
+  background: var(--accent);
+  border-radius: 999px;
+  padding-inline: 0.7rem;
+  font-weight: 600;
+}
+
+.qc-album-badge.shuffled {
+  color: var(--accent);
+  background: rgb(var(--accent-rgb) / 10%);
+}
+
+.qc-sets-list {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 0 0 1.5rem;
+  padding: 0;
+}
+
+.qc-artists-list {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 0 0 1.5rem;
+  padding: 0;
+}
+
+.qc-artist-albums {
+  flex-wrap: wrap;
+}
+
 
 /* Estimated End row */
 .qc-est-end-row {
@@ -1854,7 +2194,7 @@
 
   .qc-column-header {
     flex-wrap: wrap;
-    gap: 0.35rem;
+    gap: 0.6rem;
   }
 }
 
@@ -1862,7 +2202,7 @@
   /* Result rows: the fixed-width trimmings (pill, duration, buttons) plus
      1.25rem gaps cost more than a phone's width before the title gets any.
      Tighten the gaps, shrink the thumb, and let the meta line carry genre. */
-  .qc-song-row {
+  .qc-lib-row {
     gap: 0.6rem;
   }
 
@@ -1875,31 +2215,187 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .qc-song-genre-pill {
+  .qc-column-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.9rem;
+    margin-bottom: 1rem;
+  }
+
+  .qc-column-header-actions {
+    justify-content: flex-start;
+  }
+
+  .qc-header-btn {
+    min-height: 2.35rem;
+    flex: 1;
+    justify-content: center;
+  }
+
+  .qc-queue-index {
     display: none;
   }
 
-  .qc-add-btn {
-    padding: 6px 10px;
+  .qc-queue-item {
+    gap: 0.45rem;
   }
 
-  .qc-album-row {
-    gap: 0.6rem;
-  }
-
-  .qc-album-thumb {
-    width: 40px;
-    height: 40px;
-  }
-
-  /* four-column track rows don't fit; drop the artist, keep num/title/time */
-  .qc-album-track {
-    grid-template-columns: 1.6rem minmax(0, 1fr) auto;
-  }
-
-  .qc-album-track-artist {
+  /* Icon only: still legible as "the station queued this", but it stops
+     competing with the title for width. */
+  .qc-queue-shuffle-label {
     display: none;
   }
+
+  .qc-queue-shuffle-badge {
+    padding: 0;
+    background: none;
+    opacity: 0.75;
+  }
+
+  .qc-queue-airtime {
+    min-width: 3.6rem;
+  }
+
+  /* Tap targets stay at 44px even though the rows got tighter. */
+  .qc-menu-trigger {
+    width: 2.35rem;
+    height: 2.35rem;
+  }
+
+  .qc-menu-trigger.compact {
+    width: 2.1rem;
+    height: 2.1rem;
+  }
+
+  /* The duration is the least useful thing on a phone; the title needs it more. */
+  .qc-lib-detail,
+  .qc-track-duration {
+    display: none;
+  }
+
+  .qc-track-num {
+    width: 1.1rem;
+  }
+}
+
+/* ── Overflow menu ─────────────────────────────────────────────────────────
+   A popover on desktop, a bottom sheet on phones. Every row's verbs live in
+   here, which is what keeps the rows themselves down to art + two lines. */
+.qc-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 150ms var(--ease-out), background 150ms var(--ease-out);
+}
+
+.qc-menu-trigger.compact {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.qc-menu-trigger:hover,
+.qc-menu-trigger.is-open {
+  color: var(--text);
+  background: rgb(var(--accent-rgb) / 10%);
+}
+
+.qc-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  /* A touch of blur pushes the page back so the menu reads as the focused
+     layer, the way a native context menu does. */
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+/* Frosted, not transparent: --surface is only 34% opaque, so over a busy
+   library list the labels were competing with whatever sat behind them.
+   backdrop-filter plus a tinted base gives contrast without going fully
+   solid, and the faint blur on the backdrop pushes the page behind it. */
+.qc-menu-panel {
+  position: fixed;
+  z-index: 91;
+  display: flex;
+  flex-direction: column;
+  padding: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 38%);
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+/* Browsers without backdrop-filter get an opaque panel rather than an
+   unreadable translucent one. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .qc-menu-panel,
+  .qc-selection-bar {
+    background: var(--bg);
+  }
+}
+
+.qc-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  min-height: 2.6rem;
+  padding: 0.4rem 0.7rem;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.qc-menu-item:hover:not(:disabled) {
+  background: rgb(var(--accent-rgb) / 10%);
+}
+
+.qc-menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.qc-menu-item.danger {
+  color: var(--danger);
+}
+
+.qc-menu-item-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.qc-menu-item.danger .qc-menu-item-icon {
+  color: var(--danger);
+}
+
+.qc-menu-item-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.qc-menu-item-hint {
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
 .qc-rotation-bar {
@@ -1924,8 +2420,20 @@
   gap: 0.5rem;
 }
 
+/* Air time sits in its own right-hand column, immediately left of the row
+   menu, so the whole queue reads as a schedule down that edge. The shuffle
+   badge takes the slot the time used to occupy. */
 .qc-queue-airtime {
   flex-shrink: 0;
+  min-width: 4.25rem;
+  text-align: right;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.qc-queue-by {
   color: var(--muted);
   font-family: var(--mono);
   font-size: 0.72rem;
@@ -2012,38 +2520,6 @@
 
 .qc-recent-artist {
   color: var(--muted);
-}
-
-.qc-genre-bar-label {
-  flex-shrink: 0;
-  color: var(--text);
-  font-size: 0.9rem;
-  font-weight: 500;
-}
-
-.qc-genre-picker {
-  flex: 1;
-  min-width: 140px;
-  position: relative;
-}
-
-.qc-genre-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  flex-shrink: 0;
-}
-
-.qc-genre-clear {
-  padding-inline: 0.4rem;
-}
-
-.qc-genre-notice {
-  flex-basis: 100%;
-  color: var(--accent);
-  font-family: var(--mono);
-  font-size: 0.75rem;
 }
 
 .searchable-dropdown-item {

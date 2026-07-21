@@ -848,8 +848,10 @@ h1.marquee {
     width: min(86%, calc(100vw - 2rem), 24rem, calc(100dvh - 24rem));
   }
 
-  /* The visualizer needs the Web Audio graph, which mobile defers until the
-     EQ is opened — so on phones the bars just sit flatlined. Drop them. */
+  /* The visualizer needs the Web Audio graph, which mobile never attaches:
+     routing through MediaElementSource makes the OS suspend audio on lock
+     screen / backgrounding, so the EQ panel is desktop-only. The bars would
+     sit flatlined here. Drop them. */
   .nowplaying-waveform {
     display: none;
   }
