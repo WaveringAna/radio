@@ -274,6 +274,46 @@ export function createQueueControl(props: QueueControlProps) {
     if (await addAlbumToQueue(ids)) setClearedSongIds([])
   }
 
+  // Genre station: pick a genre, shuffle every song tagged with it straight
+  // into (or in place of) the queue.
+  const [selectedGenre, setSelectedGenre] = createSignal('')
+  const genres = createMemo(() => {
+    const list = (songs() ?? [])
+      .map((song) => song.genre?.trim())
+      .filter((genre): genre is string => !!genre)
+    return [...new Set(list)].sort()
+  })
+  const genreCounts = createMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const genre of genres()) {
+      counts[genre] = (songs() ?? []).filter((song) => song.genre?.toLowerCase() === genre.toLowerCase()).length
+    }
+    return counts
+  })
+  const selectedGenreCount = () => genreCounts()[selectedGenre()] ?? 0
+  const [genreNotice, setGenreNotice] = createSignal<string | null>(null)
+  let genreNoticeTimer: number | undefined
+  const flashGenreNotice = (message: string) => {
+    setGenreNotice(message)
+    window.clearTimeout(genreNoticeTimer)
+    genreNoticeTimer = window.setTimeout(() => setGenreNotice(null), 4000)
+  }
+  onCleanup(() => window.clearTimeout(genreNoticeTimer))
+
+  const shuffleLibraryByGenre = async (genre: string, replace: boolean) => {
+    if (!genre) return
+    const matchingSongIds = (songs() ?? [])
+      .filter((song) => song.genre?.toLowerCase() === genre.toLowerCase())
+      .map((song) => song.id)
+    if (matchingSongIds.length === 0) return
+
+    const shuffled = [...matchingSongIds].sort(() => Math.random() - 0.5)
+    if (replace && !(await clearTheQueue())) return
+    if (await addAlbumToQueue(shuffled)) {
+      flashGenreNotice(`${replace ? 'now playing' : 'queued'} ${shuffled.length} ${genre} song${shuffled.length === 1 ? '' : 's'}, shuffled`)
+    }
+  }
+
   const applyQueueOrder = async (queueIds: string[]) => {
     try {
       setPageError(null)
@@ -663,6 +703,14 @@ export function createQueueControl(props: QueueControlProps) {
     clearTheQueue,
     undoClearQueue,
     clearedSongIds,
+    // genre station
+    selectedGenre,
+    setSelectedGenre,
+    genres,
+    genreCounts,
+    selectedGenreCount,
+    genreNotice,
+    shuffleLibraryByGenre,
     applyQueueOrder,
     shuffleQueueOrder,
     moveQueueItem,

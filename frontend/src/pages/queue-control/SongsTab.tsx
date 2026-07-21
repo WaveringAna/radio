@@ -1,6 +1,7 @@
 import { createEffect, createSignal, For, Show, type Accessor } from 'solid-js'
-import { Pencil, UploadCloud } from 'lucide-solid'
+import { Pencil, UploadCloud, X } from 'lucide-solid'
 import { PaginationRow } from '../../shared/components/PaginationRow'
+import { SearchableDropdown } from '../../shared/components/SearchableDropdown'
 import { createPagedList } from '../../shared/primitives/createPagedList'
 import type { Song } from '../../shared/lib/radio'
 import { LibraryRow } from './LibraryRow'
@@ -61,6 +62,50 @@ export function SongsTab(props: SongsTabProps) {
 
   return (
     <>
+      <div class="qc-genre-bar">
+        <span class="qc-genre-bar-label">genre station</span>
+        <div class="qc-genre-picker">
+          <SearchableDropdown
+            options={control.genres()}
+            counts={control.genreCounts()}
+            placeholder="pick a genre..."
+            value={control.selectedGenre()}
+            onSelect={(val) => control.setSelectedGenre(val)}
+          />
+        </div>
+        <Show when={control.selectedGenre()}>
+          <div class="qc-genre-actions">
+            <button
+              class="pill-button subtle"
+              type="button"
+              disabled={control.selectedGenreCount() === 0}
+              onClick={() => void control.shuffleLibraryByGenre(control.selectedGenre(), false)}
+            >
+              add {control.selectedGenreCount()} to queue
+            </button>
+            <button
+              class="pill-button subtle"
+              type="button"
+              disabled={control.selectedGenreCount() === 0}
+              title="clears the current queue first"
+              onClick={() => {
+                const queued = control.snapshot()?.queue.length ?? 0
+                if (queued === 0 || confirm(`Replace the current queue (${queued} songs) with ${control.selectedGenreCount()} shuffled ${control.selectedGenre()} songs?`)) {
+                  void control.shuffleLibraryByGenre(control.selectedGenre(), true)
+                }
+              }}
+            >
+              replace queue
+            </button>
+            <button class="pill-button subtle qc-genre-clear" type="button" aria-label="clear genre" onClick={() => control.setSelectedGenre('')}>
+              <X size={15} />
+            </button>
+          </div>
+        </Show>
+        <Show when={control.genreNotice()}>
+          <span class="qc-genre-notice" role="status">{control.genreNotice()}</span>
+        </Show>
+      </div>
       <Show when={!control.songs.loading} fallback={<p class="list-empty">loading songs...</p>}>
         <ul class="qc-songs-list">
           <For each={paging.paged()} fallback={<li class="list-empty">no songs match</li>}>
