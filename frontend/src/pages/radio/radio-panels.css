@@ -281,7 +281,7 @@
 }
 
 .pagination-row.compact {
-  padding: 0.75rem 1rem;
+  padding: 0.4rem 1rem;
 }
 
 .pill-button.subtle {
@@ -474,15 +474,13 @@
   height: 0.72rem;
 }
 
-.station-tuner-copy,
-.station-preset-copy {
+.station-tuner-copy {
   display: grid;
   min-width: 0;
   gap: 0.18rem;
 }
 
-.station-tuner-label,
-.station-preset-status {
+.station-tuner-label {
   color: var(--accent);
   font-size: 0.66rem;
   letter-spacing: 0;
@@ -490,8 +488,7 @@
   text-transform: uppercase;
 }
 
-.station-tuner-copy strong,
-.station-preset-copy strong {
+.station-tuner-copy strong {
   min-width: 0;
   overflow: hidden;
   color: var(--text);
@@ -502,8 +499,7 @@
   white-space: nowrap;
 }
 
-.station-tuner-copy small,
-.station-preset-copy small {
+.station-tuner-copy small {
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
@@ -542,19 +538,17 @@
 }
 
 .station-tuner-stepper button:focus-visible,
-.station-presets button:focus-visible {
+.station-tuner-preset:focus-visible {
   outline: 1px dotted var(--accent);
   outline-offset: -2px;
 }
 
-.station-tuner-stepper button:active:not(:disabled),
-.station-presets button:active {
+.station-tuner-stepper button:active:not(:disabled) {
   transform: scale(0.96);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .station-tuner-stepper button:hover:not(:disabled),
-  .station-presets button:hover {
+  .station-tuner-stepper button:hover:not(:disabled) {
     color: var(--text);
   }
 }
@@ -595,67 +589,78 @@
   transition: left 220ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.station-presets {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(9.5rem, 1fr);
-  min-width: 0;
-  max-width: 100%;
-  margin: 0;
+/* Presets live directly on the frequency track as their own ticks, rather
+   than a second row underneath — the name only surfaces in a tooltip on
+   hover/focus, same pattern as the listener avatars below. */
+.station-tuner-preset {
+  position: absolute;
+  bottom: 0;
+  width: 0.9rem;
+  height: 100%;
   padding: 0;
-  overflow-x: auto;
-  border-top: 1px solid var(--hairline);
-  list-style: none;
-  scrollbar-width: thin;
-  scroll-snap-type: x proximity;
-}
-
-.station-presets li {
-  min-width: 0;
-  border-right: 1px solid color-mix(in srgb, var(--hairline) 72%, transparent);
-  scroll-snap-align: start;
-}
-
-.station-presets li:last-child {
-  border-right: 0;
-}
-
-.station-presets button {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 0.55rem;
-  align-items: center;
-  width: 100%;
-  min-width: 0;
-  min-height: 2.2rem;
-  padding: 0.25rem 0.75rem;
   border: 0;
-  color: var(--muted);
   background: transparent;
-  font-family: var(--mono);
-  text-align: left;
+  color: var(--text);
   cursor: pointer;
-  transition: color 140ms ease, transform 120ms ease-out;
+  transform: translateX(-50%);
+  transition: color 140ms ease;
 }
 
-.station-presets button[aria-checked='true'] {
+.station-tuner-preset::before {
+  content: '';
+  position: absolute;
+  bottom: -0.18rem;
+  left: 50%;
+  width: 2.5px;
+  height: 1.35rem;
+  background: currentColor;
+  opacity: 0.8;
+  border-radius: 1px;
+  transform: translateX(-50%);
+  transition: background-color 140ms ease, height 140ms ease, opacity 140ms ease;
+}
+
+.station-tuner-preset[aria-checked='true'] {
   color: var(--accent);
 }
 
-.station-presets button[aria-checked='true'] .station-preset-copy strong {
-  color: var(--accent);
+.station-tuner-preset[aria-checked='true']::before {
+  height: 1.5rem;
+  opacity: 1;
+  background: var(--accent);
+  box-shadow: 0 0 0.5rem rgb(var(--accent-rgb) / 55%);
 }
 
-.station-preset-number {
-  padding-top: 0.05rem;
-  color: currentColor;
-  font-size: 0.68rem;
-  line-height: 1.2;
+@media (hover: hover) and (pointer: fine) {
+  .station-tuner-preset:hover::before {
+    opacity: 0.9;
+  }
 }
 
-.station-preset-status {
-  align-self: center;
+.station-tuner-preset::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  left: 50%;
+  transform: translate(-50%, 4px);
+  padding: 0.4rem 0.65rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 500;
   white-space: nowrap;
+  color: #fff;
+  background: rgb(0 0 0 / 88%);
+  border-radius: 0.45rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 6;
+}
+
+.station-tuner-preset:hover::after,
+.station-tuner-preset:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .chat-card {
@@ -664,7 +669,7 @@
   min-width: 0;
   max-width: 100%;
   min-height: 0;
-  max-height: 13rem;
+  max-height: 19rem;
   overflow-x: clip;
   background: transparent;
 }
@@ -931,15 +936,6 @@
     height: 1.75rem;
   }
 
-  .station-presets {
-    grid-auto-columns: minmax(8.75rem, 1fr);
-  }
-
-  .station-presets button {
-    min-height: 3.75rem;
-    padding-inline: 0.65rem;
-  }
-
   /* The metadata column's 10rem floor is reserved even on rows that don't fill
      it, which leaves the title almost no room on a phone. Let it collapse. */
   .song-list li {
@@ -960,12 +956,11 @@
 
 @media (prefers-reduced-motion: reduce) {
   .station-tuner-stepper button,
-  .station-presets button {
+  .station-tuner-preset {
     transition: color 120ms ease;
   }
 
-  .station-tuner-stepper button:active:not(:disabled),
-  .station-presets button:active {
+  .station-tuner-stepper button:active:not(:disabled) {
     transform: none;
   }
 

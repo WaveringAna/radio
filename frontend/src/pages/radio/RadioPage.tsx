@@ -898,52 +898,47 @@ export default function RadioPage(props: RadioPageProps) {
           </button>
         </div>
       </div>
-      <div class="station-tuner-dial" style={`--station-needle: ${stationNeedlePosition()}%`} aria-hidden="true">
-        <span>88</span>
-        <span class="station-tuner-track"><i /></span>
-        <span>108</span>
+      <div class="station-tuner-dial" style={`--station-needle: ${stationNeedlePosition()}%`}>
+        <span aria-hidden="true">88</span>
+        <div
+          class="station-tuner-track"
+          role="radiogroup"
+          aria-label="station presets"
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+              event.preventDefault()
+              tuneStationBy(-1, true)
+            }
+            if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+              event.preventDefault()
+              tuneStationBy(1, true)
+            }
+          }}
+        >
+          <i aria-hidden="true" />
+          <For each={tuneInStations()}>
+            {(station, index) => {
+              const stationCount = () => tuneInStations().length
+              const presetPosition = () => (stationCount() <= 1 ? 50 : (index() / (stationCount() - 1)) * 100)
+              return (
+                <button
+                  type="button"
+                  role="radio"
+                  class="station-tuner-preset"
+                  style={`left: ${presetPosition()}%`}
+                  aria-checked={isSelectedStation(station)}
+                  aria-label={`tune in to ${stationHost(station)}${isSelectedStation(station) ? ' (on air)' : ''}`}
+                  data-tooltip={`${stationPresetName(station)} — ${station.local ? 'local' : stationHost(station)}${isSelectedStation(station) ? ' · on air' : ''}`}
+                  tabIndex={isSelectedStation(station) ? 0 : -1}
+                  data-station-preset={index()}
+                  onClick={() => selectTuneInStation(station)}
+                />
+              )
+            }}
+          </For>
+        </div>
+        <span aria-hidden="true">108</span>
       </div>
-      <ol
-        class="station-presets"
-        role="radiogroup"
-        aria-label="station presets"
-        onKeyDown={(event) => {
-          if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-            event.preventDefault()
-            tuneStationBy(-1, true)
-          }
-          if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-            event.preventDefault()
-            tuneStationBy(1, true)
-          }
-        }}
-      >
-        <For each={tuneInStations()}>
-          {(station, index) => (
-            <li>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={isSelectedStation(station)}
-                aria-label={`tune in to ${stationHost(station)}`}
-                title={station.url}
-                tabIndex={isSelectedStation(station) ? 0 : -1}
-                data-station-preset={index()}
-                onClick={() => selectTuneInStation(station)}
-              >
-                <span class="station-preset-number">{String(index() + 1).padStart(2, '0')}</span>
-                <span class="station-preset-copy">
-                  <strong>{stationPresetName(station)}</strong>
-                  <small>{station.local ? 'local' : stationHost(station)}</small>
-                </span>
-                <Show when={isSelectedStation(station)}>
-                  <span class="station-preset-status">on air</span>
-                </Show>
-              </button>
-            </li>
-          )}
-        </For>
-      </ol>
     </section>
   )
 
@@ -1035,12 +1030,12 @@ export default function RadioPage(props: RadioPageProps) {
     </section>
   )
 
-  const queuePageSize = 6
+  const queuePageSize = 5
   const upNextPaging = createPagedList(localQueue, queuePageSize)
 
-  // Live progress readout mirroring the queue page's banner. When actually
-  // listening, the audio element is the truth; otherwise derive the position
-  // from the snapshot state plus elapsed wall time.
+  // Live progress readout. When actually listening, the audio element is the
+  // truth; otherwise derive the position from the snapshot state plus
+  // elapsed wall time.
   const [clock, setClock] = createSignal(Date.now())
   const [stateSyncedAt, setStateSyncedAt] = createSignal(Date.now())
   {
@@ -1058,29 +1053,11 @@ export default function RadioPage(props: RadioPageProps) {
     if (state.status !== 'playing') return state.positionSeconds
     return Math.max(0, state.positionSeconds + Math.floor((clock() - stateSyncedAt()) / 1000))
   }
-  const displayProgressPercent = () => {
-    const duration = currentSong()?.durationSeconds
-    if (!duration || duration <= 0) return 0
-    return Math.min(100, Math.max(0, (liveDisplayPosition() / duration) * 100))
-  }
   const formatClock = (seconds: number | null | undefined) => {
     if (!seconds || seconds < 0) return '0:00'
     const minutes = Math.floor(seconds / 60)
     return `${minutes}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`
   }
-  const [showRemaining, setShowRemaining] = createSignal(false)
-  // Station-log style: when this song hit the air, in wall-clock time.
-  // Derived from the displayed position so it always agrees with the bar.
-  const wallClockLabel = (msFromNow: number) => {
-    const at = new Date(Date.now() + msFromNow)
-    let hours = at.getHours()
-    const minutes = at.getMinutes()
-    const ampm = hours >= 12 ? 'pm' : 'am'
-    hours = hours % 12 || 12
-    return `${hours}:${minutes < 10 ? '0' + minutes : minutes} ${ampm}`
-  }
-  const songStartedLabel = () => wallClockLabel(-liveDisplayPosition() * 1000)
-  const songEndsLabel = () => wallClockLabel(Math.max(0, (currentSong()?.durationSeconds ?? 0) - liveDisplayPosition()) * 1000)
 
   // Deterministic rotation peek, so an empty queue can still say what's next.
   const [rotationInfo, { refetch: refetchRotationInfo }] = createResource(
@@ -1366,110 +1343,25 @@ export default function RadioPage(props: RadioPageProps) {
                 <span ref={setTitleTextEl}>{currentSongTitle()}</span>
               </span>
             </h1>
-            <div class="nowplaying-title-side">
-              <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
-                <button
-                  class="listen-icon-button"
-                  type="button"
-                  onClick={() => void startListening()}
-                  aria-label={isAudioPlaying() ? 'listening live' : 'listen live'}
-                  title={isAudioPlaying() ? 'listening live' : 'listen live'}
-                >
-                  <Show when={isAudioPlaying()} fallback={<Play size={19} strokeWidth={1.8} fill="currentColor" />}>
-                    <AudioLines size={19} strokeWidth={1.9} />
-                  </Show>
-                </button>
-              </Show>
-              <div class="nowplaying-meta-row">
-                <div class="live-viewer-counter compact-viewer-counter" aria-live="polite">
-                  <Eye size={16} />
-                  <span>{viewerCountLabel()}</span>
-                  <Show when={listenerDids().length > 0}>
-                    <ul class="listener-avatars" aria-label="listeners">
-                      <For each={visibleListenerDids()}>
-                        {(did) => {
-                          const profile = () => profileFor(did)
-                          return (
-                            <li>
-                              <a
-                                href={`https://bsky.app/profile/${profile().handle}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                data-handle={`@${profile().handle}`}
-                              >
-                                <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
-                              </a>
-                            </li>
-                          )
-                        }}
-                      </For>
-                      <Show when={overflowListenerDids().length > 0}>
-                        <li>
-                          <button
-                            type="button"
-                            class="listener-avatar-more"
-                            aria-expanded={listenerOverflowOpen()}
-                            aria-label={`show ${overflowListenerDids().length} more listeners`}
-                            data-handle={`+${overflowListenerDids().length} more`}
-                            onClick={() => setListenerOverflowOpen((open) => !open)}
-                          >
-                            +{overflowListenerDids().length}
-                          </button>
-                        </li>
-                        <Show when={listenerOverflowOpen()}>
-                          <ul class="listener-avatars-overflow" aria-label="more listeners">
-                            <For each={overflowListenerDids()}>
-                              {(did) => {
-                                const profile = () => profileFor(did)
-                                return (
-                                  <li>
-                                    <a
-                                      href={`https://bsky.app/profile/${profile().handle}`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
-                                      <span>{profile().displayName || `@${profile().handle}`}</span>
-                                    </a>
-                                  </li>
-                                )
-                              }}
-                            </For>
-                          </ul>
-                        </Show>
-                      </Show>
-                    </ul>
-                  </Show>
-                </div>
-              </div>
-            </div>
+            <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
+              <button
+                class="listen-icon-button"
+                type="button"
+                onClick={() => void startListening()}
+                aria-label={isAudioPlaying() ? 'listening live' : 'listen live'}
+                title={isAudioPlaying() ? 'listening live' : 'listen live'}
+              >
+                <Show when={isAudioPlaying()} fallback={<Play size={19} strokeWidth={1.8} fill="currentColor" />}>
+                  <AudioLines size={19} strokeWidth={1.9} />
+                </Show>
+              </button>
+            </Show>
           </div>
           <p class="subtitle nowplaying-artist-album" title={artistAlbumLine()}>{artistAlbumLine()}</p>
           <Show when={currentSong()?.durationSeconds}>
-            <div class="nowplaying-progress">
-              <div
-                class="nowplaying-progress-track"
-                role="progressbar"
-                aria-label="song progress"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                aria-valuenow={Math.round(displayProgressPercent())}
-                style={`--progress-pct: ${displayProgressPercent()}%`}
-              />
-              <div class="nowplaying-time-row">
-                <span title="when this song started">started {songStartedLabel()}</span>
-                <button
-                  class="nowplaying-duration"
-                  type="button"
-                  title={showRemaining() ? 'show end time' : 'show time remaining'}
-                  onClick={() => setShowRemaining((prev) => !prev)}
-                >
-                  {showRemaining()
-                    ? `-${formatClock(Math.max(0, (currentSong()?.durationSeconds ?? 0) - liveDisplayPosition()))}`
-                    : `ends ${songEndsLabel()}`}
-                </button>
-              </div>
-            </div>
+            <p class="nowplaying-time-simple">
+              {formatClock(liveDisplayPosition())} / {formatClock(currentSong()?.durationSeconds)}
+            </p>
           </Show>
           <div class="volume-control local-volume">
             <button
@@ -1502,6 +1394,81 @@ export default function RadioPage(props: RadioPageProps) {
                 }
               }}
             />
+            </Show>
+          </div>
+          <div class="nowplaying-meta-row">
+            <div class="live-viewer-counter compact-viewer-counter" aria-live="polite">
+              <Eye size={16} />
+              <span>{viewerCountLabel()}</span>
+              <Show when={listenerDids().length > 0}>
+                <ul class="listener-avatars" aria-label="listeners">
+                  <For each={visibleListenerDids()}>
+                    {(did) => {
+                      const profile = () => profileFor(did)
+                      return (
+                        <li>
+                          <a
+                            href={`https://bsky.app/profile/${profile().handle}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            data-handle={`@${profile().handle}`}
+                          >
+                            <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
+                          </a>
+                        </li>
+                      )
+                    }}
+                  </For>
+                  <Show when={overflowListenerDids().length > 0}>
+                    <li>
+                      <button
+                        type="button"
+                        class="listener-avatar-more"
+                        aria-expanded={listenerOverflowOpen()}
+                        aria-label={`show ${overflowListenerDids().length} more listeners`}
+                        data-handle={`+${overflowListenerDids().length} more`}
+                        onClick={() => setListenerOverflowOpen((open) => !open)}
+                      >
+                        +{overflowListenerDids().length}
+                      </button>
+                    </li>
+                    <Show when={listenerOverflowOpen()}>
+                      <ul class="listener-avatars-overflow" aria-label="more listeners">
+                        <For each={overflowListenerDids()}>
+                          {(did) => {
+                            const profile = () => profileFor(did)
+                            return (
+                              <li>
+                                <a
+                                  href={`https://bsky.app/profile/${profile().handle}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
+                                  <span>{profile().displayName || `@${profile().handle}`}</span>
+                                </a>
+                              </li>
+                            )
+                          }}
+                        </For>
+                      </ul>
+                    </Show>
+                  </Show>
+                </ul>
+              </Show>
+            </div>
+            <Show when={currentSong()}>
+              {(song) => {
+                const profile = () => profileFor(song().addedByDid)
+                return (
+                  <a class="track-attribution" href={`https://bsky.app/profile/${profile().handle}`} target="_blank" rel="noreferrer" title={`uploaded by @${profile().handle}`}>
+                    <ProfileAvatar profile={profile()} class="track-attribution-avatar" title={`@${profile().handle}`} />
+                    <span>
+                      uploaded by <strong>@{profile().handle}</strong>
+                    </span>
+                  </a>
+                )
+              }}
             </Show>
           </div>
         </section>
