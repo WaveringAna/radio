@@ -290,6 +290,7 @@ async fn main() -> anyhow::Result<()> {
         station_announce_relays = ?config.station_announce_relays,
         station_url = %config.station_url,
         station_name = %config.station_name,
+        admin_dids = ?config.admin_dids,
         "radio backend listening"
     );
 
