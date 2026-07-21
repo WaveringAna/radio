@@ -8,13 +8,13 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
+use crate::pet_nkp::radio::SubsonicSongResult;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_common::types::string::UriValue;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Serialize, Deserialize};
-use crate::pet_nkp::radio::SubsonicSongResult;
+use serde::{Deserialize, Serialize};
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
@@ -30,7 +30,6 @@ pub struct Search<'a> {
     pub username: CowStr<'a>,
 }
 
-
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
 #[serde(rename_all = "camelCase")]
@@ -38,7 +37,6 @@ pub struct SearchOutput<'a> {
     #[serde(borrow)]
     pub results: Vec<SubsonicSongResult<'a>>,
 }
-
 
 #[open_union]
 #[derive(
@@ -50,9 +48,8 @@ pub struct SearchOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic
+    IntoStatic,
 )]
-
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum SearchError<'a> {
@@ -113,9 +110,8 @@ impl jacquard_common::xrpc::XrpcResp for SearchResponse {
 
 impl<'a> jacquard_common::xrpc::XrpcRequest for Search<'a> {
     const NSID: &'static str = "pet.nkp.radio.subsonic.search";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Response = SearchResponse;
 }
 
@@ -123,16 +119,15 @@ impl<'a> jacquard_common::xrpc::XrpcRequest for Search<'a> {
 pub struct SearchRequest;
 impl jacquard_common::xrpc::XrpcEndpoint for SearchRequest {
     const PATH: &'static str = "/xrpc/pet.nkp.radio.subsonic.search";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Request<'de> = Search<'de>;
     type Response = SearchResponse;
 }
 
 pub mod search_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {

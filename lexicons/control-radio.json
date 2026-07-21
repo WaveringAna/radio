@@ -13,11 +13,29 @@
           "properties": {
             "action": {
               "type": "string",
-              "knownValues": ["play", "pause", "stop", "skip", "previous"]
+              "knownValues": [
+                "play",
+                "pause",
+                "stop",
+                "skip",
+                "previous",
+                "shuffle",
+                "setLoopMode",
+                "setLoopPlaylist"
+              ]
             },
             "intent": {
               "type": "string",
               "knownValues": ["explicit_admin_action"]
+            },
+            "loopMode": {
+              "type": "string",
+              "description": "Required for setLoopMode: how finished queue tracks are recycled.",
+              "knownValues": ["off", "one", "queue"]
+            },
+            "loopPlaylistId": {
+              "type": "string",
+              "description": "For setLoopPlaylist: the playlist to reload when the queue drains. Omit to stop looping a playlist."
             }
           }
         }

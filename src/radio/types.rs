@@ -17,6 +17,12 @@ pub(crate) struct RadioState {
     /// library instead of stepping through album loops.
     #[serde(default)]
     pub(crate) shuffle: bool,
+    /// How finished queue tracks are recycled: "off", "one", or "queue".
+    #[serde(default)]
+    pub(crate) loop_mode: String,
+    /// Playlist re-queued automatically whenever the queue drains.
+    #[serde(default)]
+    pub(crate) loop_playlist_id: Option<String>,
 }
 
 /// Song metadata stored by the backend.
@@ -190,6 +196,10 @@ pub(crate) enum RadioControlAction {
     Previous,
     /// Toggles station-wide shuffle mode.
     Shuffle,
+    /// Sets how finished queue tracks are recycled.
+    SetLoopMode(String),
+    /// Pins (or, with `None`, unpins) the playlist that reloads when the queue drains.
+    SetLoopPlaylist(Option<String>),
 }
 
 /// A saved playlist/set of songs.
@@ -199,6 +209,8 @@ pub(crate) struct Playlist {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) created_at: i64,
+    /// Randomize the track order every time this set is loaded into the queue.
+    pub(crate) shuffle_on_load: bool,
     #[sqlx(skip)]
     pub(crate) tracks: Vec<Song>,
 }

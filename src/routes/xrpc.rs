@@ -13,8 +13,8 @@ use radio_lexicons::pet_nkp::radio::{
     ChatBan as XrpcChatBan, ChatMessage as XrpcChatMessage, ChatMessageKind as XrpcChatMessageKind,
     Playlist as XrpcPlaylist, QueueItem as XrpcQueueItem, RadioAlbum as XrpcRadioAlbum,
     RadioSnapshot as XrpcRadioSnapshot, RadioState as XrpcRadioState,
-    RadioStateStatus as XrpcRadioStateStatus, Song as XrpcSong,
-    SubsonicSongResult as XrpcSubsonicSongResult,
+    RadioStateLoopMode as XrpcRadioStateLoopMode, RadioStateStatus as XrpcRadioStateStatus,
+    Song as XrpcSong, SubsonicSongResult as XrpcSubsonicSongResult,
     admin::{
         modify::{
             ModifyAction as AdminModifyAction, ModifyError as AdminModifyError,
@@ -242,6 +242,9 @@ pub(crate) fn xrpc_radio_state(state: crate::radio::RadioState) -> XrpcRadioStat
         .maybe_paused_at(state.paused_at)
         .position_seconds(state.position_seconds)
         .maybe_updated_by_did(optional_xrpc_cow(state.updated_by_did))
+        .shuffle(state.shuffle)
+        .loop_mode(XrpcRadioStateLoopMode::from(state.loop_mode))
+        .maybe_loop_playlist_id(optional_xrpc_cow(state.loop_playlist_id))
         .build()
 }
 
@@ -279,6 +282,7 @@ pub(crate) fn xrpc_playlist(playlist: crate::radio::Playlist) -> XrpcPlaylist<'s
         id: xrpc_cow(playlist.id),
         name: xrpc_cow(playlist.name),
         created_at: playlist.created_at,
+        shuffle_on_load: Some(playlist.shuffle_on_load),
         tracks: playlist.tracks.into_iter().map(xrpc_song).collect(),
         extra_data: None,
     }
@@ -538,7 +542,12 @@ pub(crate) async fn xrpc_queue_modify(
                 .collect();
             state
                 .radio
-                .enqueue_songs(&song_ids, &admin_did)
+                .enqueue_songs_at(
+                    &song_ids,
+                    &admin_did,
+                    request.at_top.unwrap_or(false),
+                    request.sequence.unwrap_or(false),
+                )
                 .await
                 .map_err(|error| {
                     tracing::warn!(?error, "xrpc queue.modify enqueue failed");
@@ -604,6 +613,13 @@ pub(crate) async fn xrpc_queue_modify(
                     )
                 })?
         }
+        QueueModifyAction::Sequence => state.radio.sequence_queue().await.map_err(|error| {
+            tracing::warn!(?error, "xrpc queue.modify sequence failed");
+            xrpc_typed_error(
+                StatusCode::BAD_REQUEST,
+                QueueModifyError::InvalidRequest(Some(CowStr::from(error.to_string()))),
+            )
+        })?,
         QueueModifyAction::Other(action) => {
             return Err(xrpc_typed_error(
                 StatusCode::BAD_REQUEST,
@@ -873,9 +889,25 @@ pub(crate) async fn xrpc_control(
         XrpcControlAction::Stop => RadioControlAction::Stop,
         XrpcControlAction::Skip => RadioControlAction::Skip,
         XrpcControlAction::Previous => RadioControlAction::Previous,
-        XrpcControlAction::Other(action) if action.as_ref() == "shuffle" => {
-            RadioControlAction::Shuffle
+        XrpcControlAction::Shuffle => RadioControlAction::Shuffle,
+        XrpcControlAction::SetLoopMode => {
+            let mode = request.loop_mode.ok_or_else(|| {
+                xrpc_typed_error(
+                    StatusCode::BAD_REQUEST,
+                    ControlError::InvalidRequest(xrpc_message(
+                        "loopMode is required for setLoopMode",
+                    )),
+                )
+            })?;
+            RadioControlAction::SetLoopMode(mode.as_str().to_owned())
         }
+        // An omitted playlist id is meaningful here: it unpins the loop.
+        XrpcControlAction::SetLoopPlaylist => RadioControlAction::SetLoopPlaylist(
+            request
+                .loop_playlist_id
+                .map(|id| id.as_ref().to_owned())
+                .filter(|id| !id.is_empty()),
+        ),
         XrpcControlAction::Other(action) => {
             return Err(xrpc_typed_error(
                 StatusCode::BAD_REQUEST,
@@ -977,7 +1009,7 @@ pub(crate) async fn xrpc_albums_modify(
                 .merge_albums(request.album_id.as_ref(), target_album_id.as_ref())
                 .await
         }
-        AlbumsModifyAction::Other(action) if action.as_ref() == "setWeight" => {
+        AlbumsModifyAction::SetWeight => {
             let weight = request.weight.ok_or_else(|| {
                 xrpc_typed_error(
                     StatusCode::BAD_REQUEST,
@@ -1038,6 +1070,59 @@ pub(crate) async fn xrpc_playlists_list(
 
     Ok(Json(PlaylistsListOutput {
         playlists: playlists.into_iter().map(xrpc_playlist).collect(),
+        extra_data: None,
+    }))
+}
+
+type PlaylistsModifyResult =
+    Result<Json<PlaylistsModifyOutput<'static>>, XrpcErrorResponse<PlaylistsModifyError<'static>>>;
+
+fn require_playlist_id<'a>(
+    playlist_id: &'a Option<CowStr<'a>>,
+    action: &str,
+) -> Result<&'a str, XrpcErrorResponse<PlaylistsModifyError<'static>>> {
+    playlist_id.as_ref().map(|id| id.as_ref()).ok_or_else(|| {
+        xrpc_typed_error(
+            StatusCode::BAD_REQUEST,
+            PlaylistsModifyError::InvalidRequest(Some(CowStr::from(format!(
+                "playlistId is required for {action}"
+            )))),
+        )
+    })
+}
+
+fn require_song_ids(
+    song_ids: &Option<Vec<CowStr<'_>>>,
+    action: &str,
+) -> Result<Vec<String>, XrpcErrorResponse<PlaylistsModifyError<'static>>> {
+    song_ids
+        .as_ref()
+        .map(|ids| ids.iter().map(|id| id.as_ref().to_owned()).collect())
+        .ok_or_else(|| {
+            xrpc_typed_error(
+                StatusCode::BAD_REQUEST,
+                PlaylistsModifyError::InvalidRequest(Some(CowStr::from(format!(
+                    "songIds is required for {action}"
+                )))),
+            )
+        })
+}
+
+/// Wraps a playlist-editing service call in the shared modify response shape.
+fn playlist_result(result: anyhow::Result<crate::radio::Playlist>) -> PlaylistsModifyResult {
+    let playlist = result.map_err(|error| {
+        tracing::warn!(?error, "xrpc playlists.modify failed");
+        let message = error.to_string();
+        let typed = if message.contains("not found") {
+            PlaylistsModifyError::PlaylistNotFound(Some(CowStr::from(message)))
+        } else {
+            PlaylistsModifyError::InvalidRequest(Some(CowStr::from(message)))
+        };
+        xrpc_typed_error(StatusCode::BAD_REQUEST, typed)
+    })?;
+    Ok(Json(PlaylistsModifyOutput {
+        playlist: Some(xrpc_playlist(playlist)),
+        snapshot: None,
         extra_data: None,
     }))
 }
@@ -1137,6 +1222,7 @@ pub(crate) async fn xrpc_playlists_modify(
                 .load_playlist(
                     playlist_id.as_ref(),
                     request.replace.unwrap_or(false),
+                    request.shuffle,
                     &admin_did,
                 )
                 .await
@@ -1153,6 +1239,98 @@ pub(crate) async fn xrpc_playlists_modify(
                 snapshot: Some(xrpc_radio_snapshot(snapshot)),
                 extra_data: None,
             }))
+        }
+        PlaylistsModifyAction::Rename => {
+            let playlist_id = require_playlist_id(&request.playlist_id, "rename")?;
+            let name = request.name.as_ref().ok_or_else(|| {
+                xrpc_typed_error(
+                    StatusCode::BAD_REQUEST,
+                    PlaylistsModifyError::InvalidRequest(xrpc_message(
+                        "name is required for rename",
+                    )),
+                )
+            })?;
+            playlist_result(
+                state
+                    .radio
+                    .rename_playlist(playlist_id, name.as_ref())
+                    .await,
+            )
+        }
+        PlaylistsModifyAction::SetShuffleOnLoad => {
+            let playlist_id = require_playlist_id(&request.playlist_id, "setShuffleOnLoad")?;
+            let shuffle_on_load = request.shuffle_on_load.ok_or_else(|| {
+                xrpc_typed_error(
+                    StatusCode::BAD_REQUEST,
+                    PlaylistsModifyError::InvalidRequest(xrpc_message(
+                        "shuffleOnLoad is required for setShuffleOnLoad",
+                    )),
+                )
+            })?;
+            playlist_result(
+                state
+                    .radio
+                    .set_playlist_shuffle_on_load(playlist_id, shuffle_on_load)
+                    .await,
+            )
+        }
+        PlaylistsModifyAction::AddTracks => {
+            let playlist_id = require_playlist_id(&request.playlist_id, "addTracks")?;
+            let song_ids = require_song_ids(&request.song_ids, "addTracks")?;
+            playlist_result(
+                state
+                    .radio
+                    .append_playlist_tracks(playlist_id, &song_ids)
+                    .await,
+            )
+        }
+        PlaylistsModifyAction::RemoveTrack => {
+            let playlist_id = require_playlist_id(&request.playlist_id, "removeTrack")?;
+            let position = request.position.ok_or_else(|| {
+                xrpc_typed_error(
+                    StatusCode::BAD_REQUEST,
+                    PlaylistsModifyError::InvalidRequest(xrpc_message(
+                        "position is required for removeTrack",
+                    )),
+                )
+            })?;
+            playlist_result(
+                state
+                    .radio
+                    .remove_playlist_track(playlist_id, position)
+                    .await,
+            )
+        }
+        PlaylistsModifyAction::Reorder => {
+            let playlist_id = require_playlist_id(&request.playlist_id, "reorder")?;
+            let song_ids = require_song_ids(&request.song_ids, "reorder")?;
+            playlist_result(
+                state
+                    .radio
+                    .reorder_playlist_tracks(playlist_id, &song_ids)
+                    .await,
+            )
+        }
+        PlaylistsModifyAction::SequenceTracks => {
+            let playlist_id = require_playlist_id(&request.playlist_id, "sequenceTracks")?;
+            playlist_result(state.radio.sequence_playlist_tracks(playlist_id).await)
+        }
+        PlaylistsModifyAction::Duplicate => {
+            let playlist_id = require_playlist_id(&request.playlist_id, "duplicate")?;
+            let name = request.name.as_ref().ok_or_else(|| {
+                xrpc_typed_error(
+                    StatusCode::BAD_REQUEST,
+                    PlaylistsModifyError::InvalidRequest(xrpc_message(
+                        "name is required for duplicate",
+                    )),
+                )
+            })?;
+            playlist_result(
+                state
+                    .radio
+                    .duplicate_playlist(playlist_id, name.as_ref())
+                    .await,
+            )
         }
         PlaylistsModifyAction::Other(action) => Err(xrpc_typed_error(
             StatusCode::BAD_REQUEST,
@@ -1765,6 +1943,8 @@ mod tests {
                 position_seconds: 0,
                 updated_by_did: Some("did:plc:admin".into()),
                 shuffle: false,
+                loop_mode: "off".into(),
+                loop_playlist_id: None,
             },
             current_song: Some(song.clone()),
             queue: vec![QueueItem {

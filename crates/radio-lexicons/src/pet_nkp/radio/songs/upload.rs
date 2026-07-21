@@ -8,21 +8,20 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
+use crate::pet_nkp::radio::RadioSnapshot;
+use crate::pet_nkp::radio::Song;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_common::deps::bytes::Bytes;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Serialize, Deserialize};
-use crate::pet_nkp::radio::RadioSnapshot;
-use crate::pet_nkp::radio::Song;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
 #[serde(rename_all = "camelCase")]
 pub struct Upload {
     pub body: Bytes,
 }
-
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
@@ -35,7 +34,6 @@ pub struct UploadOutput<'a> {
     pub songs: Vec<Song<'a>>,
 }
 
-
 #[open_union]
 #[derive(
     Serialize,
@@ -46,9 +44,8 @@ pub struct UploadOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic
+    IntoStatic,
 )]
-
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum UploadError<'a> {
@@ -109,24 +106,19 @@ impl jacquard_common::xrpc::XrpcResp for UploadResponse {
 
 impl jacquard_common::xrpc::XrpcRequest for Upload {
     const NSID: &'static str = "pet.nkp.radio.songs.upload";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "multipart/form-data",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("multipart/form-data");
     type Response = UploadResponse;
     fn encode_body(&self) -> Result<Vec<u8>, jacquard_common::xrpc::EncodeError> {
         Ok(self.body.to_vec())
     }
-    fn decode_body<'de>(
-        body: &'de [u8],
-    ) -> Result<Box<Self>, jacquard_common::error::DecodeError>
+    fn decode_body<'de>(body: &'de [u8]) -> Result<Box<Self>, jacquard_common::error::DecodeError>
     where
         Self: serde::Deserialize<'de>,
     {
-        Ok(
-            Box::new(Self {
-                body: jacquard_common::deps::bytes::Bytes::copy_from_slice(body),
-            }),
-        )
+        Ok(Box::new(Self {
+            body: jacquard_common::deps::bytes::Bytes::copy_from_slice(body),
+        }))
     }
 }
 
@@ -134,9 +126,8 @@ impl jacquard_common::xrpc::XrpcRequest for Upload {
 pub struct UploadRequest;
 impl jacquard_common::xrpc::XrpcEndpoint for UploadRequest {
     const PATH: &'static str = "/xrpc/pet.nkp.radio.songs.upload";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "multipart/form-data",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("multipart/form-data");
     type Request<'de> = Upload;
     type Response = UploadResponse;
 }

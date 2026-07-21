@@ -141,7 +141,7 @@
       "type": "object",
       "description": "Radio playback status persisted by the backend.",
       "required": ["currentSongId", "status", "startedAt", "pausedAt", "positionSeconds", "updatedByDid"],
-      "nullable": ["currentSongId", "startedAt", "pausedAt", "updatedByDid"],
+      "nullable": ["currentSongId", "startedAt", "pausedAt", "updatedByDid", "loopPlaylistId"],
       "properties": {
         "currentSongId": {
           "type": "string",
@@ -168,6 +168,19 @@
         "updatedByDid": {
           "type": "string",
           "description": "DID or backend actor that last updated radio state."
+        },
+        "shuffle": {
+          "type": "boolean",
+          "description": "Whether the station auto-fills the queue with weighted random picks."
+        },
+        "loopMode": {
+          "type": "string",
+          "description": "How finished queue tracks are recycled.",
+          "knownValues": ["off", "one", "queue"]
+        },
+        "loopPlaylistId": {
+          "type": "string",
+          "description": "Playlist reloaded automatically whenever the queue drains."
         }
       }
     },
@@ -320,6 +333,10 @@
             "type": "ref",
             "ref": "#song"
           }
+        },
+        "shuffleOnLoad": {
+          "type": "boolean",
+          "description": "Randomize track order whenever this playlist is loaded into the queue."
         }
       }
     },

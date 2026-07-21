@@ -8,12 +8,12 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
+use crate::pet_nkp::radio::RadioSnapshot;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Serialize, Deserialize};
-use crate::pet_nkp::radio::RadioSnapshot;
+use serde::{Deserialize, Serialize};
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic, Default)]
@@ -22,6 +22,9 @@ pub struct Modify<'a> {
     ///Queue operation to perform. Required companion fields are enforced by the server.
     #[serde(borrow)]
     pub action: ModifyAction<'a>,
+    ///Insert ahead of the rest of the queue instead of appending, when action is enqueue. Default false.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at_top: Option<bool>,
     ///Queue item id to remove when action is remove.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(borrow)]
@@ -30,6 +33,9 @@ pub struct Modify<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(borrow)]
     pub queue_ids: Option<Vec<CowStr<'a>>>,
+    ///Order the enqueued songs by transition score (artist and album separation, energy, genre, tempo) instead of keeping the given order. Default false.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<bool>,
     ///Song ids to append when action is enqueue.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(borrow)]
@@ -44,6 +50,7 @@ pub enum ModifyAction<'a> {
     Remove,
     Clear,
     Reorder,
+    Sequence,
     Other(CowStr<'a>),
 }
 
@@ -54,6 +61,7 @@ impl<'a> ModifyAction<'a> {
             Self::Remove => "remove",
             Self::Clear => "clear",
             Self::Reorder => "reorder",
+            Self::Sequence => "sequence",
             Self::Other(s) => s.as_ref(),
         }
     }
@@ -66,6 +74,7 @@ impl<'a> From<&'a str> for ModifyAction<'a> {
             "remove" => Self::Remove,
             "clear" => Self::Clear,
             "reorder" => Self::Reorder,
+            "sequence" => Self::Sequence,
             _ => Self::Other(CowStr::from(s)),
         }
     }
@@ -78,6 +87,7 @@ impl<'a> From<String> for ModifyAction<'a> {
             "remove" => Self::Remove,
             "clear" => Self::Clear,
             "reorder" => Self::Reorder,
+            "sequence" => Self::Sequence,
             _ => Self::Other(CowStr::from(s)),
         }
     }
@@ -131,11 +141,11 @@ impl jacquard_common::IntoStatic for ModifyAction<'_> {
             ModifyAction::Remove => ModifyAction::Remove,
             ModifyAction::Clear => ModifyAction::Clear,
             ModifyAction::Reorder => ModifyAction::Reorder,
+            ModifyAction::Sequence => ModifyAction::Sequence,
             ModifyAction::Other(v) => ModifyAction::Other(v.into_static()),
         }
     }
 }
-
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
@@ -144,7 +154,6 @@ pub struct ModifyOutput<'a> {
     #[serde(borrow)]
     pub snapshot: RadioSnapshot<'a>,
 }
-
 
 #[open_union]
 #[derive(
@@ -156,9 +165,8 @@ pub struct ModifyOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic
+    IntoStatic,
 )]
-
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum ModifyError<'a> {
@@ -228,9 +236,8 @@ impl jacquard_common::xrpc::XrpcResp for ModifyResponse {
 
 impl<'a> jacquard_common::xrpc::XrpcRequest for Modify<'a> {
     const NSID: &'static str = "pet.nkp.radio.queue.modify";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Response = ModifyResponse;
 }
 
@@ -238,9 +245,8 @@ impl<'a> jacquard_common::xrpc::XrpcRequest for Modify<'a> {
 pub struct ModifyRequest;
 impl jacquard_common::xrpc::XrpcEndpoint for ModifyRequest {
     const PATH: &'static str = "/xrpc/pet.nkp.radio.queue.modify";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Request<'de> = Modify<'de>;
     type Response = ModifyResponse;
 }

@@ -16,7 +16,6 @@ pub mod songs;
 pub mod station;
 pub mod subsonic;
 
-
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
@@ -31,10 +30,10 @@ use jacquard_derive::{IntoStatic, lexicon};
 use jacquard_lexicon::lexicon::LexiconDoc;
 use jacquard_lexicon::schema::LexiconSchema;
 
+use crate::pet_nkp::radio;
 #[allow(unused_imports)]
 use jacquard_lexicon::validation::{ConstraintError, ValidationPath};
-use serde::{Serialize, Deserialize};
-use crate::pet_nkp::radio;
+use serde::{Deserialize, Serialize};
 /// Permission surfaced in the admin panel.
 
 #[lexicon]
@@ -94,7 +93,6 @@ pub struct ChatMessage<'a> {
     #[serde(borrow)]
     pub sender_did: CowStr<'a>,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ChatMessageKind<'a> {
@@ -195,6 +193,9 @@ pub struct Playlist<'a> {
     pub id: CowStr<'a>,
     #[serde(borrow)]
     pub name: CowStr<'a>,
+    ///Randomize track order whenever this playlist is loaded into the queue.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shuffle_on_load: Option<bool>,
     #[serde(borrow)]
     pub tracks: Vec<radio::Song<'a>>,
 }
@@ -283,11 +284,22 @@ pub struct RadioState<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(borrow)]
     pub current_song_id: Option<CowStr<'a>>,
+    ///How finished queue tracks are recycled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(borrow)]
+    pub loop_mode: Option<RadioStateLoopMode<'a>>,
+    ///Playlist reloaded automatically whenever the queue drains.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(borrow)]
+    pub loop_playlist_id: Option<CowStr<'a>>,
     ///Unix timestamp when playback was last paused.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paused_at: Option<i64>,
     ///Stored playback offset in seconds.
     pub position_seconds: i64,
+    ///Whether the station auto-fills the queue with weighted random picks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shuffle: Option<bool>,
     ///Unix timestamp when playback was last started.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<i64>,
@@ -298,6 +310,101 @@ pub struct RadioState<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(borrow)]
     pub updated_by_did: Option<CowStr<'a>>,
+}
+
+/// How finished queue tracks are recycled.
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RadioStateLoopMode<'a> {
+    Off,
+    One,
+    Queue,
+    Other(CowStr<'a>),
+}
+
+impl<'a> RadioStateLoopMode<'a> {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Off => "off",
+            Self::One => "one",
+            Self::Queue => "queue",
+            Self::Other(s) => s.as_ref(),
+        }
+    }
+}
+
+impl<'a> From<&'a str> for RadioStateLoopMode<'a> {
+    fn from(s: &'a str) -> Self {
+        match s {
+            "off" => Self::Off,
+            "one" => Self::One,
+            "queue" => Self::Queue,
+            _ => Self::Other(CowStr::from(s)),
+        }
+    }
+}
+
+impl<'a> From<String> for RadioStateLoopMode<'a> {
+    fn from(s: String) -> Self {
+        match s.as_str() {
+            "off" => Self::Off,
+            "one" => Self::One,
+            "queue" => Self::Queue,
+            _ => Self::Other(CowStr::from(s)),
+        }
+    }
+}
+
+impl<'a> core::fmt::Display for RadioStateLoopMode<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl<'a> AsRef<str> for RadioStateLoopMode<'a> {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl<'a> serde::Serialize for RadioStateLoopMode<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de, 'a> serde::Deserialize<'de> for RadioStateLoopMode<'a>
+where
+    'de: 'a,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = <&'de str>::deserialize(deserializer)?;
+        Ok(Self::from(s))
+    }
+}
+
+impl<'a> Default for RadioStateLoopMode<'a> {
+    fn default() -> Self {
+        Self::Other(Default::default())
+    }
+}
+
+impl jacquard_common::IntoStatic for RadioStateLoopMode<'_> {
+    type Output = RadioStateLoopMode<'static>;
+    fn into_static(self) -> Self::Output {
+        match self {
+            RadioStateLoopMode::Off => RadioStateLoopMode::Off,
+            RadioStateLoopMode::One => RadioStateLoopMode::One,
+            RadioStateLoopMode::Queue => RadioStateLoopMode::Queue,
+            RadioStateLoopMode::Other(v) => RadioStateLoopMode::Other(v.into_static()),
+        }
+    }
 }
 
 /// Current playback status.
@@ -1050,10 +1157,10 @@ impl<'a> LexiconSchema for SubsonicSongResult<'a> {
 }
 
 fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
+    use alloc::collections::BTreeMap;
     #[allow(unused_imports)]
     use jacquard_common::{CowStr, deps::smol_str::SmolStr, types::blob::MimeType};
     use jacquard_lexicon::lexicon::*;
-    use alloc::collections::BTreeMap;
     LexiconDoc {
         lexicon: Lexicon::Lexicon1,
         id: CowStr::new_static("pet.nkp.radio"),
@@ -1062,35 +1169,31 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
             map.insert(
                 SmolStr::new_static("adminPermission"),
                 LexUserType::Object(LexObject {
-                    description: Some(
-                        CowStr::new_static("Permission surfaced in the admin panel."),
-                    ),
-                    required: Some(
-                        vec![
-                            SmolStr::new_static("key"),
-                            SmolStr::new_static("description")
-                        ],
-                    ),
+                    description: Some(CowStr::new_static(
+                        "Permission surfaced in the admin panel.",
+                    )),
+                    required: Some(vec![
+                        SmolStr::new_static("key"),
+                        SmolStr::new_static("description"),
+                    ]),
                     properties: {
                         #[allow(unused_mut)]
                         let mut map = BTreeMap::new();
                         map.insert(
                             SmolStr::new_static("description"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static("Human-readable permission description."),
-                                ),
+                                description: Some(CowStr::new_static(
+                                    "Human-readable permission description.",
+                                )),
                                 ..Default::default()
                             }),
                         );
                         map.insert(
                             SmolStr::new_static("key"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static(
-                                        "Stable permission key used by backend feature gates.",
-                                    ),
-                                ),
+                                description: Some(CowStr::new_static(
+                                    "Stable permission key used by backend feature gates.",
+                                )),
                                 ..Default::default()
                             }),
                         );
@@ -1102,17 +1205,13 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
             map.insert(
                 SmolStr::new_static("adminPermissions"),
                 LexUserType::Object(LexObject {
-                    description: Some(
-                        CowStr::new_static(
-                            "Configured admin DID whitelist and available permissions.",
-                        ),
-                    ),
-                    required: Some(
-                        vec![
-                            SmolStr::new_static("whitelistedDids"),
-                            SmolStr::new_static("permissions")
-                        ],
-                    ),
+                    description: Some(CowStr::new_static(
+                        "Configured admin DID whitelist and available permissions.",
+                    )),
+                    required: Some(vec![
+                        SmolStr::new_static("whitelistedDids"),
+                        SmolStr::new_static("permissions"),
+                    ]),
                     properties: {
                         #[allow(unused_mut)]
                         let mut map = BTreeMap::new();
@@ -1143,25 +1242,23 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
             map.insert(
                 SmolStr::new_static("chatBan"),
                 LexUserType::Object(LexObject {
-                    description: Some(
-                        CowStr::new_static(
-                            "Banned DID record returned to admin tooling.",
-                        ),
-                    ),
-                    required: Some(
-                        vec![
-                            SmolStr::new_static("did"),
-                            SmolStr::new_static("bannedByDid"),
-                            SmolStr::new_static("reason"),
-                            SmolStr::new_static("createdAt")
-                        ],
-                    ),
+                    description: Some(CowStr::new_static(
+                        "Banned DID record returned to admin tooling.",
+                    )),
+                    required: Some(vec![
+                        SmolStr::new_static("did"),
+                        SmolStr::new_static("bannedByDid"),
+                        SmolStr::new_static("reason"),
+                        SmolStr::new_static("createdAt"),
+                    ]),
                     properties: {
                         #[allow(unused_mut)]
                         let mut map = BTreeMap::new();
                         map.insert(
                             SmolStr::new_static("bannedByDid"),
-                            LexObjectProperty::String(LexString { ..Default::default() }),
+                            LexObjectProperty::String(LexString {
+                                ..Default::default()
+                            }),
                         );
                         map.insert(
                             SmolStr::new_static("createdAt"),
@@ -1172,11 +1269,15 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
                         );
                         map.insert(
                             SmolStr::new_static("did"),
-                            LexObjectProperty::String(LexString { ..Default::default() }),
+                            LexObjectProperty::String(LexString {
+                                ..Default::default()
+                            }),
                         );
                         map.insert(
                             SmolStr::new_static("reason"),
-                            LexObjectProperty::String(LexString { ..Default::default() }),
+                            LexObjectProperty::String(LexString {
+                                ..Default::default()
+                            }),
                         );
                         map
                     },
@@ -1186,16 +1287,14 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
             map.insert(
                 SmolStr::new_static("chatMessage"),
                 LexUserType::Object(LexObject {
-                    description: Some(
-                        CowStr::new_static("A single persisted chat message."),
-                    ),
-                    required: Some(
-                        vec![
-                            SmolStr::new_static("id"), SmolStr::new_static("senderDid"),
-                            SmolStr::new_static("body"),
-                            SmolStr::new_static("createdAt"), SmolStr::new_static("kind")
-                        ],
-                    ),
+                    description: Some(CowStr::new_static("A single persisted chat message.")),
+                    required: Some(vec![
+                        SmolStr::new_static("id"),
+                        SmolStr::new_static("senderDid"),
+                        SmolStr::new_static("body"),
+                        SmolStr::new_static("createdAt"),
+                        SmolStr::new_static("kind"),
+                    ]),
                     properties: {
                         #[allow(unused_mut)]
                         let mut map = BTreeMap::new();
@@ -1224,14 +1323,14 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
                         );
                         map.insert(
                             SmolStr::new_static("kind"),
-                            LexObjectProperty::String(LexString { ..Default::default() }),
+                            LexObjectProperty::String(LexString {
+                                ..Default::default()
+                            }),
                         );
                         map.insert(
                             SmolStr::new_static("senderDid"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static("DID that sent the message."),
-                                ),
+                                description: Some(CowStr::new_static("DID that sent the message.")),
                                 ..Default::default()
                             }),
                         );
@@ -1243,16 +1342,13 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
             map.insert(
                 SmolStr::new_static("playlist"),
                 LexUserType::Object(LexObject {
-                    description: Some(
-                        CowStr::new_static("Saved playlist/set of songs."),
-                    ),
-                    required: Some(
-                        vec![
-                            SmolStr::new_static("id"), SmolStr::new_static("name"),
-                            SmolStr::new_static("createdAt"),
-                            SmolStr::new_static("tracks")
-                        ],
-                    ),
+                    description: Some(CowStr::new_static("Saved playlist/set of songs.")),
+                    required: Some(vec![
+                        SmolStr::new_static("id"),
+                        SmolStr::new_static("name"),
+                        SmolStr::new_static("createdAt"),
+                        SmolStr::new_static("tracks"),
+                    ]),
                     properties: {
                         #[allow(unused_mut)]
                         let mut map = BTreeMap::new();
@@ -1280,6 +1376,12 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
                             }),
                         );
                         map.insert(
+                            SmolStr::new_static("shuffleOnLoad"),
+                            LexObjectProperty::Boolean(LexBoolean {
+                                ..Default::default()
+                            }),
+                        );
+                        map.insert(
                             SmolStr::new_static("tracks"),
                             LexObjectProperty::Array(LexArray {
                                 items: LexArrayItem::Ref(LexRef {
@@ -1297,49 +1399,44 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
             map.insert(
                 SmolStr::new_static("queueItem"),
                 LexUserType::Object(LexObject {
-                    description: Some(
-                        CowStr::new_static("Queue item joined with song metadata."),
-                    ),
-                    required: Some(
-                        vec![
-                            SmolStr::new_static("id"), SmolStr::new_static("position"),
-                            SmolStr::new_static("queuedByDid"),
-                            SmolStr::new_static("songId"), SmolStr::new_static("song"),
-                            SmolStr::new_static("title"), SmolStr::new_static("artist"),
-                            SmolStr::new_static("album"),
-                            SmolStr::new_static("durationSeconds"),
-                            SmolStr::new_static("addedByDid")
-                        ],
-                    ),
+                    description: Some(CowStr::new_static("Queue item joined with song metadata.")),
+                    required: Some(vec![
+                        SmolStr::new_static("id"),
+                        SmolStr::new_static("position"),
+                        SmolStr::new_static("queuedByDid"),
+                        SmolStr::new_static("songId"),
+                        SmolStr::new_static("song"),
+                        SmolStr::new_static("title"),
+                        SmolStr::new_static("artist"),
+                        SmolStr::new_static("album"),
+                        SmolStr::new_static("durationSeconds"),
+                        SmolStr::new_static("addedByDid"),
+                    ]),
                     properties: {
                         #[allow(unused_mut)]
                         let mut map = BTreeMap::new();
                         map.insert(
                             SmolStr::new_static("addedByDid"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static(
-                                        "DID that originally uploaded the queued song.",
-                                    ),
-                                ),
+                                description: Some(CowStr::new_static(
+                                    "DID that originally uploaded the queued song.",
+                                )),
                                 ..Default::default()
                             }),
                         );
                         map.insert(
                             SmolStr::new_static("album"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static("Optional queued song album."),
-                                ),
+                                description: Some(CowStr::new_static(
+                                    "Optional queued song album.",
+                                )),
                                 ..Default::default()
                             }),
                         );
                         map.insert(
                             SmolStr::new_static("artist"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static("Queued song artist."),
-                                ),
+                                description: Some(CowStr::new_static("Queued song artist.")),
                                 min_length: Some(1usize),
                                 max_length: Some(512usize),
                                 ..Default::default()
@@ -1354,9 +1451,7 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
                         map.insert(
                             SmolStr::new_static("id"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static("Stable queue item id."),
-                                ),
+                                description: Some(CowStr::new_static("Stable queue item id.")),
                                 min_length: Some(1usize),
                                 max_length: Some(128usize),
                                 ..Default::default()
@@ -1372,9 +1467,7 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
                         map.insert(
                             SmolStr::new_static("queuedByDid"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static("DID that queued the song."),
-                                ),
+                                description: Some(CowStr::new_static("DID that queued the song.")),
                                 ..Default::default()
                             }),
                         );
@@ -1411,17 +1504,14 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
             map.insert(
                 SmolStr::new_static("radioAlbum"),
                 LexUserType::Object(LexObject {
-                    description: Some(
-                        CowStr::new_static("Admin-defined album loop metadata."),
-                    ),
-                    required: Some(
-                        vec![
-                            SmolStr::new_static("id"), SmolStr::new_static("title"),
-                            SmolStr::new_static("position"),
-                            SmolStr::new_static("isEnabled"),
-                            SmolStr::new_static("tracks")
-                        ],
-                    ),
+                    description: Some(CowStr::new_static("Admin-defined album loop metadata.")),
+                    required: Some(vec![
+                        SmolStr::new_static("id"),
+                        SmolStr::new_static("title"),
+                        SmolStr::new_static("position"),
+                        SmolStr::new_static("isEnabled"),
+                        SmolStr::new_static("tracks"),
+                    ]),
                     properties: {
                         #[allow(unused_mut)]
                         let mut map = BTreeMap::new();
@@ -1472,16 +1562,14 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
             map.insert(
                 SmolStr::new_static("radioSnapshot"),
                 LexUserType::Object(LexObject {
-                    description: Some(
-                        CowStr::new_static("Combined radio view returned to clients."),
-                    ),
-                    required: Some(
-                        vec![
-                            SmolStr::new_static("state"),
-                            SmolStr::new_static("currentSong"),
-                            SmolStr::new_static("queue")
-                        ],
-                    ),
+                    description: Some(CowStr::new_static(
+                        "Combined radio view returned to clients.",
+                    )),
+                    required: Some(vec![
+                        SmolStr::new_static("state"),
+                        SmolStr::new_static("currentSong"),
+                        SmolStr::new_static("queue"),
+                    ]),
                     properties: {
                         #[allow(unused_mut)]
                         let mut map = BTreeMap::new();
@@ -1502,9 +1590,7 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
                         map.insert(
                             SmolStr::new_static("queue"),
                             LexObjectProperty::Array(LexArray {
-                                description: Some(
-                                    CowStr::new_static("Upcoming queued songs."),
-                                ),
+                                description: Some(CowStr::new_static("Upcoming queued songs.")),
                                 items: LexArrayItem::Ref(LexRef {
                                     r#ref: CowStr::new_static("#queueItem"),
                                     ..Default::default()
@@ -1527,32 +1613,44 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
             map.insert(
                 SmolStr::new_static("radioState"),
                 LexUserType::Object(LexObject {
-                    description: Some(
-                        CowStr::new_static(
-                            "Radio playback status persisted by the backend.",
-                        ),
-                    ),
-                    required: Some(
-                        vec![
-                            SmolStr::new_static("currentSongId"),
-                            SmolStr::new_static("status"),
-                            SmolStr::new_static("startedAt"),
-                            SmolStr::new_static("pausedAt"),
-                            SmolStr::new_static("positionSeconds"),
-                            SmolStr::new_static("updatedByDid")
-                        ],
-                    ),
+                    description: Some(CowStr::new_static(
+                        "Radio playback status persisted by the backend.",
+                    )),
+                    required: Some(vec![
+                        SmolStr::new_static("currentSongId"),
+                        SmolStr::new_static("status"),
+                        SmolStr::new_static("startedAt"),
+                        SmolStr::new_static("pausedAt"),
+                        SmolStr::new_static("positionSeconds"),
+                        SmolStr::new_static("updatedByDid"),
+                    ]),
                     properties: {
                         #[allow(unused_mut)]
                         let mut map = BTreeMap::new();
                         map.insert(
                             SmolStr::new_static("currentSongId"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static(
-                                        "Currently active song id, when one is selected.",
-                                    ),
-                                ),
+                                description: Some(CowStr::new_static(
+                                    "Currently active song id, when one is selected.",
+                                )),
+                                ..Default::default()
+                            }),
+                        );
+                        map.insert(
+                            SmolStr::new_static("loopMode"),
+                            LexObjectProperty::String(LexString {
+                                description: Some(CowStr::new_static(
+                                    "How finished queue tracks are recycled.",
+                                )),
+                                ..Default::default()
+                            }),
+                        );
+                        map.insert(
+                            SmolStr::new_static("loopPlaylistId"),
+                            LexObjectProperty::String(LexString {
+                                description: Some(CowStr::new_static(
+                                    "Playlist reloaded automatically whenever the queue drains.",
+                                )),
                                 ..Default::default()
                             }),
                         );
@@ -1570,6 +1668,12 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
                             }),
                         );
                         map.insert(
+                            SmolStr::new_static("shuffle"),
+                            LexObjectProperty::Boolean(LexBoolean {
+                                ..Default::default()
+                            }),
+                        );
+                        map.insert(
                             SmolStr::new_static("startedAt"),
                             LexObjectProperty::Integer(LexInteger {
                                 ..Default::default()
@@ -1578,20 +1682,16 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
                         map.insert(
                             SmolStr::new_static("status"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static("Current playback status."),
-                                ),
+                                description: Some(CowStr::new_static("Current playback status.")),
                                 ..Default::default()
                             }),
                         );
                         map.insert(
                             SmolStr::new_static("updatedByDid"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static(
-                                        "DID or backend actor that last updated radio state.",
-                                    ),
-                                ),
+                                description: Some(CowStr::new_static(
+                                    "DID or backend actor that last updated radio state.",
+                                )),
                                 ..Default::default()
                             }),
                         );
@@ -1603,41 +1703,39 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
             map.insert(
                 SmolStr::new_static("song"),
                 LexUserType::Object(LexObject {
-                    description: Some(
-                        CowStr::new_static("Song metadata stored by the radio backend."),
-                    ),
-                    required: Some(
-                        vec![
-                            SmolStr::new_static("id"), SmolStr::new_static("title"),
-                            SmolStr::new_static("artist"), SmolStr::new_static("album"),
-                            SmolStr::new_static("genre"),
-                            SmolStr::new_static("durationSeconds"),
-                            SmolStr::new_static("mimeType"),
-                            SmolStr::new_static("hasCover"),
-                            SmolStr::new_static("addedByDid"),
-                            SmolStr::new_static("createdAt"),
-                            SmolStr::new_static("loudnessLufs"),
-                            SmolStr::new_static("loudnessPeak")
-                        ],
-                    ),
+                    description: Some(CowStr::new_static(
+                        "Song metadata stored by the radio backend.",
+                    )),
+                    required: Some(vec![
+                        SmolStr::new_static("id"),
+                        SmolStr::new_static("title"),
+                        SmolStr::new_static("artist"),
+                        SmolStr::new_static("album"),
+                        SmolStr::new_static("genre"),
+                        SmolStr::new_static("durationSeconds"),
+                        SmolStr::new_static("mimeType"),
+                        SmolStr::new_static("hasCover"),
+                        SmolStr::new_static("addedByDid"),
+                        SmolStr::new_static("createdAt"),
+                        SmolStr::new_static("loudnessLufs"),
+                        SmolStr::new_static("loudnessPeak"),
+                    ]),
                     properties: {
                         #[allow(unused_mut)]
                         let mut map = BTreeMap::new();
                         map.insert(
                             SmolStr::new_static("addedByDid"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static("DID that uploaded the song."),
-                                ),
+                                description: Some(CowStr::new_static(
+                                    "DID that uploaded the song.",
+                                )),
                                 ..Default::default()
                             }),
                         );
                         map.insert(
                             SmolStr::new_static("album"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static("Optional album title."),
-                                ),
+                                description: Some(CowStr::new_static("Optional album title.")),
                                 ..Default::default()
                             }),
                         );
@@ -1688,31 +1786,25 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
                         map.insert(
                             SmolStr::new_static("loudnessLufs"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static(
-                                        "Integrated loudness in LUFS, serialized as a decimal string.",
-                                    ),
-                                ),
+                                description: Some(CowStr::new_static(
+                                    "Integrated loudness in LUFS, serialized as a decimal string.",
+                                )),
                                 ..Default::default()
                             }),
                         );
                         map.insert(
                             SmolStr::new_static("loudnessPeak"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static(
-                                        "True peak in dBFS, serialized as a decimal string.",
-                                    ),
-                                ),
+                                description: Some(CowStr::new_static(
+                                    "True peak in dBFS, serialized as a decimal string.",
+                                )),
                                 ..Default::default()
                             }),
                         );
                         map.insert(
                             SmolStr::new_static("mimeType"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static("Stored audio MIME type."),
-                                ),
+                                description: Some(CowStr::new_static("Stored audio MIME type.")),
                                 ..Default::default()
                             }),
                         );
@@ -1733,11 +1825,9 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
             map.insert(
                 SmolStr::new_static("songUrlSource"),
                 LexUserType::Object(LexObject {
-                    description: Some(
-                        CowStr::new_static(
-                            "Remote audio source to import through the existing backend URL importer.",
-                        ),
-                    ),
+                    description: Some(CowStr::new_static(
+                        "Remote audio source to import through the existing backend URL importer.",
+                    )),
                     required: Some(vec![SmolStr::new_static("url")]),
                     properties: {
                         #[allow(unused_mut)]
@@ -1751,42 +1841,34 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
                         map.insert(
                             SmolStr::new_static("album"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static("Optional album override."),
-                                ),
+                                description: Some(CowStr::new_static("Optional album override.")),
                                 ..Default::default()
                             }),
                         );
                         map.insert(
                             SmolStr::new_static("artist"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static(
-                                        "Optional artist override for plain audio URLs.",
-                                    ),
-                                ),
+                                description: Some(CowStr::new_static(
+                                    "Optional artist override for plain audio URLs.",
+                                )),
                                 ..Default::default()
                             }),
                         );
                         map.insert(
                             SmolStr::new_static("title"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static(
-                                        "Optional title override for plain audio URLs.",
-                                    ),
-                                ),
+                                description: Some(CowStr::new_static(
+                                    "Optional title override for plain audio URLs.",
+                                )),
                                 ..Default::default()
                             }),
                         );
                         map.insert(
                             SmolStr::new_static("url"),
                             LexObjectProperty::String(LexString {
-                                description: Some(
-                                    CowStr::new_static(
-                                        "HTTP(S) audio, playlist, or yt-dlp-supported URL to import.",
-                                    ),
-                                ),
+                                description: Some(CowStr::new_static(
+                                    "HTTP(S) audio, playlist, or yt-dlp-supported URL to import.",
+                                )),
                                 format: Some(LexStringFormat::Uri),
                                 min_length: Some(8usize),
                                 max_length: Some(4096usize),
@@ -1801,33 +1883,37 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
             map.insert(
                 SmolStr::new_static("subsonicSongResult"),
                 LexUserType::Object(LexObject {
-                    description: Some(
-                        CowStr::new_static(
-                            "Search result returned from a Subsonic server.",
-                        ),
-                    ),
-                    required: Some(
-                        vec![
-                            SmolStr::new_static("id"), SmolStr::new_static("title"),
-                            SmolStr::new_static("artist"), SmolStr::new_static("album"),
-                            SmolStr::new_static("durationSeconds"),
-                            SmolStr::new_static("coverArtId")
-                        ],
-                    ),
+                    description: Some(CowStr::new_static(
+                        "Search result returned from a Subsonic server.",
+                    )),
+                    required: Some(vec![
+                        SmolStr::new_static("id"),
+                        SmolStr::new_static("title"),
+                        SmolStr::new_static("artist"),
+                        SmolStr::new_static("album"),
+                        SmolStr::new_static("durationSeconds"),
+                        SmolStr::new_static("coverArtId"),
+                    ]),
                     properties: {
                         #[allow(unused_mut)]
                         let mut map = BTreeMap::new();
                         map.insert(
                             SmolStr::new_static("album"),
-                            LexObjectProperty::String(LexString { ..Default::default() }),
+                            LexObjectProperty::String(LexString {
+                                ..Default::default()
+                            }),
                         );
                         map.insert(
                             SmolStr::new_static("artist"),
-                            LexObjectProperty::String(LexString { ..Default::default() }),
+                            LexObjectProperty::String(LexString {
+                                ..Default::default()
+                            }),
                         );
                         map.insert(
                             SmolStr::new_static("coverArtId"),
-                            LexObjectProperty::String(LexString { ..Default::default() }),
+                            LexObjectProperty::String(LexString {
+                                ..Default::default()
+                            }),
                         );
                         map.insert(
                             SmolStr::new_static("durationSeconds"),
@@ -1837,11 +1923,15 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
                         );
                         map.insert(
                             SmolStr::new_static("id"),
-                            LexObjectProperty::String(LexString { ..Default::default() }),
+                            LexObjectProperty::String(LexString {
+                                ..Default::default()
+                            }),
                         );
                         map.insert(
                             SmolStr::new_static("title"),
-                            LexObjectProperty::String(LexString { ..Default::default() }),
+                            LexObjectProperty::String(LexString {
+                                ..Default::default()
+                            }),
                         );
                         map
                     },
@@ -1856,7 +1946,7 @@ fn lexicon_doc_pet_nkp_radio() -> LexiconDoc<'static> {
 
 pub mod admin_permissions_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -1901,7 +1991,10 @@ pub mod admin_permissions_state {
 /// Builder for constructing an instance of this type
 pub struct AdminPermissionsBuilder<'a, S: admin_permissions_state::State> {
     _state: PhantomData<fn() -> S>,
-    _fields: (Option<Vec<radio::AdminPermission<'a>>>, Option<Vec<CowStr<'a>>>),
+    _fields: (
+        Option<Vec<radio::AdminPermission<'a>>>,
+        Option<Vec<CowStr<'a>>>,
+    ),
     _lifetime: PhantomData<&'a ()>,
 }
 
@@ -1993,7 +2086,7 @@ where
 
 pub mod chat_ban_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -2001,58 +2094,63 @@ pub mod chat_ban_state {
     }
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
-        type CreatedAt;
-        type BannedByDid;
         type Did;
+        type BannedByDid;
+        type CreatedAt;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
-        type CreatedAt = Unset;
-        type BannedByDid = Unset;
         type Did = Unset;
-    }
-    ///State transition - sets the `created_at` field to Set
-    pub struct SetCreatedAt<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetCreatedAt<S> {}
-    impl<S: State> State for SetCreatedAt<S> {
-        type CreatedAt = Set<members::created_at>;
-        type BannedByDid = S::BannedByDid;
-        type Did = S::Did;
-    }
-    ///State transition - sets the `banned_by_did` field to Set
-    pub struct SetBannedByDid<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetBannedByDid<S> {}
-    impl<S: State> State for SetBannedByDid<S> {
-        type CreatedAt = S::CreatedAt;
-        type BannedByDid = Set<members::banned_by_did>;
-        type Did = S::Did;
+        type BannedByDid = Unset;
+        type CreatedAt = Unset;
     }
     ///State transition - sets the `did` field to Set
     pub struct SetDid<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetDid<S> {}
     impl<S: State> State for SetDid<S> {
-        type CreatedAt = S::CreatedAt;
-        type BannedByDid = S::BannedByDid;
         type Did = Set<members::did>;
+        type BannedByDid = S::BannedByDid;
+        type CreatedAt = S::CreatedAt;
+    }
+    ///State transition - sets the `banned_by_did` field to Set
+    pub struct SetBannedByDid<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetBannedByDid<S> {}
+    impl<S: State> State for SetBannedByDid<S> {
+        type Did = S::Did;
+        type BannedByDid = Set<members::banned_by_did>;
+        type CreatedAt = S::CreatedAt;
+    }
+    ///State transition - sets the `created_at` field to Set
+    pub struct SetCreatedAt<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetCreatedAt<S> {}
+    impl<S: State> State for SetCreatedAt<S> {
+        type Did = S::Did;
+        type BannedByDid = S::BannedByDid;
+        type CreatedAt = Set<members::created_at>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
-        ///Marker type for the `created_at` field
-        pub struct created_at(());
-        ///Marker type for the `banned_by_did` field
-        pub struct banned_by_did(());
         ///Marker type for the `did` field
         pub struct did(());
+        ///Marker type for the `banned_by_did` field
+        pub struct banned_by_did(());
+        ///Marker type for the `created_at` field
+        pub struct created_at(());
     }
 }
 
 /// Builder for constructing an instance of this type
 pub struct ChatBanBuilder<'a, S: chat_ban_state::State> {
     _state: PhantomData<fn() -> S>,
-    _fields: (Option<CowStr<'a>>, Option<i64>, Option<CowStr<'a>>, Option<CowStr<'a>>),
+    _fields: (
+        Option<CowStr<'a>>,
+        Option<i64>,
+        Option<CowStr<'a>>,
+        Option<CowStr<'a>>,
+    ),
     _lifetime: PhantomData<&'a ()>,
 }
 
@@ -2147,9 +2245,9 @@ impl<'a, S: chat_ban_state::State> ChatBanBuilder<'a, S> {
 impl<'a, S> ChatBanBuilder<'a, S>
 where
     S: chat_ban_state::State,
-    S::CreatedAt: chat_ban_state::IsSet,
-    S::BannedByDid: chat_ban_state::IsSet,
     S::Did: chat_ban_state::IsSet,
+    S::BannedByDid: chat_ban_state::IsSet,
+    S::CreatedAt: chat_ban_state::IsSet,
 {
     /// Build the final struct
     pub fn build(self) -> ChatBan<'a> {
@@ -2181,7 +2279,7 @@ where
 
 pub mod chat_message_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -2189,85 +2287,85 @@ pub mod chat_message_state {
     }
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
-        type CreatedAt;
-        type Kind;
         type Id;
-        type Body;
         type SenderDid;
+        type Body;
+        type Kind;
+        type CreatedAt;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
-        type CreatedAt = Unset;
-        type Kind = Unset;
         type Id = Unset;
-        type Body = Unset;
         type SenderDid = Unset;
-    }
-    ///State transition - sets the `created_at` field to Set
-    pub struct SetCreatedAt<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetCreatedAt<S> {}
-    impl<S: State> State for SetCreatedAt<S> {
-        type CreatedAt = Set<members::created_at>;
-        type Kind = S::Kind;
-        type Id = S::Id;
-        type Body = S::Body;
-        type SenderDid = S::SenderDid;
-    }
-    ///State transition - sets the `kind` field to Set
-    pub struct SetKind<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetKind<S> {}
-    impl<S: State> State for SetKind<S> {
-        type CreatedAt = S::CreatedAt;
-        type Kind = Set<members::kind>;
-        type Id = S::Id;
-        type Body = S::Body;
-        type SenderDid = S::SenderDid;
+        type Body = Unset;
+        type Kind = Unset;
+        type CreatedAt = Unset;
     }
     ///State transition - sets the `id` field to Set
     pub struct SetId<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetId<S> {}
     impl<S: State> State for SetId<S> {
-        type CreatedAt = S::CreatedAt;
-        type Kind = S::Kind;
         type Id = Set<members::id>;
+        type SenderDid = S::SenderDid;
         type Body = S::Body;
-        type SenderDid = S::SenderDid;
-    }
-    ///State transition - sets the `body` field to Set
-    pub struct SetBody<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetBody<S> {}
-    impl<S: State> State for SetBody<S> {
-        type CreatedAt = S::CreatedAt;
         type Kind = S::Kind;
-        type Id = S::Id;
-        type Body = Set<members::body>;
-        type SenderDid = S::SenderDid;
+        type CreatedAt = S::CreatedAt;
     }
     ///State transition - sets the `sender_did` field to Set
     pub struct SetSenderDid<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetSenderDid<S> {}
     impl<S: State> State for SetSenderDid<S> {
-        type CreatedAt = S::CreatedAt;
-        type Kind = S::Kind;
         type Id = S::Id;
-        type Body = S::Body;
         type SenderDid = Set<members::sender_did>;
+        type Body = S::Body;
+        type Kind = S::Kind;
+        type CreatedAt = S::CreatedAt;
+    }
+    ///State transition - sets the `body` field to Set
+    pub struct SetBody<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetBody<S> {}
+    impl<S: State> State for SetBody<S> {
+        type Id = S::Id;
+        type SenderDid = S::SenderDid;
+        type Body = Set<members::body>;
+        type Kind = S::Kind;
+        type CreatedAt = S::CreatedAt;
+    }
+    ///State transition - sets the `kind` field to Set
+    pub struct SetKind<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetKind<S> {}
+    impl<S: State> State for SetKind<S> {
+        type Id = S::Id;
+        type SenderDid = S::SenderDid;
+        type Body = S::Body;
+        type Kind = Set<members::kind>;
+        type CreatedAt = S::CreatedAt;
+    }
+    ///State transition - sets the `created_at` field to Set
+    pub struct SetCreatedAt<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetCreatedAt<S> {}
+    impl<S: State> State for SetCreatedAt<S> {
+        type Id = S::Id;
+        type SenderDid = S::SenderDid;
+        type Body = S::Body;
+        type Kind = S::Kind;
+        type CreatedAt = Set<members::created_at>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
-        ///Marker type for the `created_at` field
-        pub struct created_at(());
-        ///Marker type for the `kind` field
-        pub struct kind(());
         ///Marker type for the `id` field
         pub struct id(());
-        ///Marker type for the `body` field
-        pub struct body(());
         ///Marker type for the `sender_did` field
         pub struct sender_did(());
+        ///Marker type for the `body` field
+        pub struct body(());
+        ///Marker type for the `kind` field
+        pub struct kind(());
+        ///Marker type for the `created_at` field
+        pub struct created_at(());
     }
 }
 
@@ -2400,11 +2498,11 @@ where
 impl<'a, S> ChatMessageBuilder<'a, S>
 where
     S: chat_message_state::State,
-    S::CreatedAt: chat_message_state::IsSet,
-    S::Kind: chat_message_state::IsSet,
     S::Id: chat_message_state::IsSet,
-    S::Body: chat_message_state::IsSet,
     S::SenderDid: chat_message_state::IsSet,
+    S::Body: chat_message_state::IsSet,
+    S::Kind: chat_message_state::IsSet,
+    S::CreatedAt: chat_message_state::IsSet,
 {
     /// Build the final struct
     pub fn build(self) -> ChatMessage<'a> {
@@ -2438,7 +2536,7 @@ where
 
 pub mod playlist_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -2447,66 +2545,66 @@ pub mod playlist_state {
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
         type Name;
-        type Id;
-        type CreatedAt;
         type Tracks;
+        type CreatedAt;
+        type Id;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
         type Name = Unset;
-        type Id = Unset;
-        type CreatedAt = Unset;
         type Tracks = Unset;
+        type CreatedAt = Unset;
+        type Id = Unset;
     }
     ///State transition - sets the `name` field to Set
     pub struct SetName<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetName<S> {}
     impl<S: State> State for SetName<S> {
         type Name = Set<members::name>;
-        type Id = S::Id;
+        type Tracks = S::Tracks;
         type CreatedAt = S::CreatedAt;
-        type Tracks = S::Tracks;
-    }
-    ///State transition - sets the `id` field to Set
-    pub struct SetId<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetId<S> {}
-    impl<S: State> State for SetId<S> {
-        type Name = S::Name;
-        type Id = Set<members::id>;
-        type CreatedAt = S::CreatedAt;
-        type Tracks = S::Tracks;
-    }
-    ///State transition - sets the `created_at` field to Set
-    pub struct SetCreatedAt<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetCreatedAt<S> {}
-    impl<S: State> State for SetCreatedAt<S> {
-        type Name = S::Name;
         type Id = S::Id;
-        type CreatedAt = Set<members::created_at>;
-        type Tracks = S::Tracks;
     }
     ///State transition - sets the `tracks` field to Set
     pub struct SetTracks<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetTracks<S> {}
     impl<S: State> State for SetTracks<S> {
         type Name = S::Name;
-        type Id = S::Id;
-        type CreatedAt = S::CreatedAt;
         type Tracks = Set<members::tracks>;
+        type CreatedAt = S::CreatedAt;
+        type Id = S::Id;
+    }
+    ///State transition - sets the `created_at` field to Set
+    pub struct SetCreatedAt<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetCreatedAt<S> {}
+    impl<S: State> State for SetCreatedAt<S> {
+        type Name = S::Name;
+        type Tracks = S::Tracks;
+        type CreatedAt = Set<members::created_at>;
+        type Id = S::Id;
+    }
+    ///State transition - sets the `id` field to Set
+    pub struct SetId<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetId<S> {}
+    impl<S: State> State for SetId<S> {
+        type Name = S::Name;
+        type Tracks = S::Tracks;
+        type CreatedAt = S::CreatedAt;
+        type Id = Set<members::id>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
         ///Marker type for the `name` field
         pub struct name(());
-        ///Marker type for the `id` field
-        pub struct id(());
-        ///Marker type for the `created_at` field
-        pub struct created_at(());
         ///Marker type for the `tracks` field
         pub struct tracks(());
+        ///Marker type for the `created_at` field
+        pub struct created_at(());
+        ///Marker type for the `id` field
+        pub struct id(());
     }
 }
 
@@ -2517,6 +2615,7 @@ pub struct PlaylistBuilder<'a, S: playlist_state::State> {
         Option<i64>,
         Option<CowStr<'a>>,
         Option<CowStr<'a>>,
+        Option<bool>,
         Option<Vec<radio::Song<'a>>>,
     ),
     _lifetime: PhantomData<&'a ()>,
@@ -2534,7 +2633,7 @@ impl<'a> PlaylistBuilder<'a, playlist_state::Empty> {
     pub fn new() -> Self {
         PlaylistBuilder {
             _state: PhantomData,
-            _fields: (None, None, None, None),
+            _fields: (None, None, None, None, None),
             _lifetime: PhantomData,
         }
     }
@@ -2597,6 +2696,19 @@ where
     }
 }
 
+impl<'a, S: playlist_state::State> PlaylistBuilder<'a, S> {
+    /// Set the `shuffleOnLoad` field (optional)
+    pub fn shuffle_on_load(mut self, value: impl Into<Option<bool>>) -> Self {
+        self._fields.3 = value.into();
+        self
+    }
+    /// Set the `shuffleOnLoad` field to an Option value (optional)
+    pub fn maybe_shuffle_on_load(mut self, value: Option<bool>) -> Self {
+        self._fields.3 = value;
+        self
+    }
+}
+
 impl<'a, S> PlaylistBuilder<'a, S>
 where
     S: playlist_state::State,
@@ -2607,7 +2719,7 @@ where
         mut self,
         value: impl Into<Vec<radio::Song<'a>>>,
     ) -> PlaylistBuilder<'a, playlist_state::SetTracks<S>> {
-        self._fields.3 = Option::Some(value.into());
+        self._fields.4 = Option::Some(value.into());
         PlaylistBuilder {
             _state: PhantomData,
             _fields: self._fields,
@@ -2620,9 +2732,9 @@ impl<'a, S> PlaylistBuilder<'a, S>
 where
     S: playlist_state::State,
     S::Name: playlist_state::IsSet,
-    S::Id: playlist_state::IsSet,
-    S::CreatedAt: playlist_state::IsSet,
     S::Tracks: playlist_state::IsSet,
+    S::CreatedAt: playlist_state::IsSet,
+    S::Id: playlist_state::IsSet,
 {
     /// Build the final struct
     pub fn build(self) -> Playlist<'a> {
@@ -2630,7 +2742,8 @@ where
             created_at: self._fields.0.unwrap(),
             id: self._fields.1.unwrap(),
             name: self._fields.2.unwrap(),
-            tracks: self._fields.3.unwrap(),
+            shuffle_on_load: self._fields.3,
+            tracks: self._fields.4.unwrap(),
             extra_data: Default::default(),
         }
     }
@@ -2646,7 +2759,8 @@ where
             created_at: self._fields.0.unwrap(),
             id: self._fields.1.unwrap(),
             name: self._fields.2.unwrap(),
-            tracks: self._fields.3.unwrap(),
+            shuffle_on_load: self._fields.3,
+            tracks: self._fields.4.unwrap(),
             extra_data: Some(extra_data),
         }
     }
@@ -2654,7 +2768,7 @@ where
 
 pub mod queue_item_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -2662,151 +2776,151 @@ pub mod queue_item_state {
     }
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
-        type Song;
-        type QueuedByDid;
-        type Artist;
-        type Id;
-        type Position;
-        type Title;
         type SongId;
+        type Artist;
+        type QueuedByDid;
+        type Title;
+        type Position;
+        type Id;
         type AddedByDid;
+        type Song;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
-        type Song = Unset;
-        type QueuedByDid = Unset;
-        type Artist = Unset;
-        type Id = Unset;
-        type Position = Unset;
-        type Title = Unset;
         type SongId = Unset;
+        type Artist = Unset;
+        type QueuedByDid = Unset;
+        type Title = Unset;
+        type Position = Unset;
+        type Id = Unset;
         type AddedByDid = Unset;
-    }
-    ///State transition - sets the `song` field to Set
-    pub struct SetSong<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetSong<S> {}
-    impl<S: State> State for SetSong<S> {
-        type Song = Set<members::song>;
-        type QueuedByDid = S::QueuedByDid;
-        type Artist = S::Artist;
-        type Id = S::Id;
-        type Position = S::Position;
-        type Title = S::Title;
-        type SongId = S::SongId;
-        type AddedByDid = S::AddedByDid;
-    }
-    ///State transition - sets the `queued_by_did` field to Set
-    pub struct SetQueuedByDid<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetQueuedByDid<S> {}
-    impl<S: State> State for SetQueuedByDid<S> {
-        type Song = S::Song;
-        type QueuedByDid = Set<members::queued_by_did>;
-        type Artist = S::Artist;
-        type Id = S::Id;
-        type Position = S::Position;
-        type Title = S::Title;
-        type SongId = S::SongId;
-        type AddedByDid = S::AddedByDid;
-    }
-    ///State transition - sets the `artist` field to Set
-    pub struct SetArtist<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetArtist<S> {}
-    impl<S: State> State for SetArtist<S> {
-        type Song = S::Song;
-        type QueuedByDid = S::QueuedByDid;
-        type Artist = Set<members::artist>;
-        type Id = S::Id;
-        type Position = S::Position;
-        type Title = S::Title;
-        type SongId = S::SongId;
-        type AddedByDid = S::AddedByDid;
-    }
-    ///State transition - sets the `id` field to Set
-    pub struct SetId<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetId<S> {}
-    impl<S: State> State for SetId<S> {
-        type Song = S::Song;
-        type QueuedByDid = S::QueuedByDid;
-        type Artist = S::Artist;
-        type Id = Set<members::id>;
-        type Position = S::Position;
-        type Title = S::Title;
-        type SongId = S::SongId;
-        type AddedByDid = S::AddedByDid;
-    }
-    ///State transition - sets the `position` field to Set
-    pub struct SetPosition<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetPosition<S> {}
-    impl<S: State> State for SetPosition<S> {
-        type Song = S::Song;
-        type QueuedByDid = S::QueuedByDid;
-        type Artist = S::Artist;
-        type Id = S::Id;
-        type Position = Set<members::position>;
-        type Title = S::Title;
-        type SongId = S::SongId;
-        type AddedByDid = S::AddedByDid;
-    }
-    ///State transition - sets the `title` field to Set
-    pub struct SetTitle<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetTitle<S> {}
-    impl<S: State> State for SetTitle<S> {
-        type Song = S::Song;
-        type QueuedByDid = S::QueuedByDid;
-        type Artist = S::Artist;
-        type Id = S::Id;
-        type Position = S::Position;
-        type Title = Set<members::title>;
-        type SongId = S::SongId;
-        type AddedByDid = S::AddedByDid;
+        type Song = Unset;
     }
     ///State transition - sets the `song_id` field to Set
     pub struct SetSongId<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetSongId<S> {}
     impl<S: State> State for SetSongId<S> {
-        type Song = S::Song;
-        type QueuedByDid = S::QueuedByDid;
-        type Artist = S::Artist;
-        type Id = S::Id;
-        type Position = S::Position;
-        type Title = S::Title;
         type SongId = Set<members::song_id>;
+        type Artist = S::Artist;
+        type QueuedByDid = S::QueuedByDid;
+        type Title = S::Title;
+        type Position = S::Position;
+        type Id = S::Id;
         type AddedByDid = S::AddedByDid;
+        type Song = S::Song;
+    }
+    ///State transition - sets the `artist` field to Set
+    pub struct SetArtist<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetArtist<S> {}
+    impl<S: State> State for SetArtist<S> {
+        type SongId = S::SongId;
+        type Artist = Set<members::artist>;
+        type QueuedByDid = S::QueuedByDid;
+        type Title = S::Title;
+        type Position = S::Position;
+        type Id = S::Id;
+        type AddedByDid = S::AddedByDid;
+        type Song = S::Song;
+    }
+    ///State transition - sets the `queued_by_did` field to Set
+    pub struct SetQueuedByDid<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetQueuedByDid<S> {}
+    impl<S: State> State for SetQueuedByDid<S> {
+        type SongId = S::SongId;
+        type Artist = S::Artist;
+        type QueuedByDid = Set<members::queued_by_did>;
+        type Title = S::Title;
+        type Position = S::Position;
+        type Id = S::Id;
+        type AddedByDid = S::AddedByDid;
+        type Song = S::Song;
+    }
+    ///State transition - sets the `title` field to Set
+    pub struct SetTitle<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetTitle<S> {}
+    impl<S: State> State for SetTitle<S> {
+        type SongId = S::SongId;
+        type Artist = S::Artist;
+        type QueuedByDid = S::QueuedByDid;
+        type Title = Set<members::title>;
+        type Position = S::Position;
+        type Id = S::Id;
+        type AddedByDid = S::AddedByDid;
+        type Song = S::Song;
+    }
+    ///State transition - sets the `position` field to Set
+    pub struct SetPosition<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetPosition<S> {}
+    impl<S: State> State for SetPosition<S> {
+        type SongId = S::SongId;
+        type Artist = S::Artist;
+        type QueuedByDid = S::QueuedByDid;
+        type Title = S::Title;
+        type Position = Set<members::position>;
+        type Id = S::Id;
+        type AddedByDid = S::AddedByDid;
+        type Song = S::Song;
+    }
+    ///State transition - sets the `id` field to Set
+    pub struct SetId<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetId<S> {}
+    impl<S: State> State for SetId<S> {
+        type SongId = S::SongId;
+        type Artist = S::Artist;
+        type QueuedByDid = S::QueuedByDid;
+        type Title = S::Title;
+        type Position = S::Position;
+        type Id = Set<members::id>;
+        type AddedByDid = S::AddedByDid;
+        type Song = S::Song;
     }
     ///State transition - sets the `added_by_did` field to Set
     pub struct SetAddedByDid<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetAddedByDid<S> {}
     impl<S: State> State for SetAddedByDid<S> {
-        type Song = S::Song;
-        type QueuedByDid = S::QueuedByDid;
-        type Artist = S::Artist;
-        type Id = S::Id;
-        type Position = S::Position;
-        type Title = S::Title;
         type SongId = S::SongId;
+        type Artist = S::Artist;
+        type QueuedByDid = S::QueuedByDid;
+        type Title = S::Title;
+        type Position = S::Position;
+        type Id = S::Id;
         type AddedByDid = Set<members::added_by_did>;
+        type Song = S::Song;
+    }
+    ///State transition - sets the `song` field to Set
+    pub struct SetSong<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetSong<S> {}
+    impl<S: State> State for SetSong<S> {
+        type SongId = S::SongId;
+        type Artist = S::Artist;
+        type QueuedByDid = S::QueuedByDid;
+        type Title = S::Title;
+        type Position = S::Position;
+        type Id = S::Id;
+        type AddedByDid = S::AddedByDid;
+        type Song = Set<members::song>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
-        ///Marker type for the `song` field
-        pub struct song(());
-        ///Marker type for the `queued_by_did` field
-        pub struct queued_by_did(());
-        ///Marker type for the `artist` field
-        pub struct artist(());
-        ///Marker type for the `id` field
-        pub struct id(());
-        ///Marker type for the `position` field
-        pub struct position(());
-        ///Marker type for the `title` field
-        pub struct title(());
         ///Marker type for the `song_id` field
         pub struct song_id(());
+        ///Marker type for the `artist` field
+        pub struct artist(());
+        ///Marker type for the `queued_by_did` field
+        pub struct queued_by_did(());
+        ///Marker type for the `title` field
+        pub struct title(());
+        ///Marker type for the `position` field
+        pub struct position(());
+        ///Marker type for the `id` field
+        pub struct id(());
         ///Marker type for the `added_by_did` field
         pub struct added_by_did(());
+        ///Marker type for the `song` field
+        pub struct song(());
     }
 }
 
@@ -3027,14 +3141,14 @@ where
 impl<'a, S> QueueItemBuilder<'a, S>
 where
     S: queue_item_state::State,
-    S::Song: queue_item_state::IsSet,
-    S::QueuedByDid: queue_item_state::IsSet,
-    S::Artist: queue_item_state::IsSet,
-    S::Id: queue_item_state::IsSet,
-    S::Position: queue_item_state::IsSet,
-    S::Title: queue_item_state::IsSet,
     S::SongId: queue_item_state::IsSet,
+    S::Artist: queue_item_state::IsSet,
+    S::QueuedByDid: queue_item_state::IsSet,
+    S::Title: queue_item_state::IsSet,
+    S::Position: queue_item_state::IsSet,
+    S::Id: queue_item_state::IsSet,
     S::AddedByDid: queue_item_state::IsSet,
+    S::Song: queue_item_state::IsSet,
 {
     /// Build the final struct
     pub fn build(self) -> QueueItem<'a> {
@@ -3078,7 +3192,7 @@ where
 
 pub mod radio_album_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -3086,85 +3200,85 @@ pub mod radio_album_state {
     }
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
-        type Title;
-        type IsEnabled;
-        type Position;
-        type Tracks;
         type Id;
+        type Tracks;
+        type Title;
+        type Position;
+        type IsEnabled;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
-        type Title = Unset;
-        type IsEnabled = Unset;
-        type Position = Unset;
-        type Tracks = Unset;
         type Id = Unset;
-    }
-    ///State transition - sets the `title` field to Set
-    pub struct SetTitle<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetTitle<S> {}
-    impl<S: State> State for SetTitle<S> {
-        type Title = Set<members::title>;
-        type IsEnabled = S::IsEnabled;
-        type Position = S::Position;
-        type Tracks = S::Tracks;
-        type Id = S::Id;
-    }
-    ///State transition - sets the `is_enabled` field to Set
-    pub struct SetIsEnabled<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetIsEnabled<S> {}
-    impl<S: State> State for SetIsEnabled<S> {
-        type Title = S::Title;
-        type IsEnabled = Set<members::is_enabled>;
-        type Position = S::Position;
-        type Tracks = S::Tracks;
-        type Id = S::Id;
-    }
-    ///State transition - sets the `position` field to Set
-    pub struct SetPosition<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetPosition<S> {}
-    impl<S: State> State for SetPosition<S> {
-        type Title = S::Title;
-        type IsEnabled = S::IsEnabled;
-        type Position = Set<members::position>;
-        type Tracks = S::Tracks;
-        type Id = S::Id;
-    }
-    ///State transition - sets the `tracks` field to Set
-    pub struct SetTracks<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetTracks<S> {}
-    impl<S: State> State for SetTracks<S> {
-        type Title = S::Title;
-        type IsEnabled = S::IsEnabled;
-        type Position = S::Position;
-        type Tracks = Set<members::tracks>;
-        type Id = S::Id;
+        type Tracks = Unset;
+        type Title = Unset;
+        type Position = Unset;
+        type IsEnabled = Unset;
     }
     ///State transition - sets the `id` field to Set
     pub struct SetId<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetId<S> {}
     impl<S: State> State for SetId<S> {
-        type Title = S::Title;
-        type IsEnabled = S::IsEnabled;
-        type Position = S::Position;
-        type Tracks = S::Tracks;
         type Id = Set<members::id>;
+        type Tracks = S::Tracks;
+        type Title = S::Title;
+        type Position = S::Position;
+        type IsEnabled = S::IsEnabled;
+    }
+    ///State transition - sets the `tracks` field to Set
+    pub struct SetTracks<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetTracks<S> {}
+    impl<S: State> State for SetTracks<S> {
+        type Id = S::Id;
+        type Tracks = Set<members::tracks>;
+        type Title = S::Title;
+        type Position = S::Position;
+        type IsEnabled = S::IsEnabled;
+    }
+    ///State transition - sets the `title` field to Set
+    pub struct SetTitle<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetTitle<S> {}
+    impl<S: State> State for SetTitle<S> {
+        type Id = S::Id;
+        type Tracks = S::Tracks;
+        type Title = Set<members::title>;
+        type Position = S::Position;
+        type IsEnabled = S::IsEnabled;
+    }
+    ///State transition - sets the `position` field to Set
+    pub struct SetPosition<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetPosition<S> {}
+    impl<S: State> State for SetPosition<S> {
+        type Id = S::Id;
+        type Tracks = S::Tracks;
+        type Title = S::Title;
+        type Position = Set<members::position>;
+        type IsEnabled = S::IsEnabled;
+    }
+    ///State transition - sets the `is_enabled` field to Set
+    pub struct SetIsEnabled<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetIsEnabled<S> {}
+    impl<S: State> State for SetIsEnabled<S> {
+        type Id = S::Id;
+        type Tracks = S::Tracks;
+        type Title = S::Title;
+        type Position = S::Position;
+        type IsEnabled = Set<members::is_enabled>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
-        ///Marker type for the `title` field
-        pub struct title(());
-        ///Marker type for the `is_enabled` field
-        pub struct is_enabled(());
-        ///Marker type for the `position` field
-        pub struct position(());
-        ///Marker type for the `tracks` field
-        pub struct tracks(());
         ///Marker type for the `id` field
         pub struct id(());
+        ///Marker type for the `tracks` field
+        pub struct tracks(());
+        ///Marker type for the `title` field
+        pub struct title(());
+        ///Marker type for the `position` field
+        pub struct position(());
+        ///Marker type for the `is_enabled` field
+        pub struct is_enabled(());
     }
 }
 
@@ -3297,11 +3411,11 @@ where
 impl<'a, S> RadioAlbumBuilder<'a, S>
 where
     S: radio_album_state::State,
-    S::Title: radio_album_state::IsSet,
-    S::IsEnabled: radio_album_state::IsSet,
-    S::Position: radio_album_state::IsSet,
-    S::Tracks: radio_album_state::IsSet,
     S::Id: radio_album_state::IsSet,
+    S::Tracks: radio_album_state::IsSet,
+    S::Title: radio_album_state::IsSet,
+    S::Position: radio_album_state::IsSet,
+    S::IsEnabled: radio_album_state::IsSet,
 {
     /// Build the final struct
     pub fn build(self) -> RadioAlbum<'a> {
@@ -3335,7 +3449,7 @@ where
 
 pub mod radio_snapshot_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -3507,7 +3621,7 @@ where
 
 pub mod radio_state_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -3554,8 +3668,11 @@ pub struct RadioStateBuilder<'a, S: radio_state_state::State> {
     _state: PhantomData<fn() -> S>,
     _fields: (
         Option<CowStr<'a>>,
+        Option<RadioStateLoopMode<'a>>,
+        Option<CowStr<'a>>,
         Option<i64>,
         Option<i64>,
+        Option<bool>,
         Option<i64>,
         Option<RadioStateStatus<'a>>,
         Option<CowStr<'a>>,
@@ -3575,7 +3692,7 @@ impl<'a> RadioStateBuilder<'a, radio_state_state::Empty> {
     pub fn new() -> Self {
         RadioStateBuilder {
             _state: PhantomData,
-            _fields: (None, None, None, None, None, None),
+            _fields: (None, None, None, None, None, None, None, None, None),
             _lifetime: PhantomData,
         }
     }
@@ -3595,14 +3712,40 @@ impl<'a, S: radio_state_state::State> RadioStateBuilder<'a, S> {
 }
 
 impl<'a, S: radio_state_state::State> RadioStateBuilder<'a, S> {
+    /// Set the `loopMode` field (optional)
+    pub fn loop_mode(mut self, value: impl Into<Option<RadioStateLoopMode<'a>>>) -> Self {
+        self._fields.1 = value.into();
+        self
+    }
+    /// Set the `loopMode` field to an Option value (optional)
+    pub fn maybe_loop_mode(mut self, value: Option<RadioStateLoopMode<'a>>) -> Self {
+        self._fields.1 = value;
+        self
+    }
+}
+
+impl<'a, S: radio_state_state::State> RadioStateBuilder<'a, S> {
+    /// Set the `loopPlaylistId` field (optional)
+    pub fn loop_playlist_id(mut self, value: impl Into<Option<CowStr<'a>>>) -> Self {
+        self._fields.2 = value.into();
+        self
+    }
+    /// Set the `loopPlaylistId` field to an Option value (optional)
+    pub fn maybe_loop_playlist_id(mut self, value: Option<CowStr<'a>>) -> Self {
+        self._fields.2 = value;
+        self
+    }
+}
+
+impl<'a, S: radio_state_state::State> RadioStateBuilder<'a, S> {
     /// Set the `pausedAt` field (optional)
     pub fn paused_at(mut self, value: impl Into<Option<i64>>) -> Self {
-        self._fields.1 = value.into();
+        self._fields.3 = value.into();
         self
     }
     /// Set the `pausedAt` field to an Option value (optional)
     pub fn maybe_paused_at(mut self, value: Option<i64>) -> Self {
-        self._fields.1 = value;
+        self._fields.3 = value;
         self
     }
 }
@@ -3617,7 +3760,7 @@ where
         mut self,
         value: impl Into<i64>,
     ) -> RadioStateBuilder<'a, radio_state_state::SetPositionSeconds<S>> {
-        self._fields.2 = Option::Some(value.into());
+        self._fields.4 = Option::Some(value.into());
         RadioStateBuilder {
             _state: PhantomData,
             _fields: self._fields,
@@ -3627,14 +3770,27 @@ where
 }
 
 impl<'a, S: radio_state_state::State> RadioStateBuilder<'a, S> {
+    /// Set the `shuffle` field (optional)
+    pub fn shuffle(mut self, value: impl Into<Option<bool>>) -> Self {
+        self._fields.5 = value.into();
+        self
+    }
+    /// Set the `shuffle` field to an Option value (optional)
+    pub fn maybe_shuffle(mut self, value: Option<bool>) -> Self {
+        self._fields.5 = value;
+        self
+    }
+}
+
+impl<'a, S: radio_state_state::State> RadioStateBuilder<'a, S> {
     /// Set the `startedAt` field (optional)
     pub fn started_at(mut self, value: impl Into<Option<i64>>) -> Self {
-        self._fields.3 = value.into();
+        self._fields.6 = value.into();
         self
     }
     /// Set the `startedAt` field to an Option value (optional)
     pub fn maybe_started_at(mut self, value: Option<i64>) -> Self {
-        self._fields.3 = value;
+        self._fields.6 = value;
         self
     }
 }
@@ -3649,7 +3805,7 @@ where
         mut self,
         value: impl Into<RadioStateStatus<'a>>,
     ) -> RadioStateBuilder<'a, radio_state_state::SetStatus<S>> {
-        self._fields.4 = Option::Some(value.into());
+        self._fields.7 = Option::Some(value.into());
         RadioStateBuilder {
             _state: PhantomData,
             _fields: self._fields,
@@ -3661,12 +3817,12 @@ where
 impl<'a, S: radio_state_state::State> RadioStateBuilder<'a, S> {
     /// Set the `updatedByDid` field (optional)
     pub fn updated_by_did(mut self, value: impl Into<Option<CowStr<'a>>>) -> Self {
-        self._fields.5 = value.into();
+        self._fields.8 = value.into();
         self
     }
     /// Set the `updatedByDid` field to an Option value (optional)
     pub fn maybe_updated_by_did(mut self, value: Option<CowStr<'a>>) -> Self {
-        self._fields.5 = value;
+        self._fields.8 = value;
         self
     }
 }
@@ -3681,11 +3837,14 @@ where
     pub fn build(self) -> RadioState<'a> {
         RadioState {
             current_song_id: self._fields.0,
-            paused_at: self._fields.1,
-            position_seconds: self._fields.2.unwrap(),
-            started_at: self._fields.3,
-            status: self._fields.4.unwrap(),
-            updated_by_did: self._fields.5,
+            loop_mode: self._fields.1,
+            loop_playlist_id: self._fields.2,
+            paused_at: self._fields.3,
+            position_seconds: self._fields.4.unwrap(),
+            shuffle: self._fields.5,
+            started_at: self._fields.6,
+            status: self._fields.7.unwrap(),
+            updated_by_did: self._fields.8,
             extra_data: Default::default(),
         }
     }
@@ -3699,11 +3858,14 @@ where
     ) -> RadioState<'a> {
         RadioState {
             current_song_id: self._fields.0,
-            paused_at: self._fields.1,
-            position_seconds: self._fields.2.unwrap(),
-            started_at: self._fields.3,
-            status: self._fields.4.unwrap(),
-            updated_by_did: self._fields.5,
+            loop_mode: self._fields.1,
+            loop_playlist_id: self._fields.2,
+            paused_at: self._fields.3,
+            position_seconds: self._fields.4.unwrap(),
+            shuffle: self._fields.5,
+            started_at: self._fields.6,
+            status: self._fields.7.unwrap(),
+            updated_by_did: self._fields.8,
             extra_data: Some(extra_data),
         }
     }
@@ -3711,7 +3873,7 @@ where
 
 pub mod song_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -3719,105 +3881,105 @@ pub mod song_state {
     }
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
+        type Id;
+        type Title;
+        type Artist;
         type HasCover;
         type CreatedAt;
-        type Title;
         type AddedByDid;
-        type Artist;
-        type Id;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
+        type Id = Unset;
+        type Title = Unset;
+        type Artist = Unset;
         type HasCover = Unset;
         type CreatedAt = Unset;
-        type Title = Unset;
         type AddedByDid = Unset;
-        type Artist = Unset;
-        type Id = Unset;
-    }
-    ///State transition - sets the `has_cover` field to Set
-    pub struct SetHasCover<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetHasCover<S> {}
-    impl<S: State> State for SetHasCover<S> {
-        type HasCover = Set<members::has_cover>;
-        type CreatedAt = S::CreatedAt;
-        type Title = S::Title;
-        type AddedByDid = S::AddedByDid;
-        type Artist = S::Artist;
-        type Id = S::Id;
-    }
-    ///State transition - sets the `created_at` field to Set
-    pub struct SetCreatedAt<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetCreatedAt<S> {}
-    impl<S: State> State for SetCreatedAt<S> {
-        type HasCover = S::HasCover;
-        type CreatedAt = Set<members::created_at>;
-        type Title = S::Title;
-        type AddedByDid = S::AddedByDid;
-        type Artist = S::Artist;
-        type Id = S::Id;
-    }
-    ///State transition - sets the `title` field to Set
-    pub struct SetTitle<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetTitle<S> {}
-    impl<S: State> State for SetTitle<S> {
-        type HasCover = S::HasCover;
-        type CreatedAt = S::CreatedAt;
-        type Title = Set<members::title>;
-        type AddedByDid = S::AddedByDid;
-        type Artist = S::Artist;
-        type Id = S::Id;
-    }
-    ///State transition - sets the `added_by_did` field to Set
-    pub struct SetAddedByDid<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetAddedByDid<S> {}
-    impl<S: State> State for SetAddedByDid<S> {
-        type HasCover = S::HasCover;
-        type CreatedAt = S::CreatedAt;
-        type Title = S::Title;
-        type AddedByDid = Set<members::added_by_did>;
-        type Artist = S::Artist;
-        type Id = S::Id;
-    }
-    ///State transition - sets the `artist` field to Set
-    pub struct SetArtist<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetArtist<S> {}
-    impl<S: State> State for SetArtist<S> {
-        type HasCover = S::HasCover;
-        type CreatedAt = S::CreatedAt;
-        type Title = S::Title;
-        type AddedByDid = S::AddedByDid;
-        type Artist = Set<members::artist>;
-        type Id = S::Id;
     }
     ///State transition - sets the `id` field to Set
     pub struct SetId<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetId<S> {}
     impl<S: State> State for SetId<S> {
+        type Id = Set<members::id>;
+        type Title = S::Title;
+        type Artist = S::Artist;
         type HasCover = S::HasCover;
         type CreatedAt = S::CreatedAt;
-        type Title = S::Title;
         type AddedByDid = S::AddedByDid;
+    }
+    ///State transition - sets the `title` field to Set
+    pub struct SetTitle<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetTitle<S> {}
+    impl<S: State> State for SetTitle<S> {
+        type Id = S::Id;
+        type Title = Set<members::title>;
         type Artist = S::Artist;
-        type Id = Set<members::id>;
+        type HasCover = S::HasCover;
+        type CreatedAt = S::CreatedAt;
+        type AddedByDid = S::AddedByDid;
+    }
+    ///State transition - sets the `artist` field to Set
+    pub struct SetArtist<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetArtist<S> {}
+    impl<S: State> State for SetArtist<S> {
+        type Id = S::Id;
+        type Title = S::Title;
+        type Artist = Set<members::artist>;
+        type HasCover = S::HasCover;
+        type CreatedAt = S::CreatedAt;
+        type AddedByDid = S::AddedByDid;
+    }
+    ///State transition - sets the `has_cover` field to Set
+    pub struct SetHasCover<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetHasCover<S> {}
+    impl<S: State> State for SetHasCover<S> {
+        type Id = S::Id;
+        type Title = S::Title;
+        type Artist = S::Artist;
+        type HasCover = Set<members::has_cover>;
+        type CreatedAt = S::CreatedAt;
+        type AddedByDid = S::AddedByDid;
+    }
+    ///State transition - sets the `created_at` field to Set
+    pub struct SetCreatedAt<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetCreatedAt<S> {}
+    impl<S: State> State for SetCreatedAt<S> {
+        type Id = S::Id;
+        type Title = S::Title;
+        type Artist = S::Artist;
+        type HasCover = S::HasCover;
+        type CreatedAt = Set<members::created_at>;
+        type AddedByDid = S::AddedByDid;
+    }
+    ///State transition - sets the `added_by_did` field to Set
+    pub struct SetAddedByDid<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetAddedByDid<S> {}
+    impl<S: State> State for SetAddedByDid<S> {
+        type Id = S::Id;
+        type Title = S::Title;
+        type Artist = S::Artist;
+        type HasCover = S::HasCover;
+        type CreatedAt = S::CreatedAt;
+        type AddedByDid = Set<members::added_by_did>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
+        ///Marker type for the `id` field
+        pub struct id(());
+        ///Marker type for the `title` field
+        pub struct title(());
+        ///Marker type for the `artist` field
+        pub struct artist(());
         ///Marker type for the `has_cover` field
         pub struct has_cover(());
         ///Marker type for the `created_at` field
         pub struct created_at(());
-        ///Marker type for the `title` field
-        pub struct title(());
         ///Marker type for the `added_by_did` field
         pub struct added_by_did(());
-        ///Marker type for the `artist` field
-        pub struct artist(());
-        ///Marker type for the `id` field
-        pub struct id(());
     }
 }
 
@@ -3854,18 +4016,7 @@ impl<'a> SongBuilder<'a, song_state::Empty> {
         SongBuilder {
             _state: PhantomData,
             _fields: (
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                None, None, None, None, None, None, None, None, None, None, None, None,
             ),
             _lifetime: PhantomData,
         }
@@ -3993,10 +4144,7 @@ where
     S::Id: song_state::IsUnset,
 {
     /// Set the `id` field (required)
-    pub fn id(
-        mut self,
-        value: impl Into<CowStr<'a>>,
-    ) -> SongBuilder<'a, song_state::SetId<S>> {
+    pub fn id(mut self, value: impl Into<CowStr<'a>>) -> SongBuilder<'a, song_state::SetId<S>> {
         self._fields.7 = Option::Some(value.into());
         SongBuilder {
             _state: PhantomData,
@@ -4067,12 +4215,12 @@ where
 impl<'a, S> SongBuilder<'a, S>
 where
     S: song_state::State,
+    S::Id: song_state::IsSet,
+    S::Title: song_state::IsSet,
+    S::Artist: song_state::IsSet,
     S::HasCover: song_state::IsSet,
     S::CreatedAt: song_state::IsSet,
-    S::Title: song_state::IsSet,
     S::AddedByDid: song_state::IsSet,
-    S::Artist: song_state::IsSet,
-    S::Id: song_state::IsSet,
 {
     /// Build the final struct
     pub fn build(self) -> Song<'a> {
@@ -4124,7 +4272,7 @@ fn _default_song_url_source_add_to_queue() -> Option<bool> {
 
 pub mod song_url_source_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -4293,7 +4441,7 @@ where
 
 pub mod subsonic_song_result_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -4301,51 +4449,51 @@ pub mod subsonic_song_result_state {
     }
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
-        type Artist;
         type Title;
         type Id;
+        type Artist;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
-        type Artist = Unset;
         type Title = Unset;
         type Id = Unset;
-    }
-    ///State transition - sets the `artist` field to Set
-    pub struct SetArtist<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetArtist<S> {}
-    impl<S: State> State for SetArtist<S> {
-        type Artist = Set<members::artist>;
-        type Title = S::Title;
-        type Id = S::Id;
+        type Artist = Unset;
     }
     ///State transition - sets the `title` field to Set
     pub struct SetTitle<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetTitle<S> {}
     impl<S: State> State for SetTitle<S> {
-        type Artist = S::Artist;
         type Title = Set<members::title>;
         type Id = S::Id;
+        type Artist = S::Artist;
     }
     ///State transition - sets the `id` field to Set
     pub struct SetId<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetId<S> {}
     impl<S: State> State for SetId<S> {
-        type Artist = S::Artist;
         type Title = S::Title;
         type Id = Set<members::id>;
+        type Artist = S::Artist;
+    }
+    ///State transition - sets the `artist` field to Set
+    pub struct SetArtist<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetArtist<S> {}
+    impl<S: State> State for SetArtist<S> {
+        type Title = S::Title;
+        type Id = S::Id;
+        type Artist = Set<members::artist>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
-        ///Marker type for the `artist` field
-        pub struct artist(());
         ///Marker type for the `title` field
         pub struct title(());
         ///Marker type for the `id` field
         pub struct id(());
+        ///Marker type for the `artist` field
+        pub struct artist(());
     }
 }
 
@@ -4480,9 +4628,9 @@ where
 impl<'a, S> SubsonicSongResultBuilder<'a, S>
 where
     S: subsonic_song_result_state::State,
-    S::Artist: subsonic_song_result_state::IsSet,
     S::Title: subsonic_song_result_state::IsSet,
     S::Id: subsonic_song_result_state::IsSet,
+    S::Artist: subsonic_song_result_state::IsSet,
 {
     /// Build the final struct
     pub fn build(self) -> SubsonicSongResult<'a> {

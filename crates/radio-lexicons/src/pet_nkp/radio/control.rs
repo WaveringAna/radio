@@ -8,12 +8,12 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
+use crate::pet_nkp::radio::RadioSnapshot;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Serialize, Deserialize};
-use crate::pet_nkp::radio::RadioSnapshot;
+use serde::{Deserialize, Serialize};
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic, Default)]
@@ -23,8 +23,15 @@ pub struct Control<'a> {
     pub action: ControlAction<'a>,
     #[serde(borrow)]
     pub intent: ControlIntent<'a>,
+    ///Required for setLoopMode: how finished queue tracks are recycled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(borrow)]
+    pub loop_mode: Option<ControlLoopMode<'a>>,
+    ///For setLoopPlaylist: the playlist to reload when the queue drains. Omit to stop looping a playlist.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(borrow)]
+    pub loop_playlist_id: Option<CowStr<'a>>,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ControlAction<'a> {
@@ -33,6 +40,9 @@ pub enum ControlAction<'a> {
     Stop,
     Skip,
     Previous,
+    Shuffle,
+    SetLoopMode,
+    SetLoopPlaylist,
     Other(CowStr<'a>),
 }
 
@@ -44,6 +54,9 @@ impl<'a> ControlAction<'a> {
             Self::Stop => "stop",
             Self::Skip => "skip",
             Self::Previous => "previous",
+            Self::Shuffle => "shuffle",
+            Self::SetLoopMode => "setLoopMode",
+            Self::SetLoopPlaylist => "setLoopPlaylist",
             Self::Other(s) => s.as_ref(),
         }
     }
@@ -57,6 +70,9 @@ impl<'a> From<&'a str> for ControlAction<'a> {
             "stop" => Self::Stop,
             "skip" => Self::Skip,
             "previous" => Self::Previous,
+            "shuffle" => Self::Shuffle,
+            "setLoopMode" => Self::SetLoopMode,
+            "setLoopPlaylist" => Self::SetLoopPlaylist,
             _ => Self::Other(CowStr::from(s)),
         }
     }
@@ -70,6 +86,9 @@ impl<'a> From<String> for ControlAction<'a> {
             "stop" => Self::Stop,
             "skip" => Self::Skip,
             "previous" => Self::Previous,
+            "shuffle" => Self::Shuffle,
+            "setLoopMode" => Self::SetLoopMode,
+            "setLoopPlaylist" => Self::SetLoopPlaylist,
             _ => Self::Other(CowStr::from(s)),
         }
     }
@@ -124,11 +143,13 @@ impl jacquard_common::IntoStatic for ControlAction<'_> {
             ControlAction::Stop => ControlAction::Stop,
             ControlAction::Skip => ControlAction::Skip,
             ControlAction::Previous => ControlAction::Previous,
+            ControlAction::Shuffle => ControlAction::Shuffle,
+            ControlAction::SetLoopMode => ControlAction::SetLoopMode,
+            ControlAction::SetLoopPlaylist => ControlAction::SetLoopPlaylist,
             ControlAction::Other(v) => ControlAction::Other(v.into_static()),
         }
     }
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ControlIntent<'a> {
@@ -213,6 +234,100 @@ impl jacquard_common::IntoStatic for ControlIntent<'_> {
     }
 }
 
+/// Required for setLoopMode: how finished queue tracks are recycled.
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ControlLoopMode<'a> {
+    Off,
+    One,
+    Queue,
+    Other(CowStr<'a>),
+}
+
+impl<'a> ControlLoopMode<'a> {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Off => "off",
+            Self::One => "one",
+            Self::Queue => "queue",
+            Self::Other(s) => s.as_ref(),
+        }
+    }
+}
+
+impl<'a> From<&'a str> for ControlLoopMode<'a> {
+    fn from(s: &'a str) -> Self {
+        match s {
+            "off" => Self::Off,
+            "one" => Self::One,
+            "queue" => Self::Queue,
+            _ => Self::Other(CowStr::from(s)),
+        }
+    }
+}
+
+impl<'a> From<String> for ControlLoopMode<'a> {
+    fn from(s: String) -> Self {
+        match s.as_str() {
+            "off" => Self::Off,
+            "one" => Self::One,
+            "queue" => Self::Queue,
+            _ => Self::Other(CowStr::from(s)),
+        }
+    }
+}
+
+impl<'a> core::fmt::Display for ControlLoopMode<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl<'a> AsRef<str> for ControlLoopMode<'a> {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl<'a> serde::Serialize for ControlLoopMode<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de, 'a> serde::Deserialize<'de> for ControlLoopMode<'a>
+where
+    'de: 'a,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = <&'de str>::deserialize(deserializer)?;
+        Ok(Self::from(s))
+    }
+}
+
+impl<'a> Default for ControlLoopMode<'a> {
+    fn default() -> Self {
+        Self::Other(Default::default())
+    }
+}
+
+impl jacquard_common::IntoStatic for ControlLoopMode<'_> {
+    type Output = ControlLoopMode<'static>;
+    fn into_static(self) -> Self::Output {
+        match self {
+            ControlLoopMode::Off => ControlLoopMode::Off,
+            ControlLoopMode::One => ControlLoopMode::One,
+            ControlLoopMode::Queue => ControlLoopMode::Queue,
+            ControlLoopMode::Other(v) => ControlLoopMode::Other(v.into_static()),
+        }
+    }
+}
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
@@ -221,7 +336,6 @@ pub struct ControlOutput<'a> {
     #[serde(borrow)]
     pub snapshot: RadioSnapshot<'a>,
 }
-
 
 #[open_union]
 #[derive(
@@ -233,9 +347,8 @@ pub struct ControlOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic
+    IntoStatic,
 )]
-
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum ControlError<'a> {
@@ -287,9 +400,8 @@ impl jacquard_common::xrpc::XrpcResp for ControlResponse {
 
 impl<'a> jacquard_common::xrpc::XrpcRequest for Control<'a> {
     const NSID: &'static str = "pet.nkp.radio.control";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Response = ControlResponse;
 }
 
@@ -297,9 +409,8 @@ impl<'a> jacquard_common::xrpc::XrpcRequest for Control<'a> {
 pub struct ControlRequest;
 impl jacquard_common::xrpc::XrpcEndpoint for ControlRequest {
     const PATH: &'static str = "/xrpc/pet.nkp.radio.control";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Request<'de> = Control<'de>;
     type Response = ControlResponse;
 }

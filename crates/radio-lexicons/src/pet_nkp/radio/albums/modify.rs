@@ -8,12 +8,12 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
+use crate::pet_nkp::radio::RadioAlbum;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Serialize, Deserialize};
-use crate::pet_nkp::radio::RadioAlbum;
+use serde::{Deserialize, Serialize};
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic, Default)]
@@ -28,17 +28,17 @@ pub struct Modify<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(borrow)]
     pub target_album_id: Option<CowStr<'a>>,
+    ///Rotation weight for setWeight: 1 light, 2 normal, 4 heavy.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
     pub weight: Option<i64>,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ModifyAction<'a> {
     Delete,
     SetEnabled,
     Merge,
+    SetWeight,
     Other(CowStr<'a>),
 }
 
@@ -48,6 +48,7 @@ impl<'a> ModifyAction<'a> {
             Self::Delete => "delete",
             Self::SetEnabled => "setEnabled",
             Self::Merge => "merge",
+            Self::SetWeight => "setWeight",
             Self::Other(s) => s.as_ref(),
         }
     }
@@ -59,6 +60,7 @@ impl<'a> From<&'a str> for ModifyAction<'a> {
             "delete" => Self::Delete,
             "setEnabled" => Self::SetEnabled,
             "merge" => Self::Merge,
+            "setWeight" => Self::SetWeight,
             _ => Self::Other(CowStr::from(s)),
         }
     }
@@ -70,6 +72,7 @@ impl<'a> From<String> for ModifyAction<'a> {
             "delete" => Self::Delete,
             "setEnabled" => Self::SetEnabled,
             "merge" => Self::Merge,
+            "setWeight" => Self::SetWeight,
             _ => Self::Other(CowStr::from(s)),
         }
     }
@@ -122,11 +125,11 @@ impl jacquard_common::IntoStatic for ModifyAction<'_> {
             ModifyAction::Delete => ModifyAction::Delete,
             ModifyAction::SetEnabled => ModifyAction::SetEnabled,
             ModifyAction::Merge => ModifyAction::Merge,
+            ModifyAction::SetWeight => ModifyAction::SetWeight,
             ModifyAction::Other(v) => ModifyAction::Other(v.into_static()),
         }
     }
 }
-
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
@@ -135,7 +138,6 @@ pub struct ModifyOutput<'a> {
     #[serde(borrow)]
     pub albums: Vec<RadioAlbum<'a>>,
 }
-
 
 #[open_union]
 #[derive(
@@ -147,9 +149,8 @@ pub struct ModifyOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic
+    IntoStatic,
 )]
-
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum ModifyError<'a> {
@@ -201,9 +202,8 @@ impl jacquard_common::xrpc::XrpcResp for ModifyResponse {
 
 impl<'a> jacquard_common::xrpc::XrpcRequest for Modify<'a> {
     const NSID: &'static str = "pet.nkp.radio.albums.modify";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Response = ModifyResponse;
 }
 
@@ -211,9 +211,8 @@ impl<'a> jacquard_common::xrpc::XrpcRequest for Modify<'a> {
 pub struct ModifyRequest;
 impl jacquard_common::xrpc::XrpcEndpoint for ModifyRequest {
     const PATH: &'static str = "/xrpc/pet.nkp.radio.albums.modify";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Request<'de> = Modify<'de>;
     type Response = ModifyResponse;
 }

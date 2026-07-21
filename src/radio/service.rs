@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, anyhow};
 use sqlx::FromRow;
@@ -247,10 +247,11 @@ impl RadioService {
             id: String,
             title: String,
         }
-        let all_db_albums = sqlx::query_as::<_, ExistingAlbum>("select id, title from radio_albums")
-            .fetch_all(&mut *tx)
-            .await
-            .context("loading all existing albums")?;
+        let all_db_albums =
+            sqlx::query_as::<_, ExistingAlbum>("select id, title from radio_albums")
+                .fetch_all(&mut *tx)
+                .await
+                .context("loading all existing albums")?;
 
         for (key, (candidate_titles, song_ids)) in grouped {
             let album_name = Self::resolve_album_title_conflict(&candidate_titles);
@@ -461,7 +462,7 @@ impl RadioService {
     pub(crate) async fn playlists(&self) -> anyhow::Result<Vec<Playlist>> {
         let mut playlists = sqlx::query_as::<_, Playlist>(
             r#"
-            select id, name, created_at
+            select id, name, created_at, shuffle_on_load
             from playlists
             order by created_at desc
             "#,
@@ -549,6 +550,224 @@ impl RadioService {
             .ok_or_else(|| anyhow!("created playlist disappeared"))
     }
 
+    /// Renames a playlist.
+    pub(crate) async fn rename_playlist(&self, id: &str, name: &str) -> anyhow::Result<Playlist> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(anyhow!("playlist name is required"));
+        }
+        let result = sqlx::query("update playlists set name = ? where id = ?")
+            .bind(name)
+            .bind(id)
+            .execute(self.db.pool())
+            .await
+            .context("renaming playlist")?;
+        if result.rows_affected() == 0 {
+            return Err(anyhow!("playlist not found"));
+        }
+        self.find_playlist(id).await
+    }
+
+    /// Toggles whether loading this playlist randomizes its order.
+    pub(crate) async fn set_playlist_shuffle_on_load(
+        &self,
+        id: &str,
+        shuffle_on_load: bool,
+    ) -> anyhow::Result<Playlist> {
+        let result = sqlx::query("update playlists set shuffle_on_load = ? where id = ?")
+            .bind(shuffle_on_load)
+            .bind(id)
+            .execute(self.db.pool())
+            .await
+            .context("updating playlist shuffle_on_load")?;
+        if result.rows_affected() == 0 {
+            return Err(anyhow!("playlist not found"));
+        }
+        self.find_playlist(id).await
+    }
+
+    /// Appends songs to the end of a playlist.
+    pub(crate) async fn append_playlist_tracks(
+        &self,
+        id: &str,
+        song_ids: &[String],
+    ) -> anyhow::Result<Playlist> {
+        let song_ids: Vec<String> = song_ids
+            .iter()
+            .map(|song_id| song_id.trim().to_owned())
+            .filter(|song_id| !song_id.is_empty())
+            .collect();
+        if song_ids.is_empty() {
+            return Err(anyhow!("no songs to add"));
+        }
+        for song_id in &song_ids {
+            if find_song(&self.db, song_id).await?.is_none() {
+                return Err(anyhow!("song not found: {song_id}"));
+            }
+        }
+
+        let mut tx = self
+            .db
+            .pool()
+            .begin()
+            .await
+            .context("starting playlist append transaction")?;
+
+        let base = sqlx::query_scalar::<_, Option<i64>>(
+            "select max(position) from playlist_tracks where playlist_id = ?",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await
+        .context("loading max playlist position")?
+        .unwrap_or(0);
+
+        for (index, song_id) in song_ids.iter().enumerate() {
+            sqlx::query(
+                "insert into playlist_tracks (playlist_id, song_id, position) values (?, ?, ?)",
+            )
+            .bind(id)
+            .bind(song_id)
+            .bind(base + index as i64 + 1)
+            .execute(&mut *tx)
+            .await
+            .context("appending playlist track")?;
+        }
+
+        tx.commit().await.context("committing playlist append")?;
+        self.find_playlist(id).await
+    }
+
+    /// Drops the track at a one-based position and closes the gap.
+    ///
+    /// `playlist_tracks` is keyed on `(playlist_id, position)`, so shifting the
+    /// survivors in place would collide with rows that haven't moved yet. Every
+    /// reshuffle therefore clears the playlist's rows and reinserts them.
+    pub(crate) async fn remove_playlist_track(
+        &self,
+        id: &str,
+        position: i64,
+    ) -> anyhow::Result<Playlist> {
+        let mut song_ids = sqlx::query_scalar::<_, String>(
+            "select song_id from playlist_tracks where playlist_id = ? order by position asc",
+        )
+        .bind(id)
+        .fetch_all(self.db.pool())
+        .await
+        .context("loading playlist tracks")?;
+
+        let index = usize::try_from(position - 1).map_err(|_| anyhow!("invalid position"))?;
+        if index >= song_ids.len() {
+            return Err(anyhow!("no track at position {position}"));
+        }
+        song_ids.remove(index);
+        self.rewrite_playlist_tracks(id, &song_ids).await?;
+        self.find_playlist(id).await
+    }
+
+    /// Replaces a playlist's track order wholesale.
+    pub(crate) async fn reorder_playlist_tracks(
+        &self,
+        id: &str,
+        song_ids: &[String],
+    ) -> anyhow::Result<Playlist> {
+        let existing = sqlx::query_scalar::<_, String>(
+            "select song_id from playlist_tracks where playlist_id = ?",
+        )
+        .bind(id)
+        .fetch_all(self.db.pool())
+        .await
+        .context("loading playlist tracks")?;
+
+        // A reorder must be a permutation: anything else would silently add or
+        // drop tracks under the guise of moving them.
+        let mut before: Vec<&String> = existing.iter().collect();
+        let mut after: Vec<&String> = song_ids.iter().collect();
+        before.sort();
+        after.sort();
+        if before != after {
+            return Err(anyhow!("reorder must list exactly the playlist's tracks"));
+        }
+
+        self.rewrite_playlist_tracks(id, song_ids).await?;
+        self.find_playlist(id).await
+    }
+
+    /// Rewrites a set's stored order into a well-sequenced one.
+    pub(crate) async fn sequence_playlist_tracks(&self, id: &str) -> anyhow::Result<Playlist> {
+        let song_ids = sqlx::query_scalar::<_, String>(
+            "select song_id from playlist_tracks where playlist_id = ? order by position asc",
+        )
+        .bind(id)
+        .fetch_all(self.db.pool())
+        .await
+        .context("loading playlist tracks")?;
+
+        if song_ids.len() > 1 {
+            let ordered = sequence_songs(&self.db, &song_ids).await?;
+            self.rewrite_playlist_tracks(id, &ordered).await?;
+        }
+        self.find_playlist(id).await
+    }
+
+    /// Copies a playlist, tracks and all, under a new name.
+    pub(crate) async fn duplicate_playlist(
+        &self,
+        id: &str,
+        name: &str,
+    ) -> anyhow::Result<Playlist> {
+        let song_ids = sqlx::query_scalar::<_, String>(
+            "select song_id from playlist_tracks where playlist_id = ? order by position asc",
+        )
+        .bind(id)
+        .fetch_all(self.db.pool())
+        .await
+        .context("loading playlist tracks")?;
+
+        if song_ids.is_empty() {
+            return Err(anyhow!("playlist is empty or not found"));
+        }
+        self.create_playlist(name, &song_ids).await
+    }
+
+    /// Rewrites the whole `playlist_tracks` block for one playlist in order.
+    async fn rewrite_playlist_tracks(&self, id: &str, song_ids: &[String]) -> anyhow::Result<()> {
+        let mut tx = self
+            .db
+            .pool()
+            .begin()
+            .await
+            .context("starting playlist rewrite transaction")?;
+
+        sqlx::query("delete from playlist_tracks where playlist_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("clearing playlist tracks")?;
+
+        for (index, song_id) in song_ids.iter().enumerate() {
+            sqlx::query(
+                "insert into playlist_tracks (playlist_id, song_id, position) values (?, ?, ?)",
+            )
+            .bind(id)
+            .bind(song_id)
+            .bind(index as i64 + 1)
+            .execute(&mut *tx)
+            .await
+            .context("reinserting playlist track")?;
+        }
+
+        tx.commit().await.context("committing playlist rewrite")
+    }
+
+    async fn find_playlist(&self, id: &str) -> anyhow::Result<Playlist> {
+        self.playlists()
+            .await?
+            .into_iter()
+            .find(|playlist| playlist.id == id)
+            .ok_or_else(|| anyhow!("playlist not found"))
+    }
+
     /// Deletes a playlist.
     pub(crate) async fn delete_playlist(&self, id: &str) -> anyhow::Result<()> {
         sqlx::query("delete from playlists where id = ?")
@@ -561,13 +780,17 @@ impl RadioService {
     }
 
     /// Loads playlist tracks into the queue.
+    ///
+    /// `shuffle` overrides the playlist's stored `shuffle_on_load`; passing
+    /// `None` honours whatever the set was saved with.
     pub(crate) async fn load_playlist(
         &self,
         id: &str,
         replace: bool,
+        shuffle: Option<bool>,
         admin_did: &str,
     ) -> anyhow::Result<RadioSnapshot> {
-        let song_ids = sqlx::query_scalar::<_, String>(
+        let mut song_ids = sqlx::query_scalar::<_, String>(
             "select song_id from playlist_tracks where playlist_id = ? order by position asc",
         )
         .bind(id)
@@ -577,6 +800,21 @@ impl RadioService {
 
         if song_ids.is_empty() {
             return Err(anyhow!("playlist is empty or not found"));
+        }
+
+        let shuffle = match shuffle {
+            Some(explicit) => explicit,
+            None => {
+                sqlx::query_scalar::<_, bool>("select shuffle_on_load from playlists where id = ?")
+                    .bind(id)
+                    .fetch_optional(self.db.pool())
+                    .await
+                    .context("loading playlist shuffle_on_load")?
+                    .unwrap_or(false)
+            }
+        };
+        if shuffle {
+            song_ids = sequence_songs(&self.db, &song_ids).await?;
         }
 
         if replace {
@@ -744,12 +982,11 @@ impl RadioService {
 
     /// Rotation metadata for the admin UI: per-album weights and the airlog.
     pub(crate) async fn rotation_info(&self) -> anyhow::Result<crate::radio::RotationInfo> {
-        let weights = sqlx::query_as::<_, (String, i64)>(
-            "select id, rotation_weight from radio_albums",
-        )
-        .fetch_all(self.db.pool())
-        .await
-        .context("loading rotation weights")?;
+        let weights =
+            sqlx::query_as::<_, (String, i64)>("select id, rotation_weight from radio_albums")
+                .fetch_all(self.db.pool())
+                .await
+                .context("loading rotation weights")?;
         let recently_played = sqlx::query_as::<_, crate::radio::PlayHistoryItem>(
             r#"
             select song_id, title, artist, started_at
@@ -772,12 +1009,14 @@ impl RadioService {
                     let source = if track.album_id == SINGLES_ALBUM_ID {
                         "singles".to_string()
                     } else {
-                        sqlx::query_scalar::<_, String>("select title from radio_albums where id = ?")
-                            .bind(&track.album_id)
-                            .fetch_optional(self.db.pool())
-                            .await
-                            .context("loading rotation album title")?
-                            .unwrap_or_else(|| "album loop".to_string())
+                        sqlx::query_scalar::<_, String>(
+                            "select title from radio_albums where id = ?",
+                        )
+                        .bind(&track.album_id)
+                        .fetch_optional(self.db.pool())
+                        .await
+                        .context("loading rotation album title")?
+                        .unwrap_or_else(|| "album loop".to_string())
                     };
                     song.map(|song| crate::radio::RotationUpNext {
                         song_id: song.id,
@@ -1182,18 +1421,96 @@ impl RadioService {
         song_ids: &[String],
         admin_did: &str,
     ) -> anyhow::Result<RadioSnapshot> {
+        self.enqueue_songs_at(song_ids, admin_did, false, false)
+            .await
+    }
+
+    /// Reorders the pending queue into a well-sequenced set.
+    pub(crate) async fn sequence_queue(&self) -> anyhow::Result<RadioSnapshot> {
+        let rows = sqlx::query_as::<_, (String, String)>(
+            r#"
+            select id, song_id from radio_queue
+            order by is_shuffle asc, position asc, created_at asc
+            "#,
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .context("loading queue for sequencing")?;
+
+        if rows.len() < 2 {
+            return self.snapshot().await;
+        }
+
+        // Sequence by song, then map back to the queue rows. A song queued
+        // twice keeps one row per copy.
+        let song_ids: Vec<String> = rows.iter().map(|(_, song_id)| song_id.clone()).collect();
+        let ordered = sequence_songs(&self.db, &song_ids).await?;
+
+        let mut by_song: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (queue_id, song_id) in &rows {
+            by_song
+                .entry(song_id.clone())
+                .or_default()
+                .push(queue_id.clone());
+        }
+        let mut queue_ids = Vec::with_capacity(rows.len());
+        for song_id in &ordered {
+            if let Some(pending) = by_song.get_mut(song_id) {
+                if !pending.is_empty() {
+                    queue_ids.push(pending.remove(0));
+                }
+            }
+        }
+
+        self.reorder_queue(&queue_ids).await
+    }
+
+    /// Adds songs to the queue, either appended or jumped to the front.
+    ///
+    /// Queue rows sort by `position`, which is a free integer rather than a
+    /// dense index, so "play next" needs no shuffling of existing rows: the new
+    /// items simply take positions below the current minimum. Manual rows
+    /// always sort ahead of shuffle-filled ones regardless.
+    pub(crate) async fn enqueue_songs_at(
+        &self,
+        song_ids: &[String],
+        admin_did: &str,
+        at_top: bool,
+        sequence: bool,
+    ) -> anyhow::Result<RadioSnapshot> {
         for song_id in song_ids {
             if find_song(&self.db, song_id).await?.is_none() {
                 return Err(anyhow!("song not found: {song_id}"));
             }
         }
 
-        let base_position =
+        // "Shuffle these in" means sequence them, not randomize them: the same
+        // transition scoring the station uses on itself.
+        let sequenced;
+        let song_ids = if sequence {
+            sequenced = sequence_songs(&self.db, song_ids).await?;
+            &sequenced[..]
+        } else {
+            song_ids
+        };
+
+        let base_position = if at_top {
+            sqlx::query_scalar::<_, Option<i64>>(
+                "select min(position) from radio_queue where is_shuffle = 0",
+            )
+            .fetch_one(self.db.pool())
+            .await
+            .context("loading min queue position")?
+            .unwrap_or(1)
+                - song_ids.len() as i64
+                - 1
+        } else {
             sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_queue")
                 .fetch_one(self.db.pool())
                 .await
                 .context("loading max queue position")?
-                .unwrap_or(0);
+                .unwrap_or(0)
+        };
 
         for (i, song_id) in song_ids.iter().enumerate() {
             let id = Uuid::new_v4().to_string();
@@ -1293,14 +1610,22 @@ impl RadioService {
             RadioControlAction::Skip => "skip",
             RadioControlAction::Previous => "previous",
             RadioControlAction::Shuffle => "shuffle",
+            RadioControlAction::SetLoopMode(_) => "setLoopMode",
+            RadioControlAction::SetLoopPlaylist(_) => "setLoopPlaylist",
         };
-        match action {
+        match &action {
             RadioControlAction::Play => play_or_resume(&self.db, admin_did).await?,
             RadioControlAction::Pause => set_status(&self.db, "paused", admin_did).await?,
             RadioControlAction::Stop => set_status(&self.db, "stopped", admin_did).await?,
             RadioControlAction::Skip => skip_to_next(&self.db, admin_did).await?,
             RadioControlAction::Previous => reset_current(&self.db, admin_did).await?,
             RadioControlAction::Shuffle => toggle_shuffle(&self.db, admin_did).await?,
+            RadioControlAction::SetLoopMode(mode) => {
+                set_loop_mode(&self.db, LoopMode::parse(mode)?, admin_did).await?
+            }
+            RadioControlAction::SetLoopPlaylist(playlist_id) => {
+                set_loop_playlist(&self.db, playlist_id.as_deref(), admin_did).await?
+            }
         }
         tracing::info!(action = action_name, admin_did, "playback control");
 
@@ -1355,7 +1680,8 @@ impl RadioService {
 async fn radio_state(db: &Database) -> anyhow::Result<RadioState> {
     let mut state = sqlx::query_as::<_, RadioState>(
         r#"
-        select current_song_id, status, started_at, paused_at, position_seconds, updated_by_did, shuffle
+        select current_song_id, status, started_at, paused_at, position_seconds, updated_by_did,
+            shuffle, loop_mode, loop_playlist_id
         from radio_state
         where id = 1
         "#,
@@ -1606,7 +1932,8 @@ fn spawn_now_playing_announcement(db: Database, chat: ChatService, song_id: Stri
 async fn next_advance_in(db: &Database) -> anyhow::Result<Option<std::time::Duration>> {
     let raw = sqlx::query_as::<_, RadioState>(
         r#"
-        select current_song_id, status, started_at, paused_at, position_seconds, updated_by_did, shuffle
+        select current_song_id, status, started_at, paused_at, position_seconds, updated_by_did,
+            shuffle, loop_mode, loop_playlist_id
         from radio_state
         where id = 1
         "#,
@@ -1641,7 +1968,8 @@ async fn auto_advance(db: &Database) -> anyhow::Result<()> {
     loop {
         let raw = sqlx::query_as::<_, RadioState>(
             r#"
-            select current_song_id, status, started_at, paused_at, position_seconds, updated_by_did, shuffle
+            select current_song_id, status, started_at, paused_at, position_seconds, updated_by_did,
+                shuffle, loop_mode, loop_playlist_id
             from radio_state
             where id = 1
             "#,
@@ -2060,7 +2388,10 @@ async fn first_album_track(db: &Database) -> anyhow::Result<Option<LoopTrack>> {
 
 /// Next loose single after the given rowid cursor (or the first one). The
 /// cursor reuses the loop table's track_position column to store the rowid.
-async fn next_single_track(db: &Database, after_rowid: Option<i64>) -> anyhow::Result<Option<LoopTrack>> {
+async fn next_single_track(
+    db: &Database,
+    after_rowid: Option<i64>,
+) -> anyhow::Result<Option<LoopTrack>> {
     sqlx::query_as::<_, LoopTrack>(&format!(
         r#"
         select '{SINGLES_ALBUM_ID}' as album_id,
@@ -2081,7 +2412,111 @@ async fn next_single_track(db: &Database, after_rowid: Option<i64>) -> anyhow::R
     .context("loading next single for rotation")
 }
 
+/// Re-queues a pinned playlist so a looping set survives the queue draining.
+///
+/// Clears the pin rather than erroring if the playlist has since been deleted
+/// or emptied — a dangling pin would otherwise stall the station on every
+/// advance.
+async fn reload_loop_playlist(
+    db: &Database,
+    playlist_id: &str,
+    admin_did: &str,
+) -> anyhow::Result<()> {
+    let mut song_ids = sqlx::query_scalar::<_, String>(
+        "select song_id from playlist_tracks where playlist_id = ? order by position asc",
+    )
+    .bind(playlist_id)
+    .fetch_all(db.pool())
+    .await
+    .context("loading looped playlist tracks")?;
+
+    if song_ids.is_empty() {
+        sqlx::query("update radio_state set loop_playlist_id = null where id = 1")
+            .execute(db.pool())
+            .await
+            .context("clearing dangling loop playlist")?;
+        tracing::warn!(playlist_id, "loop playlist is empty or gone; unpinned it");
+        return Ok(());
+    }
+
+    let shuffle =
+        sqlx::query_scalar::<_, bool>("select shuffle_on_load from playlists where id = ?")
+            .bind(playlist_id)
+            .fetch_optional(db.pool())
+            .await
+            .context("loading looped playlist shuffle_on_load")?
+            .unwrap_or(false);
+    if shuffle {
+        song_ids = sequence_songs(db, &song_ids).await?;
+    }
+
+    let base = sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_queue")
+        .fetch_one(db.pool())
+        .await
+        .context("loading queue tail for playlist loop")?
+        .unwrap_or(0);
+
+    for (index, song_id) in song_ids.iter().enumerate() {
+        sqlx::query(
+            "insert into radio_queue (id, song_id, position, queued_by_did) values (?, ?, ?, ?)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(song_id)
+        .bind(base + index as i64 + 1)
+        .bind(admin_did)
+        .execute(db.pool())
+        .await
+        .context("re-queueing looped playlist track")?;
+    }
+
+    tracing::info!(
+        playlist_id,
+        count = song_ids.len(),
+        "reloaded loop playlist"
+    );
+    Ok(())
+}
+
 async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
+    let mode = loop_mode(db).await?;
+
+    // Repeat-one never consumes anything: restart whatever is playing and
+    // leave the queue exactly as it is.
+    if mode == LoopMode::One {
+        let state = radio_state(db).await?;
+        if let Some(song_id) = state.current_song_id.as_deref() {
+            let timestamp = now();
+            sqlx::query(
+                r#"
+                update radio_state
+                set status = 'playing', started_at = ?, paused_at = null,
+                    position_seconds = 0, updated_by_did = ?, updated_at = ?
+                where id = 1
+                "#,
+            )
+            .bind(timestamp)
+            .bind(admin_did)
+            .bind(timestamp)
+            .execute(db.pool())
+            .await
+            .context("restarting looped track")?;
+            record_play(db, song_id).await;
+            return Ok(());
+        }
+    }
+
+    // Loop-queue with nothing left to play still needs the pinned set (or the
+    // rotation fallbacks) to refill it, so only reload when the queue is dry.
+    if let Some(playlist_id) = loop_playlist_id(db).await? {
+        let pending = sqlx::query_scalar::<_, i64>("select count(*) from radio_queue")
+            .fetch_one(db.pool())
+            .await
+            .context("counting queue before playlist loop")?;
+        if pending == 0 {
+            reload_loop_playlist(db, &playlist_id, admin_did).await?;
+        }
+    }
+
     let next = sqlx::query_as::<_, QueueItem>(
         r#"
         select radio_queue.id, radio_queue.position, radio_queue.queued_by_did,
@@ -2104,11 +2539,29 @@ async fn skip_to_next(db: &Database, admin_did: &str) -> anyhow::Result<()> {
     let timestamp = now();
     match next {
         Some(item) => {
-            sqlx::query("delete from radio_queue where id = ?")
-                .bind(&item.id)
-                .execute(db.pool())
-                .await
-                .context("removing skipped queue item")?;
+            // In loop-queue mode a manually queued track is recycled to the
+            // back rather than dropped, so the set keeps cycling. Auto-filled
+            // shuffle rows are always consumed — they get replaced anyway.
+            if mode == LoopMode::Queue && !item.is_shuffle {
+                let tail =
+                    sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_queue")
+                        .fetch_one(db.pool())
+                        .await
+                        .context("loading queue tail for loop")?
+                        .unwrap_or(0);
+                sqlx::query("update radio_queue set position = ? where id = ?")
+                    .bind(tail + 1)
+                    .bind(&item.id)
+                    .execute(db.pool())
+                    .await
+                    .context("recycling looped queue item")?;
+            } else {
+                sqlx::query("delete from radio_queue where id = ?")
+                    .bind(&item.id)
+                    .execute(db.pool())
+                    .await
+                    .context("removing skipped queue item")?;
+            }
             sqlx::query(
                 r#"
                 update radio_state
@@ -2213,6 +2666,97 @@ async fn shuffle_enabled(db: &Database) -> anyhow::Result<bool> {
         .fetch_one(db.pool())
         .await
         .context("loading shuffle flag")
+}
+
+/// How finished queue tracks are recycled.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum LoopMode {
+    /// Played tracks leave the queue — the original behaviour.
+    Off,
+    /// The current track restarts instead of advancing.
+    One,
+    /// Finished tracks go to the back of the queue, so it never drains.
+    Queue,
+}
+
+impl LoopMode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            LoopMode::Off => "off",
+            LoopMode::One => "one",
+            LoopMode::Queue => "queue",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "off" => Ok(LoopMode::Off),
+            "one" => Ok(LoopMode::One),
+            "queue" => Ok(LoopMode::Queue),
+            other => Err(anyhow!("unknown loop mode: {other}")),
+        }
+    }
+}
+
+/// Reads the persisted loop mode, tolerating an unrecognised stored value.
+async fn loop_mode(db: &Database) -> anyhow::Result<LoopMode> {
+    let raw = sqlx::query_scalar::<_, String>("select loop_mode from radio_state where id = 1")
+        .fetch_one(db.pool())
+        .await
+        .context("loading loop mode")?;
+    Ok(LoopMode::parse(&raw).unwrap_or(LoopMode::Off))
+}
+
+/// Reads the playlist that reloads whenever the queue drains, if any.
+async fn loop_playlist_id(db: &Database) -> anyhow::Result<Option<String>> {
+    sqlx::query_scalar::<_, Option<String>>("select loop_playlist_id from radio_state where id = 1")
+        .fetch_one(db.pool())
+        .await
+        .context("loading loop playlist")
+}
+
+async fn set_loop_mode(db: &Database, mode: LoopMode, admin_did: &str) -> anyhow::Result<()> {
+    let timestamp = now();
+    sqlx::query(
+        "update radio_state set loop_mode = ?, updated_by_did = ?, updated_at = ? where id = 1",
+    )
+    .bind(mode.as_str())
+    .bind(admin_did)
+    .bind(timestamp)
+    .execute(db.pool())
+    .await
+    .context("setting loop mode")?;
+    Ok(())
+}
+
+/// Pins the playlist that reloads when the queue drains, or clears the pin.
+async fn set_loop_playlist(
+    db: &Database,
+    playlist_id: Option<&str>,
+    admin_did: &str,
+) -> anyhow::Result<()> {
+    if let Some(id) = playlist_id {
+        let exists = sqlx::query_scalar::<_, i64>("select count(*) from playlists where id = ?")
+            .bind(id)
+            .fetch_one(db.pool())
+            .await
+            .context("checking loop playlist")?;
+        if exists == 0 {
+            return Err(anyhow!("playlist not found"));
+        }
+    }
+
+    let timestamp = now();
+    sqlx::query(
+        "update radio_state set loop_playlist_id = ?, updated_by_did = ?, updated_at = ? where id = 1",
+    )
+    .bind(playlist_id)
+    .bind(admin_did)
+    .bind(timestamp)
+    .execute(db.pool())
+    .await
+    .context("setting loop playlist")?;
+    Ok(())
 }
 
 /// Shuffle respects the album rotation flags: a song is eligible when it sits
@@ -2475,6 +3019,92 @@ fn transition_scores(
 /// Picks a random song for shuffle mode, avoiding an immediate repeat of the
 /// current song when the library has more than one track. The pick is scored
 /// against the song on air so the transition flows.
+/// Orders an explicit set of songs into a listenable sequence.
+///
+/// This is the deliberate counterpart to `random_shuffle_song`: instead of
+/// picking one track from the whole library, it walks a fixed set, each step
+/// scoring the remainder against the track just placed. So the same rules the
+/// station applies to itself — artist separation, album separation, LUFS
+/// energy smoothing, genre adjacency, duration pacing, and BPM pairing with
+/// half/double time — also shape anything a DJ shuffles in by hand.
+///
+/// `weighted_pick` keeps it probabilistic rather than deterministic: a good
+/// transition is likelier, not certain, so shuffling the same set twice gives
+/// two different orders that are both listenable.
+///
+/// Songs missing from the library are preserved in their original relative
+/// order at the end rather than silently dropped.
+async fn sequence_songs(db: &Database, song_ids: &[String]) -> anyhow::Result<Vec<String>> {
+    if song_ids.len() < 2 {
+        return Ok(song_ids.to_vec());
+    }
+
+    let mut pool: Vec<ShuffleCandidate> = Vec::with_capacity(song_ids.len());
+    let mut unknown: Vec<String> = Vec::new();
+    for song_id in song_ids {
+        match shuffle_profile(db, song_id).await? {
+            Some(mut candidate) => {
+                candidate.weight = song_rotation_weight(db, song_id).await?;
+                pool.push(candidate);
+            }
+            None => unknown.push(song_id.clone()),
+        }
+    }
+
+    // Seed from what's playing so the first pick transitions out of it; with a
+    // silent station the first pick is by weight alone.
+    let current_id = sqlx::query_scalar::<_, Option<String>>(
+        "select current_song_id from radio_state where id = 1",
+    )
+    .fetch_one(db.pool())
+    .await
+    .context("loading current song id")?;
+    let mut previous = match &current_id {
+        Some(id) => shuffle_profile(db, id).await?,
+        None => None,
+    };
+
+    let mut recent = recently_aired_artists(db, ARTIST_SEPARATION.len() as i64).await?;
+    let mut seed = random_seed();
+    let mut ordered = Vec::with_capacity(pool.len());
+
+    while !pool.is_empty() {
+        let scores = transition_scores(&pool, previous.as_ref(), &recent);
+        let index = weighted_pick(&scores, &mut seed).unwrap_or(0);
+        let picked = pool.swap_remove(index);
+
+        // Track artists as we place them, so separation applies within this
+        // batch and not just against real airplay history.
+        recent.insert(0, picked.artist.clone());
+        recent.truncate(ARTIST_SEPARATION.len());
+
+        ordered.push(picked.id.clone());
+        previous = Some(picked);
+    }
+
+    ordered.extend(unknown);
+    Ok(ordered)
+}
+
+/// The rotation weight shuffle scoring uses for a song, defaulting to normal.
+async fn song_rotation_weight(db: &Database, song_id: &str) -> anyhow::Result<i64> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        select coalesce((
+            select max(radio_albums.rotation_weight)
+            from radio_album_tracks
+            join radio_albums on radio_albums.id = radio_album_tracks.album_id
+            where radio_album_tracks.song_id = ?
+              and radio_albums.is_enabled = 1
+        ), 2)
+        "#,
+    )
+    .bind(song_id)
+    .fetch_one(db.pool())
+    .await
+    .context("loading song rotation weight")
+}
+
 async fn random_shuffle_song(db: &Database) -> anyhow::Result<Option<String>> {
     let mut seed = random_seed();
     // Prefer songs outside the separation window; relax when the library is
@@ -2484,11 +3114,12 @@ async fn random_shuffle_song(db: &Database) -> anyhow::Result<Option<String>> {
         candidates = shuffle_candidates(db, false, false).await?;
     }
 
-    let current_id =
-        sqlx::query_scalar::<_, Option<String>>("select current_song_id from radio_state where id = 1")
-            .fetch_one(db.pool())
-            .await
-            .context("loading current song id")?;
+    let current_id = sqlx::query_scalar::<_, Option<String>>(
+        "select current_song_id from radio_state where id = 1",
+    )
+    .fetch_one(db.pool())
+    .await
+    .context("loading current song id")?;
     let previous = match &current_id {
         Some(id) => shuffle_profile(db, id).await?,
         None => None,
@@ -2511,10 +3142,11 @@ async fn random_shuffle_song(db: &Database) -> anyhow::Result<Option<String>> {
 /// random songs are visible in the queue. Skips songs already queued and the
 /// current song to avoid near-term repeats.
 async fn refill_shuffle_queue(db: &Database, queued_by_did: &str) -> anyhow::Result<()> {
-    let existing = sqlx::query_scalar::<_, i64>("select count(*) from radio_queue where is_shuffle = 1")
-        .fetch_one(db.pool())
-        .await
-        .context("counting shuffle queue rows")?;
+    let existing =
+        sqlx::query_scalar::<_, i64>("select count(*) from radio_queue where is_shuffle = 1")
+            .fetch_one(db.pool())
+            .await
+            .context("counting shuffle queue rows")?;
     let need = SHUFFLE_LOOKAHEAD - existing;
     if need <= 0 {
         return Ok(());
@@ -2568,11 +3200,12 @@ async fn refill_shuffle_queue(db: &Database, queued_by_did: &str) -> anyhow::Res
         candidates.push(picked.id);
     }
 
-    let mut position = sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_queue")
-        .fetch_one(db.pool())
-        .await
-        .context("loading max queue position")?
-        .unwrap_or(0);
+    let mut position =
+        sqlx::query_scalar::<_, Option<i64>>("select max(position) from radio_queue")
+            .fetch_one(db.pool())
+            .await
+            .context("loading max queue position")?
+            .unwrap_or(0);
     for song_id in candidates {
         position += 1;
         sqlx::query(
@@ -2653,8 +3286,8 @@ async fn reset_current(db: &Database, admin_did: &str) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Database;
     use crate::chat::ChatService;
+    use crate::db::Database;
     use tempfile::tempdir;
 
     async fn setup_test_service() -> (RadioService, Database) {
@@ -2707,14 +3340,26 @@ mod tests {
         // Toggling shuffle on should fill the queue with the upcoming shuffle
         // lookahead (all songs except the one now playing, since the library
         // only has three).
-        service.control(RadioControlAction::Shuffle, "did").await.unwrap();
+        service
+            .control(RadioControlAction::Shuffle, "did")
+            .await
+            .unwrap();
         let state = radio_state(&db).await.unwrap();
         assert!(state.shuffle);
         assert_eq!(state.status, "playing");
         let queue = queue_items(&db).await.unwrap();
-        assert!(!queue.is_empty(), "shuffle should show upcoming songs in the queue");
-        assert!(queue.iter().all(|item| item.is_shuffle), "auto-filled rows are marked shuffle");
-        let mut prev = state.current_song_id.clone().expect("shuffle should start playback");
+        assert!(
+            !queue.is_empty(),
+            "shuffle should show upcoming songs in the queue"
+        );
+        assert!(
+            queue.iter().all(|item| item.is_shuffle),
+            "auto-filled rows are marked shuffle"
+        );
+        let mut prev = state
+            .current_song_id
+            .clone()
+            .expect("shuffle should start playback");
 
         // Advancing keeps playing and never immediately repeats the same song.
         for _ in 0..8 {
@@ -2730,19 +3375,96 @@ mod tests {
         }
 
         // Toggling shuffle off again clears the flag and the auto-filled rows.
-        service.control(RadioControlAction::Shuffle, "did").await.unwrap();
+        service
+            .control(RadioControlAction::Shuffle, "did")
+            .await
+            .unwrap();
         let state = radio_state(&db).await.unwrap();
         assert!(!state.shuffle);
         let queue = queue_items(&db).await.unwrap();
-        assert!(queue.is_empty(), "disabling shuffle clears auto-filled rows");
+        assert!(
+            queue.is_empty(),
+            "disabling shuffle clears auto-filled rows"
+        );
+    }
+
+    #[tokio::test]
+    async fn sequence_songs_separates_artists_and_keeps_everything() {
+        let (_service, db) = setup_test_service().await;
+
+        // Six tracks, two artists, deliberately interleaved badly on input:
+        // all of A's, then all of B's.
+        for (i, artist) in ["A", "A", "A", "B", "B", "B"].iter().enumerate() {
+            sqlx::query(
+                "insert into songs (id, title, artist, file_path, added_by_did, created_at, bpm) values (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(format!("s{i}"))
+            .bind(format!("Title {i}"))
+            .bind(*artist)
+            .bind(format!("p{i}.mp3"))
+            .bind("did")
+            .bind(100 + i as i64)
+            .bind(120.0)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        }
+
+        let input: Vec<String> = (0..6).map(|i| format!("s{i}")).collect();
+        let ordered = sequence_songs(&db, &input).await.unwrap();
+
+        assert_eq!(ordered.len(), input.len(), "sequencing must not drop tracks");
+        let mut sorted = ordered.clone();
+        sorted.sort();
+        let mut expected = input.clone();
+        expected.sort();
+        assert_eq!(sorted, expected, "sequencing must not invent or lose tracks");
+
+        // Artist separation should break up the three-in-a-row runs the input had.
+        let artists: Vec<&str> = ordered
+            .iter()
+            .map(|id| if id < &"s3".to_string() { "A" } else { "B" })
+            .collect();
+        let longest_run = artists
+            .windows(2)
+            .fold((1, 1), |(best, run), pair| {
+                let run = if pair[0] == pair[1] { run + 1 } else { 1 };
+                (best.max(run), run)
+            })
+            .0;
+        assert!(
+            longest_run < 3,
+            "expected artists to be broken up, got {artists:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sequence_songs_preserves_unknown_ids() {
+        let (_service, db) = setup_test_service().await;
+        let ordered = sequence_songs(&db, &["ghost-a".into(), "ghost-b".into()])
+            .await
+            .unwrap();
+        assert_eq!(ordered, vec!["ghost-a".to_string(), "ghost-b".to_string()]);
     }
 
     #[tokio::test]
     async fn test_album_normalization() {
-        assert_eq!(crate::radio::helpers::normalize_album_title("À cause des garçons"), "a cause des garcons");
-        assert_eq!(crate::radio::helpers::normalize_album_title("À cause des garçons"), "a cause des garcons"); // NFD
-        assert_eq!(crate::radio::helpers::normalize_album_title("Ægætis byrjun"), "ægætis byrjun");
-        assert_eq!(crate::radio::helpers::normalize_album_title("  Ægætis byrjun   "), "ægætis byrjun");
+        assert_eq!(
+            crate::radio::helpers::normalize_album_title("À cause des garçons"),
+            "a cause des garcons"
+        );
+        assert_eq!(
+            crate::radio::helpers::normalize_album_title("À cause des garçons"),
+            "a cause des garcons"
+        ); // NFD
+        assert_eq!(
+            crate::radio::helpers::normalize_album_title("Ægætis byrjun"),
+            "ægætis byrjun"
+        );
+        assert_eq!(
+            crate::radio::helpers::normalize_album_title("  Ægætis byrjun   "),
+            "ægætis byrjun"
+        );
     }
 
     #[tokio::test]
@@ -2783,14 +3505,16 @@ mod tests {
         assert_eq!(albums[0].tracks.len(), 2);
 
         // Verify that the songs' album tags have been converged to the resolved title
-        let resolved_title: String = sqlx::query_scalar("select album from songs where id = 'song-1'")
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
-        let resolved_title_2: String = sqlx::query_scalar("select album from songs where id = 'song-2'")
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
+        let resolved_title: String =
+            sqlx::query_scalar("select album from songs where id = 'song-1'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        let resolved_title_2: String =
+            sqlx::query_scalar("select album from songs where id = 'song-2'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
         assert_eq!(resolved_title, resolved_title_2);
     }
 
@@ -2830,27 +3554,40 @@ mod tests {
         let initial_albums = service.albums().await.unwrap();
         assert_eq!(initial_albums.len(), 2);
 
-        let album_a = initial_albums.iter().find(|a| a.title == "Album A").unwrap();
-        let album_b = initial_albums.iter().find(|a| a.title == "Album B").unwrap();
-
-        // Point loop state cursor to Album B
-        sqlx::query("update radio_loop_state set last_album_id = ?, last_track_position = 1 where id = 1")
-            .bind(&album_b.id)
-            .execute(db.pool())
-            .await
+        let album_a = initial_albums
+            .iter()
+            .find(|a| a.title == "Album A")
+            .unwrap();
+        let album_b = initial_albums
+            .iter()
+            .find(|a| a.title == "Album B")
             .unwrap();
 
+        // Point loop state cursor to Album B
+        sqlx::query(
+            "update radio_loop_state set last_album_id = ?, last_track_position = 1 where id = 1",
+        )
+        .bind(&album_b.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
         // Merge Album B into Album A
-        let remaining_albums = service.merge_albums(&album_b.id, &album_a.id).await.unwrap();
+        let remaining_albums = service
+            .merge_albums(&album_b.id, &album_a.id)
+            .await
+            .unwrap();
         assert_eq!(remaining_albums.len(), 1);
         assert_eq!(remaining_albums[0].title, "Album A");
         assert_eq!(remaining_albums[0].tracks.len(), 2);
 
         // Verify loop state was updated to target album (Album A)
-        let loop_cursor: (Option<String>, i64) = sqlx::query_as("select last_album_id, last_track_position from radio_loop_state where id = 1")
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
+        let loop_cursor: (Option<String>, i64) = sqlx::query_as(
+            "select last_album_id, last_track_position from radio_loop_state where id = 1",
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
         assert_eq!(loop_cursor.0.unwrap(), album_a.id);
         assert_eq!(loop_cursor.1, 1);
     }
@@ -2905,7 +3642,10 @@ mod tests {
         let mut half_time = candidate("B", 2);
         half_time.bpm = Some(70.0);
         let boosted = transition_score(&half_time, &previous, &[]);
-        assert!(boosted > 2.0, "half time should score the close-tempo boost, got {boosted}");
+        assert!(
+            boosted > 2.0,
+            "half time should score the close-tempo boost, got {boosted}"
+        );
     }
 
     #[test]
