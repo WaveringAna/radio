@@ -101,6 +101,16 @@ main {
   padding: 0 0 3rem;
 }
 
+/* The radio page targets a no-scroll layout at short viewports; the page
+   shell's usual bottom gutter is more than it can spare. Scoped to a class
+   set only while that route is active, since the router keeps every route's
+   section mounted (toggling display:none) to keep audio playing across
+   navigation, which would otherwise make a :has(.radio-page) selector match
+   unconditionally regardless of which page is visible. */
+main.route-radio {
+  padding-bottom: 0.75rem;
+}
+
 main > section {
   min-width: 0;
 }

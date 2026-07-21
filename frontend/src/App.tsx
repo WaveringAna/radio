@@ -137,7 +137,7 @@ export default function App() {
   )
 
   return (
-    <main>
+    <main classList={{ 'route-radio': path() === '/' }}>
       <nav class="top-nav" aria-label="primary navigation">
         <a href="/" onClick={navigate('/')} aria-current={path() === '/' ? 'page' : undefined}>
           <Radio size={15} strokeWidth={1.9} aria-hidden="true" />

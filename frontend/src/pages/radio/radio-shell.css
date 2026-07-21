@@ -71,7 +71,7 @@
 
 .art-shell {
   position: relative;
-  width: min(100%, 28rem, calc(100vh - 26rem));
+  width: min(100%, 28rem, calc(100vh - 29rem));
   aspect-ratio: 1;
   justify-self: center;
   margin-top: calc(env(safe-area-inset-top, 0) + 1.5rem);
