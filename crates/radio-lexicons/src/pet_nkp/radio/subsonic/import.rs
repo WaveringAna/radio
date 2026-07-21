@@ -8,13 +8,13 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
-use crate::pet_nkp::radio::Song;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_common::types::string::UriValue;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Deserialize, Serialize};
+use serde::{Serialize, Deserialize};
+use crate::pet_nkp::radio::Song;
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
@@ -44,6 +44,7 @@ pub struct Import<'a> {
     #[serde(borrow)]
     pub username: Option<CowStr<'a>>,
 }
+
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ImportSource<'a> {
@@ -133,6 +134,7 @@ impl jacquard_common::IntoStatic for ImportSource<'_> {
     }
 }
 
+
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
 #[serde(rename_all = "camelCase")]
@@ -140,6 +142,7 @@ pub struct ImportOutput<'a> {
     #[serde(borrow)]
     pub song: Song<'a>,
 }
+
 
 #[open_union]
 #[derive(
@@ -151,8 +154,9 @@ pub struct ImportOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic,
+    IntoStatic
 )]
+
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum ImportError<'a> {
@@ -213,8 +217,9 @@ impl jacquard_common::xrpc::XrpcResp for ImportResponse {
 
 impl<'a> jacquard_common::xrpc::XrpcRequest for Import<'a> {
     const NSID: &'static str = "pet.nkp.radio.subsonic.import";
-    const METHOD: jacquard_common::xrpc::XrpcMethod =
-        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
+    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
+        "application/json",
+    );
     type Response = ImportResponse;
 }
 
@@ -222,8 +227,9 @@ impl<'a> jacquard_common::xrpc::XrpcRequest for Import<'a> {
 pub struct ImportRequest;
 impl jacquard_common::xrpc::XrpcEndpoint for ImportRequest {
     const PATH: &'static str = "/xrpc/pet.nkp.radio.subsonic.import";
-    const METHOD: jacquard_common::xrpc::XrpcMethod =
-        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
+    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
+        "application/json",
+    );
     type Request<'de> = Import<'de>;
     type Response = ImportResponse;
 }
@@ -234,7 +240,7 @@ fn _default_import_add_to_queue() -> bool {
 
 pub mod import_state {
 
-    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
+    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -242,37 +248,37 @@ pub mod import_state {
     }
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
-        type AddToQueue;
         type Source;
+        type AddToQueue;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
-        type AddToQueue = Unset;
         type Source = Unset;
-    }
-    ///State transition - sets the `add_to_queue` field to Set
-    pub struct SetAddToQueue<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetAddToQueue<S> {}
-    impl<S: State> State for SetAddToQueue<S> {
-        type AddToQueue = Set<members::add_to_queue>;
-        type Source = S::Source;
+        type AddToQueue = Unset;
     }
     ///State transition - sets the `source` field to Set
     pub struct SetSource<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetSource<S> {}
     impl<S: State> State for SetSource<S> {
-        type AddToQueue = S::AddToQueue;
         type Source = Set<members::source>;
+        type AddToQueue = S::AddToQueue;
+    }
+    ///State transition - sets the `add_to_queue` field to Set
+    pub struct SetAddToQueue<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetAddToQueue<S> {}
+    impl<S: State> State for SetAddToQueue<S> {
+        type Source = S::Source;
+        type AddToQueue = Set<members::add_to_queue>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
-        ///Marker type for the `add_to_queue` field
-        pub struct add_to_queue(());
         ///Marker type for the `source` field
         pub struct source(());
+        ///Marker type for the `add_to_queue` field
+        pub struct add_to_queue(());
     }
 }
 
@@ -429,8 +435,8 @@ impl<'a, S: import_state::State> ImportBuilder<'a, S> {
 impl<'a, S> ImportBuilder<'a, S>
 where
     S: import_state::State,
-    S::AddToQueue: import_state::IsSet,
     S::Source: import_state::IsSet,
+    S::AddToQueue: import_state::IsSet,
 {
     /// Build the final struct
     pub fn build(self) -> Import<'a> {

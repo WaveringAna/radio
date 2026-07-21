@@ -8,12 +8,12 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
-use crate::pet_nkp::radio::ChatMessage;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Deserialize, Serialize};
+use serde::{Serialize, Deserialize};
+use crate::pet_nkp::radio::ChatMessage;
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic, Default)]
@@ -23,6 +23,7 @@ pub struct Send<'a> {
     pub text: CowStr<'a>,
 }
 
+
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
 #[serde(rename_all = "camelCase")]
@@ -30,6 +31,7 @@ pub struct SendOutput<'a> {
     #[serde(borrow)]
     pub message: ChatMessage<'a>,
 }
+
 
 #[open_union]
 #[derive(
@@ -41,8 +43,9 @@ pub struct SendOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic,
+    IntoStatic
 )]
+
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum SendError<'a> {
@@ -94,8 +97,9 @@ impl jacquard_common::xrpc::XrpcResp for SendResponse {
 
 impl<'a> jacquard_common::xrpc::XrpcRequest for Send<'a> {
     const NSID: &'static str = "pet.nkp.radio.chat.send";
-    const METHOD: jacquard_common::xrpc::XrpcMethod =
-        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
+    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
+        "application/json",
+    );
     type Response = SendResponse;
 }
 
@@ -103,8 +107,9 @@ impl<'a> jacquard_common::xrpc::XrpcRequest for Send<'a> {
 pub struct SendRequest;
 impl jacquard_common::xrpc::XrpcEndpoint for SendRequest {
     const PATH: &'static str = "/xrpc/pet.nkp.radio.chat.send";
-    const METHOD: jacquard_common::xrpc::XrpcMethod =
-        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
+    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
+        "application/json",
+    );
     type Request<'de> = Send<'de>;
     type Response = SendResponse;
 }

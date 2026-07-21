@@ -267,6 +267,8 @@ pub(crate) fn xrpc_radio_album(album: crate::radio::RadioAlbum) -> XrpcRadioAlbu
     XrpcRadioAlbum {
         id: xrpc_cow(album.id),
         title: xrpc_cow(album.title),
+        position: album.position,
+        is_enabled: album.is_enabled,
         tracks: album.tracks.into_iter().map(xrpc_song).collect(),
         extra_data: None,
     }
@@ -944,6 +946,20 @@ pub(crate) async fn xrpc_albums_modify(
 
     let albums = match request.action {
         AlbumsModifyAction::Delete => state.radio.delete_album(request.album_id.as_ref()).await,
+        AlbumsModifyAction::SetEnabled => {
+            let enabled = request.enabled.ok_or_else(|| {
+                xrpc_typed_error(
+                    StatusCode::BAD_REQUEST,
+                    AlbumsModifyError::InvalidRequest(xrpc_message(
+                        "enabled is required for setEnabled",
+                    )),
+                )
+            })?;
+            state
+                .radio
+                .set_album_enabled(request.album_id.as_ref(), enabled)
+                .await
+        }
         AlbumsModifyAction::Merge => {
             let target_album_id = request.target_album_id.ok_or_else(|| {
                 xrpc_typed_error(

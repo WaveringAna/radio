@@ -77,12 +77,15 @@ pub(crate) struct QueueItem {
     pub(crate) loudness_peak: Option<f64>,
 }
 
-/// Album metadata derived by grouping songs with matching album tags.
-#[derive(Clone, Debug, Serialize)]
+/// Admin-defined album loop metadata.
+#[derive(Clone, Debug, Serialize, FromRow)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RadioAlbum {
     pub(crate) id: String,
     pub(crate) title: String,
+    pub(crate) position: i64,
+    pub(crate) is_enabled: bool,
+    #[sqlx(skip)]
     pub(crate) tracks: Vec<Song>,
 }
 

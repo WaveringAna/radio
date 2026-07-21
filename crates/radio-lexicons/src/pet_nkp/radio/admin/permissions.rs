@@ -8,12 +8,12 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
-use crate::pet_nkp::radio::AdminPermissions;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Deserialize, Serialize};
+use serde::{Serialize, Deserialize};
+use crate::pet_nkp::radio::AdminPermissions;
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
@@ -22,6 +22,7 @@ pub struct PermissionsOutput<'a> {
     #[serde(borrow)]
     pub permissions: AdminPermissions<'a>,
 }
+
 
 #[open_union]
 #[derive(
@@ -33,8 +34,9 @@ pub struct PermissionsOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic,
+    IntoStatic
 )]
+
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum PermissionsError<'a> {

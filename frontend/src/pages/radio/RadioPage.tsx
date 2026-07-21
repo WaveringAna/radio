@@ -1005,21 +1005,6 @@ export default function RadioPage(props: RadioPageProps) {
   const queuePageSize = 6
   const upNextPaging = createPagedList(localQueue, queuePageSize)
 
-  // When the real queue is empty, the backend autoqueues a random song each
-  // time the current track ends. This is a display-only preview of a few
-  // candidates for that — not a commitment to play these specific songs next.
-  const autoplayPreview = createMemo(() => {
-    if (localQueue().length > 0) return []
-    const currentId = localCurrentSong()?.id
-    const pool = (songs() ?? []).filter((song) => song.id !== currentId)
-    const shuffled = [...pool]
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1))
-      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-    }
-    return shuffled.slice(0, 3)
-  })
-
   const startListening = async () => {
     if (!audioRef) return
     setHasStarted(true)
@@ -1393,53 +1378,27 @@ export default function RadioPage(props: RadioPageProps) {
               <span>{snapshot()?.state.status ?? 'loading'}</span>
             </div>
             <Show when={!snapshot.loading} fallback={<p class="muted">loading queue...</p>}>
-              <Show
-                when={upNextPaging.paged().length > 0}
-                fallback={
-                  <ul class="queue-list">
-                    <For each={autoplayPreview()} fallback={<li class="muted">queue is empty</li>}>
-                      {(song, index) => (
-                        <li class="queue-item-autoplay">
-                          <span class="queue-number">{index() + 1}</span>
-                          <SongCoverThumb songId={song.id} hasCover={song.hasCover} baseUrl={selectedApiBase()} />
-                          <div class="up-next-copy">
-                            <span class="up-next-title">{song.title}</span>
-                            <small class="up-next-artist">{song.artist || 'unknown artist'}</small>
-                          </div>
-                        </li>
-                      )}
-                    </For>
-                    <Show when={autoplayPreview().length > 0}>
-                      <li class="queue-autoplay-note muted">
-                        <span class="queue-number">4</span>
-                        <span>autoplay — random songs shuffle in from here</span>
+              <ul class="queue-list">
+                <For each={upNextPaging.paged()} fallback={<li class="muted">queue is empty</li>}>
+                  {(item, index) => {
+                    const profile = () => profileFor(item.queuedByDid)
+                    const hasCover = () => (songs() ?? []).some((song) => song.id === item.songId && song.hasCover)
+                    return (
+                      <li>
+                        <span class="queue-number">{upNextPaging.page() * queuePageSize + index() + 1}</span>
+                        <SongCoverThumb songId={item.songId} hasCover={hasCover()} baseUrl={selectedApiBase()} />
+                        <div class="up-next-copy">
+                          <span class="up-next-title">{item.title}</span>
+                          <small class="up-next-artist">{item.artist || 'unknown artist'}</small>
+                        </div>
+                        <ProfileAvatar profile={profile()} class="up-next-profile-avatar" title={`@${profile().handle}`} />
                       </li>
-                    </Show>
-                  </ul>
-                }
-              >
-                <ul class="queue-list">
-                  <For each={upNextPaging.paged()}>
-                    {(item, index) => {
-                      const profile = () => profileFor(item.queuedByDid)
-                      const hasCover = () => (songs() ?? []).some((song) => song.id === item.songId && song.hasCover)
-                      return (
-                        <li>
-                          <span class="queue-number">{upNextPaging.page() * queuePageSize + index() + 1}</span>
-                          <SongCoverThumb songId={item.songId} hasCover={hasCover()} baseUrl={selectedApiBase()} />
-                          <div class="up-next-copy">
-                            <span class="up-next-title">{item.title}</span>
-                            <small class="up-next-artist">{item.artist || 'unknown artist'}</small>
-                          </div>
-                          <ProfileAvatar profile={profile()} class="up-next-profile-avatar" title={`@${profile().handle}`} />
-                        </li>
-                      )
-                    }}
-                  </For>
-                </ul>
-                <Show when={upNextPaging.pageCount() > 1}>
-                  <PaginationRow page={upNextPaging.page()} pageCount={upNextPaging.pageCount()} onPageChange={upNextPaging.setPage} compact />
-                </Show>
+                    )
+                  }}
+                </For>
+              </ul>
+              <Show when={upNextPaging.pageCount() > 1}>
+                <PaginationRow page={upNextPaging.page()} pageCount={upNextPaging.pageCount()} onPageChange={upNextPaging.setPage} compact />
               </Show>
             </Show>
           </section>

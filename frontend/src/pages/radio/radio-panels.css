@@ -122,18 +122,6 @@
   font-weight: 300;
 }
 
-.queue-list li.queue-item-autoplay {
-  opacity: 0.7;
-}
-
-.queue-list li.queue-autoplay-note {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  font-style: italic;
-  font-size: 0.85rem;
-}
-
 .up-next-copy {
   display: grid;
   min-width: 0;

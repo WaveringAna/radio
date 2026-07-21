@@ -4,7 +4,7 @@
   "defs": {
     "main": {
       "type": "procedure",
-      "description": "Modify albums derived from song metadata: ungroup a messy album tag, or merge two differently-spelled album groups together.",
+      "description": "Modify admin-defined album loops.",
       "input": {
         "encoding": "application/json",
         "schema": {
@@ -13,13 +13,16 @@
           "properties": {
             "action": {
               "type": "string",
-              "knownValues": ["delete", "merge"]
+              "knownValues": ["delete", "setEnabled", "merge"]
             },
             "albumId": {
               "type": "string"
             },
             "targetAlbumId": {
               "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
             }
           }
         }

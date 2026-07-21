@@ -8,13 +8,13 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
-use crate::pet_nkp::radio::SubsonicSongResult;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_common::types::string::UriValue;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Deserialize, Serialize};
+use serde::{Serialize, Deserialize};
+use crate::pet_nkp::radio::SubsonicSongResult;
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
@@ -30,6 +30,7 @@ pub struct Search<'a> {
     pub username: CowStr<'a>,
 }
 
+
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +38,7 @@ pub struct SearchOutput<'a> {
     #[serde(borrow)]
     pub results: Vec<SubsonicSongResult<'a>>,
 }
+
 
 #[open_union]
 #[derive(
@@ -48,8 +50,9 @@ pub struct SearchOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic,
+    IntoStatic
 )]
+
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum SearchError<'a> {
@@ -110,8 +113,9 @@ impl jacquard_common::xrpc::XrpcResp for SearchResponse {
 
 impl<'a> jacquard_common::xrpc::XrpcRequest for Search<'a> {
     const NSID: &'static str = "pet.nkp.radio.subsonic.search";
-    const METHOD: jacquard_common::xrpc::XrpcMethod =
-        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
+    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
+        "application/json",
+    );
     type Response = SearchResponse;
 }
 
@@ -119,15 +123,16 @@ impl<'a> jacquard_common::xrpc::XrpcRequest for Search<'a> {
 pub struct SearchRequest;
 impl jacquard_common::xrpc::XrpcEndpoint for SearchRequest {
     const PATH: &'static str = "/xrpc/pet.nkp.radio.subsonic.search";
-    const METHOD: jacquard_common::xrpc::XrpcMethod =
-        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
+    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
+        "application/json",
+    );
     type Request<'de> = Search<'de>;
     type Response = SearchResponse;
 }
 
 pub mod search_state {
 
-    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
+    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -135,67 +140,67 @@ pub mod search_state {
     }
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
-        type Query;
         type Username;
-        type Password;
         type ServerUrl;
+        type Password;
+        type Query;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
-        type Query = Unset;
         type Username = Unset;
-        type Password = Unset;
         type ServerUrl = Unset;
-    }
-    ///State transition - sets the `query` field to Set
-    pub struct SetQuery<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetQuery<S> {}
-    impl<S: State> State for SetQuery<S> {
-        type Query = Set<members::query>;
-        type Username = S::Username;
-        type Password = S::Password;
-        type ServerUrl = S::ServerUrl;
+        type Password = Unset;
+        type Query = Unset;
     }
     ///State transition - sets the `username` field to Set
     pub struct SetUsername<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetUsername<S> {}
     impl<S: State> State for SetUsername<S> {
-        type Query = S::Query;
         type Username = Set<members::username>;
+        type ServerUrl = S::ServerUrl;
         type Password = S::Password;
-        type ServerUrl = S::ServerUrl;
-    }
-    ///State transition - sets the `password` field to Set
-    pub struct SetPassword<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetPassword<S> {}
-    impl<S: State> State for SetPassword<S> {
         type Query = S::Query;
-        type Username = S::Username;
-        type Password = Set<members::password>;
-        type ServerUrl = S::ServerUrl;
     }
     ///State transition - sets the `server_url` field to Set
     pub struct SetServerUrl<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetServerUrl<S> {}
     impl<S: State> State for SetServerUrl<S> {
-        type Query = S::Query;
         type Username = S::Username;
-        type Password = S::Password;
         type ServerUrl = Set<members::server_url>;
+        type Password = S::Password;
+        type Query = S::Query;
+    }
+    ///State transition - sets the `password` field to Set
+    pub struct SetPassword<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetPassword<S> {}
+    impl<S: State> State for SetPassword<S> {
+        type Username = S::Username;
+        type ServerUrl = S::ServerUrl;
+        type Password = Set<members::password>;
+        type Query = S::Query;
+    }
+    ///State transition - sets the `query` field to Set
+    pub struct SetQuery<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetQuery<S> {}
+    impl<S: State> State for SetQuery<S> {
+        type Username = S::Username;
+        type ServerUrl = S::ServerUrl;
+        type Password = S::Password;
+        type Query = Set<members::query>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
-        ///Marker type for the `query` field
-        pub struct query(());
         ///Marker type for the `username` field
         pub struct username(());
-        ///Marker type for the `password` field
-        pub struct password(());
         ///Marker type for the `server_url` field
         pub struct server_url(());
+        ///Marker type for the `password` field
+        pub struct password(());
+        ///Marker type for the `query` field
+        pub struct query(());
     }
 }
 
@@ -308,10 +313,10 @@ where
 impl<'a, S> SearchBuilder<'a, S>
 where
     S: search_state::State,
-    S::Query: search_state::IsSet,
     S::Username: search_state::IsSet,
-    S::Password: search_state::IsSet,
     S::ServerUrl: search_state::IsSet,
+    S::Password: search_state::IsSet,
+    S::Query: search_state::IsSet,
 {
     /// Build the final struct
     pub fn build(self) -> Search<'a> {

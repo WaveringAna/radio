@@ -1912,17 +1912,6 @@
   border-color: var(--line);
 }
 
-.qc-queue-item-autoplay {
-  opacity: 0.7;
-}
-
-.qc-queue-autoplay-note {
-  font-style: italic;
-  font-size: 0.85rem;
-  box-shadow: none;
-  background: transparent;
-}
-
 .qc-queue-grip {
   color: var(--muted);
   cursor: grab;

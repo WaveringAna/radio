@@ -266,8 +266,8 @@
     },
     "radioAlbum": {
       "type": "object",
-      "description": "Album metadata derived by grouping songs with matching album tags.",
-      "required": ["id", "title", "tracks"],
+      "description": "Admin-defined album loop metadata.",
+      "required": ["id", "title", "position", "isEnabled", "tracks"],
       "properties": {
         "id": {
           "type": "string",
@@ -278,6 +278,13 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 512
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "isEnabled": {
+          "type": "boolean"
         },
         "tracks": {
           "type": "array",
