@@ -1366,19 +1366,83 @@ export default function RadioPage(props: RadioPageProps) {
                 <span ref={setTitleTextEl}>{currentSongTitle()}</span>
               </span>
             </h1>
-            <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
-              <button
-                class="listen-icon-button"
-                type="button"
-                onClick={() => void startListening()}
-                aria-label={isAudioPlaying() ? 'listening live' : 'listen live'}
-                title={isAudioPlaying() ? 'listening live' : 'listen live'}
-              >
-                <Show when={isAudioPlaying()} fallback={<Play size={19} strokeWidth={1.8} fill="currentColor" />}>
-                  <AudioLines size={19} strokeWidth={1.9} />
-                </Show>
-              </button>
-            </Show>
+            <div class="nowplaying-title-side">
+              <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
+                <button
+                  class="listen-icon-button"
+                  type="button"
+                  onClick={() => void startListening()}
+                  aria-label={isAudioPlaying() ? 'listening live' : 'listen live'}
+                  title={isAudioPlaying() ? 'listening live' : 'listen live'}
+                >
+                  <Show when={isAudioPlaying()} fallback={<Play size={19} strokeWidth={1.8} fill="currentColor" />}>
+                    <AudioLines size={19} strokeWidth={1.9} />
+                  </Show>
+                </button>
+              </Show>
+              <div class="nowplaying-meta-row">
+                <div class="live-viewer-counter compact-viewer-counter" aria-live="polite">
+                  <Eye size={16} />
+                  <span>{viewerCountLabel()}</span>
+                  <Show when={listenerDids().length > 0}>
+                    <ul class="listener-avatars" aria-label="listeners">
+                      <For each={visibleListenerDids()}>
+                        {(did) => {
+                          const profile = () => profileFor(did)
+                          return (
+                            <li>
+                              <a
+                                href={`https://bsky.app/profile/${profile().handle}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                data-handle={`@${profile().handle}`}
+                              >
+                                <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
+                              </a>
+                            </li>
+                          )
+                        }}
+                      </For>
+                      <Show when={overflowListenerDids().length > 0}>
+                        <li>
+                          <button
+                            type="button"
+                            class="listener-avatar-more"
+                            aria-expanded={listenerOverflowOpen()}
+                            aria-label={`show ${overflowListenerDids().length} more listeners`}
+                            data-handle={`+${overflowListenerDids().length} more`}
+                            onClick={() => setListenerOverflowOpen((open) => !open)}
+                          >
+                            +{overflowListenerDids().length}
+                          </button>
+                        </li>
+                        <Show when={listenerOverflowOpen()}>
+                          <ul class="listener-avatars-overflow" aria-label="more listeners">
+                            <For each={overflowListenerDids()}>
+                              {(did) => {
+                                const profile = () => profileFor(did)
+                                return (
+                                  <li>
+                                    <a
+                                      href={`https://bsky.app/profile/${profile().handle}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
+                                      <span>{profile().displayName || `@${profile().handle}`}</span>
+                                    </a>
+                                  </li>
+                                )
+                              }}
+                            </For>
+                          </ul>
+                        </Show>
+                      </Show>
+                    </ul>
+                  </Show>
+                </div>
+              </div>
+            </div>
           </div>
           <p class="subtitle nowplaying-artist-album" title={artistAlbumLine()}>{artistAlbumLine()}</p>
           <Show when={currentSong()?.durationSeconds}>
@@ -1439,68 +1503,6 @@ export default function RadioPage(props: RadioPageProps) {
               }}
             />
             </Show>
-          </div>
-          <div class="nowplaying-meta-row">
-            <div class="live-viewer-counter compact-viewer-counter" aria-live="polite">
-              <Eye size={16} />
-              <span>{viewerCountLabel()}</span>
-              <Show when={listenerDids().length > 0}>
-                <ul class="listener-avatars" aria-label="listeners">
-                  <For each={visibleListenerDids()}>
-                    {(did) => {
-                      const profile = () => profileFor(did)
-                      return (
-                        <li>
-                          <a
-                            href={`https://bsky.app/profile/${profile().handle}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            data-handle={`@${profile().handle}`}
-                          >
-                            <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
-                          </a>
-                        </li>
-                      )
-                    }}
-                  </For>
-                  <Show when={overflowListenerDids().length > 0}>
-                    <li>
-                      <button
-                        type="button"
-                        class="listener-avatar-more"
-                        aria-expanded={listenerOverflowOpen()}
-                        aria-label={`show ${overflowListenerDids().length} more listeners`}
-                        data-handle={`+${overflowListenerDids().length} more`}
-                        onClick={() => setListenerOverflowOpen((open) => !open)}
-                      >
-                        +{overflowListenerDids().length}
-                      </button>
-                    </li>
-                    <Show when={listenerOverflowOpen()}>
-                      <ul class="listener-avatars-overflow" aria-label="more listeners">
-                        <For each={overflowListenerDids()}>
-                          {(did) => {
-                            const profile = () => profileFor(did)
-                            return (
-                              <li>
-                                <a
-                                  href={`https://bsky.app/profile/${profile().handle}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  <ProfileAvatar profile={profile()} class="listener-avatar" title={`@${profile().handle}`} />
-                                  <span>{profile().displayName || `@${profile().handle}`}</span>
-                                </a>
-                              </li>
-                            )
-                          }}
-                        </For>
-                      </ul>
-                    </Show>
-                  </Show>
-                </ul>
-              </Show>
-            </div>
           </div>
         </section>
         <audio
