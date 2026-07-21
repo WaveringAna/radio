@@ -1343,28 +1343,28 @@ export default function RadioPage(props: RadioPageProps) {
                 <span ref={setTitleTextEl}>{currentSongTitle()}</span>
               </span>
             </h1>
-            <div class="nowplaying-title-side">
-              <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
-                <button
-                  class="listen-icon-button"
-                  type="button"
-                  onClick={() => void startListening()}
-                  aria-label={isAudioPlaying() ? 'listening live' : 'listen live'}
-                  title={isAudioPlaying() ? 'listening live' : 'listen live'}
-                >
-                  <Show when={isAudioPlaying()} fallback={<Play size={19} strokeWidth={1.8} fill="currentColor" />}>
-                    <AudioLines size={19} strokeWidth={1.9} />
-                  </Show>
-                </button>
-              </Show>
-              <Show when={currentSong()?.durationSeconds}>
-                <p class="nowplaying-time-simple">
-                  {formatClock(liveDisplayPosition())} / {formatClock(currentSong()?.durationSeconds)}
-                </p>
-              </Show>
-            </div>
+            <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
+              <button
+                class="listen-icon-button"
+                type="button"
+                onClick={() => void startListening()}
+                aria-label={isAudioPlaying() ? 'listening live' : 'listen live'}
+                title={isAudioPlaying() ? 'listening live' : 'listen live'}
+              >
+                <Show when={isAudioPlaying()} fallback={<Play size={19} strokeWidth={1.8} fill="currentColor" />}>
+                  <AudioLines size={19} strokeWidth={1.9} />
+                </Show>
+              </button>
+            </Show>
           </div>
-          <p class="subtitle nowplaying-artist-album" title={artistAlbumLine()}>{artistAlbumLine()}</p>
+          <div class="nowplaying-artist-time-row">
+            <p class="subtitle nowplaying-artist-album" title={artistAlbumLine()}>{artistAlbumLine()}</p>
+            <Show when={currentSong()?.durationSeconds}>
+              <p class="nowplaying-time-simple">
+                {formatClock(liveDisplayPosition())} / {formatClock(currentSong()?.durationSeconds)}
+              </p>
+            </Show>
+          </div>
           <div class="volume-control local-volume">
             <button
               type="button"

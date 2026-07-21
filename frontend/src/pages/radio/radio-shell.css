@@ -414,7 +414,7 @@ h1.marquee {
 .nowplaying-title-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
+  align-items: center;
   gap: 1rem;
   min-width: 0;
 }
@@ -423,13 +423,12 @@ h1.marquee {
   margin-top: 0;
 }
 
-/* Stacks the listen button over the time readout so the readout doesn't
-   need its own full-width row lower in the card. */
-.nowplaying-title-side {
+.nowplaying-artist-time-row {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.3rem;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
 }
 
 .listen-icon-button {
@@ -512,6 +511,8 @@ h1.marquee {
 }
 
 .nowplaying-artist-album {
+  flex: 1 1 auto;
+  min-width: 0;
   max-width: min(100%, 42rem);
   margin-top: 0.12rem;
   overflow: hidden;
@@ -520,6 +521,7 @@ h1.marquee {
 }
 
 .nowplaying-time-simple {
+  flex: 0 0 auto;
   margin: 0;
   color: var(--accent);
   font-family: var(--mono);
