@@ -47,7 +47,13 @@ impl Database {
     /// # Errors
     /// Returns an error when migrations or cleanup queries fail.
     pub(crate) async fn prepare(&self) -> anyhow::Result<()> {
-        MIGRATOR
+        // Migration 12 is deliberately absent (see 0013's comment): databases
+        // that ran the old, now-reverted version 12 still have that entry in
+        // their history, and sqlx errors on an applied-but-unresolvable
+        // version unless told to ignore the gap.
+        let mut migrator = MIGRATOR;
+        migrator.set_ignore_missing(true);
+        migrator
             .run(&self.pool)
             .await
             .context("running sqlite migrations")?;
