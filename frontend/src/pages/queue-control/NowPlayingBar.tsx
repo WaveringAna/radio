@@ -1,10 +1,9 @@
 import { Show } from 'solid-js'
 import { Pause, Play, Shuffle, SkipForward } from 'lucide-solid'
 import { songCoverUrl } from '../../shared/lib/radio'
-import { formatTime } from './helpers'
 import type { QueueControl } from './useQueueControl'
 
-/** The now-playing banner: cover art, title, live progress bar, and transport controls. */
+/** The now-playing banner: cover art, title, and transport controls. */
 export function NowPlayingBar(props: { control: QueueControl }) {
   const control = props.control
   const currentSong = () => control.snapshot()?.currentSong
@@ -37,23 +36,6 @@ export function NowPlayingBar(props: { control: QueueControl }) {
             <>
               <h1 class="qc-now-title" title={song().title}>{song().title}</h1>
               <p class="qc-now-meta">{song().artist} • {song().album || 'Single'}</p>
-
-              <div class="qc-now-progress-container">
-                <div
-                  class="qc-now-progress-track"
-                  role="progressbar"
-                  aria-label="song progress"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                  aria-valuenow={Math.round(control.liveProgressPercent())}
-                >
-                  <span style={`width: ${control.liveProgressPercent()}%`} />
-                </div>
-                <div class="qc-now-time-row">
-                  <span>{formatTime(Math.min(control.livePositionSeconds(), song().durationSeconds ?? Infinity))}</span>
-                  <span>{formatTime(song().durationSeconds)}</span>
-                </div>
-              </div>
             </>
           )}
         </Show>

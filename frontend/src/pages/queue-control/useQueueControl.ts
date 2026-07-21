@@ -205,12 +205,6 @@ export function createQueueControl(props: QueueControlProps) {
     return Math.max(0, state.positionSeconds + Math.floor((now - snapshotSyncedAt()) / 1000))
   }
 
-  const liveProgressPercent = () => {
-    const duration = snapshot()?.currentSong?.durationSeconds
-    if (!duration || duration <= 0) return 0
-    return Math.min(100, Math.max(0, (livePositionSeconds() / duration) * 100))
-  }
-
   const sendControl = async (action: 'play' | 'pause' | 'stop' | 'skip' | 'shuffle') => {
     try {
       setPageError(null)
@@ -661,7 +655,6 @@ export function createQueueControl(props: QueueControlProps) {
     coverUrl,
     // playback + queue
     livePositionSeconds,
-    liveProgressPercent,
     sendControl,
     shuffleOn,
     addSongToQueue,

@@ -483,12 +483,17 @@ export async function fetchSyndicatedStations(
   const base = normalizeBase(workerBase)
   if (!base) return []
 
-  const response = await fetch(`${base}/stations`, { cache: 'no-store' })
-  if (!response.ok) {
-    throw new Error('failed to load syndicated stations')
+  try {
+    const response = await fetch(`${base}/stations`, { cache: 'no-store' })
+    if (!response.ok) {
+      console.warn('failed to load syndicated stations', response.status)
+      return []
+    }
+    return (await response.json()) as SyndicatedStation[]
+  } catch (error) {
+    console.warn('failed to reach syndication worker', error)
+    return []
   }
-
-  return (await response.json()) as SyndicatedStation[]
 }
 
 /**

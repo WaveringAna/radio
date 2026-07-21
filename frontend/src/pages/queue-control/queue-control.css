@@ -1035,39 +1035,6 @@
   margin: 0 0 1.25rem;
 }
 
-.qc-now-progress-container {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  max-width: 400px;
-  width: 100%;
-}
-
-.qc-now-progress-track {
-  width: 100%;
-  height: 6px;
-  background: var(--surface-soft);
-  border-radius: 3px;
-  overflow: hidden;
-  border: 1px solid var(--hairline);
-}
-
-.qc-now-progress-track span {
-  display: block;
-  height: 100%;
-  background: var(--text);
-  border-radius: 3px;
-  transition: width 250ms linear;
-}
-
-.qc-now-time-row {
-  display: flex;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 0.8rem;
-  font-family: var(--mono);
-}
-
 .qc-now-controls {
   display: flex;
   flex-direction: column;
@@ -2168,10 +2135,6 @@
 
   .qc-now-meta {
     margin-bottom: 1rem;
-  }
-
-  .qc-now-progress-container {
-    max-width: none;
   }
 
   .qc-now-controls {
