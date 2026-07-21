@@ -106,7 +106,15 @@ async fn main() -> anyhow::Result<()> {
     // .env.local without disturbing the prod values in .env. dotenvy only
     // sets vars that aren't already populated, so loading local first works.
     dotenvy::from_filename(".env.local").ok();
-    dotenvy::dotenv().ok();
+    // A malformed line (e.g. an unquoted value containing a space) aborts the
+    // whole file, silently leaving every var after it unset — surface that
+    // instead of swallowing it, since the failure mode otherwise looks like
+    // individually missing config rather than one bad line further up.
+    if let Err(error) = dotenvy::dotenv() {
+        if !error.not_found() {
+            eprintln!("warning: failed to parse .env ({error}) — config after the bad line was not loaded");
+        }
+    }
     init_tracing();
 
     let config = AppConfig::from_env()?;
