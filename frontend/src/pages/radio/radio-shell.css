@@ -311,9 +311,9 @@
   width: min(100%, 34rem, calc(100vh - 22rem));
   height: 3.6rem;
   justify-self: center;
-  margin: 0 0 0.5rem;
+  margin: 0;
   padding: 0.4rem 0;
-  border-block: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border: 0;
   background: transparent;
 }
 
@@ -337,44 +337,62 @@
 
 .now-playing-card h1 {
   min-width: 0;
+  /* Always constrained: overflow detection compares scrollWidth to
+     clientWidth, which only works when the heading can't grow past its
+     container. Unconstrained, a long nowrap title bleeds over neighbors. */
+  max-width: 100%;
   margin: 0.45rem 0 0 -0.05em;
   padding-bottom: 0.08em;
-  overflow: visible;
+  overflow: hidden;
   white-space: nowrap;
-  font-size: clamp(1.35rem, 2vw, 2rem);
-  font-weight: 600;
+  font-size: clamp(1.45rem, 2.2vw, 2.2rem);
+  font-weight: 700;
   letter-spacing: 0;
   line-height: 1.1;
-  opacity: 0.88;
   text-shadow: 0 0 40px rgba(var(--accent-rgb), 0.22);
 }
 
-.now-playing-card h1.marquee {
-  max-width: 100%;
-  overflow: hidden;
-}
 
 .marquee-track {
   display: inline-flex;
   width: max-content;
-  gap: 2.5rem;
 }
 
 h1.marquee .marquee-track {
-  will-change: transform;
-  animation: title-marquee 14s linear infinite;
+  animation: title-marquee var(--marquee-duration, 14s) linear infinite;
+}
+
+h1.marquee {
+  /* Masking makes Safari composite the clip box itself, which pins the
+     animated track inside it; the edge fade also reads softer than a hard
+     cut against the card. */
+  -webkit-mask-image: linear-gradient(to right, transparent, black 1.25rem, black calc(100% - 1.25rem), transparent);
+  mask-image: linear-gradient(to right, transparent, black 1.25rem, black calc(100% - 1.25rem), transparent);
+}
+
+/* The phone styles ellipsize the heading, but the ellipsized line is laid out
+   from the untransformed track — iOS paints that static copy beneath the
+   animated one, doubling the title. Scoped above the mobile rule's
+   specificity so it wins inside the media query too. */
+.now-playing-card h1.marquee {
+  text-overflow: clip;
 }
 
 .marquee-track span {
   flex: 0 0 auto;
 }
 
+/* Classic <marquee>: slide in from the container's right edge (px start set
+   from the measured heading width) and travel until the text's own tail
+   (-100% of the track) clears the left edge. Values are fixed before the
+   animation starts — never retargeted mid-flight, which is what iOS Safari
+   answered with stale offset copies of the text. */
 @keyframes title-marquee {
   from {
-    transform: translateX(0);
+    transform: translate3d(var(--marquee-start, 100%), 0, 0);
   }
   to {
-    transform: translateX(calc(-50% - 1.25rem));
+    transform: translate3d(-100%, 0, 0);
   }
 }
 
@@ -390,7 +408,7 @@ h1.marquee .marquee-track {
   gap: 0;
   width: 100%;
   min-width: 0;
-  margin-top: 0.65rem;
+  margin-top: 0;
 }
 
 .nowplaying-title-row {
@@ -454,6 +472,16 @@ h1.marquee .marquee-track {
     animation: none;
   }
 
+  /* Static presentation: no edge fade, back to a plain ellipsized title. */
+  h1.marquee {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .now-playing-card h1.marquee {
+    text-overflow: ellipsis;
+  }
+
   .art-crt-scanload {
     display: none;
   }
@@ -496,20 +524,14 @@ h1.marquee .marquee-track {
   min-height: var(--nowplaying-row-height, 2.35rem);
 }
 
-.nowplaying-meta-row .track-attribution {
-  max-width: min(100%, 27rem);
-  min-height: var(--nowplaying-row-height, 2.35rem);
-  font-size: 0.9rem;
-}
-
-.nowplaying-meta-row .track-attribution-avatar.profile-avatar,
 .listener-avatar.profile-avatar {
   width: var(--nowplaying-avatar-size, 1.65rem);
   height: var(--nowplaying-avatar-size, 1.65rem);
 }
 
 .nowplaying-details .local-volume {
-  margin-top: 0.65rem;
+  width: 100%;
+  margin-top: 0.5rem;
 }
 
 .listen-attribution-row {
@@ -520,40 +542,6 @@ h1.marquee .marquee-track {
   /* Reserve the button row's height so showing/hiding the listen button as
      backend playback state changes doesn't shift the layout below. */
   min-height: 2.1rem;
-}
-
-.track-attribution {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  flex: 0 1 auto;
-  min-width: 0;
-  color: var(--muted);
-  text-align: right;
-  text-decoration: none;
-  font-size: 0.92rem;
-  font-weight: 300;
-}
-
-.track-attribution span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.track-attribution strong {
-  color: var(--accent);
-  font-weight: 400;
-}
-
-.track-attribution:hover strong {
-  text-decoration: underline;
-}
-
-.track-attribution-avatar.profile-avatar {
-  width: var(--nowplaying-avatar-size, 1.65rem);
-  height: var(--nowplaying-avatar-size, 1.65rem);
 }
 
 .radio-audio {
@@ -742,48 +730,67 @@ h1.marquee .marquee-track {
   accent-color: var(--accent);
 }
 
+/* Same track anatomy as the progress bar above it, so position and volume
+   read as two rows of one instrument. The input itself is 28px tall — a
+   finger-sized touch target — while the visible 6px bar is drawn on the
+   track pseudo-element inside it. */
 .volume-control input[type='range'] {
   appearance: none;
   -webkit-appearance: none;
-  height: 0.35rem;
-  border-radius: 999px;
+  height: 28px;
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+
+.volume-control input[type='range']::-webkit-slider-runnable-track {
+  height: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
   background: linear-gradient(
     to right,
     var(--accent) 0 var(--volume-progress, 80%),
-    #d1d1d6 var(--volume-progress, 80%) 100%
+    var(--surface-soft) var(--volume-progress, 80%) 100%
   );
 }
 
 .volume-control input[type='range']::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 0.95rem;
+  height: 0.95rem;
+  margin-top: calc((6px - 0.95rem) / 2 - 1px);
   border: 0;
   border-radius: 999px;
-  background: #ffffff;
-  box-shadow: 0 0.12rem 0.45rem rgb(0 0 0 / 24%);
+  background: var(--accent);
+  box-shadow: 0 0 0.5rem rgb(var(--accent-rgb) / 45%);
 }
 
 .volume-control input[type='range']::-moz-range-thumb {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 0.95rem;
+  height: 0.95rem;
   border: 0;
   border-radius: 999px;
-  background: #ffffff;
-  box-shadow: 0 0.12rem 0.45rem rgb(0 0 0 / 24%);
+  background: var(--accent);
+  box-shadow: 0 0 0.5rem rgb(var(--accent-rgb) / 45%);
 }
 
 .volume-control input[type='range']::-moz-range-track {
-  height: 0.35rem;
-  border-radius: 999px;
-  background: #d1d1d6;
+  height: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: var(--surface-soft);
 }
 
 .volume-control input[type='range']::-moz-range-progress {
-  height: 0.35rem;
-  border-radius: 999px;
+  height: 6px;
+  border-radius: 3px;
   background: var(--accent);
+}
+
+.volume-mute-btn {
+  width: 2.25rem;
+  height: 2.25rem;
 }
 
 .listen-button {
@@ -813,9 +820,11 @@ h1.marquee .marquee-track {
     overflow-x: clip;
   }
 
+  /* The fixed scanline overlay reads as a grey film over the empty parts of
+     the page on phones; like the ambient noise, it only earns its keep on a
+     desktop viewport. */
   .radio-page::before {
-    width: 100vw;
-    max-width: 100%;
+    display: none;
   }
 
   .bottom-radio-tools,
@@ -833,12 +842,18 @@ h1.marquee .marquee-track {
     overflow-x: hidden;
   }
 
+  /* A touch smaller than full width so the art reads as an object on the
+     page rather than a wall-to-wall block. */
   .art-shell {
-    width: min(100%, calc(100vw - 2rem), 28rem, calc(100dvh - 24rem));
+    width: min(86%, calc(100vw - 2rem), 24rem, calc(100dvh - 24rem));
   }
 
+  /* The visualizer needs the Web Audio graph, which mobile never attaches:
+     routing through MediaElementSource makes the OS suspend audio on lock
+     screen / backgrounding, so the EQ panel is desktop-only. The bars would
+     sit flatlined here. Drop them. */
   .nowplaying-waveform {
-    width: min(100%, calc(100vw - 2rem));
+    display: none;
   }
 
   .now-playing-card h1,
@@ -884,27 +899,72 @@ h1.marquee .marquee-track {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .nowplaying-meta-row .track-attribution {
-    max-width: 100%;
-    justify-self: start;
-    justify-content: flex-start;
-    text-align: left;
-  }
-
   .listener-avatars {
     flex-wrap: wrap;
     min-width: 0;
     margin-left: 0;
   }
 
-  .track-attribution {
-    flex: 1 1 12rem;
-    min-width: 0;
-    justify-content: flex-start;
-    text-align: left;
-  }
-
   .volume-control input {
     min-width: 0;
+  }
+}
+
+/* Queue-banner anatomy for the listener page: eyebrow, heavy title, meta
+   line, slim progress. Same voice on both pages. */
+.nowplaying-eyebrow {
+  margin: 0.9rem 0 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+}
+
+.nowplaying-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+  margin-top: 0.8rem;
+}
+
+/* Built exactly like the volume slider below it — same box, same border,
+   fill painted as a gradient under the border — so the two bars align and
+   match thickness by construction rather than by compensation. */
+.nowplaying-progress-track {
+  width: 100%;
+  height: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0 var(--progress-pct, 0%),
+    var(--surface-soft) var(--progress-pct, 0%) 100%
+  );
+}
+
+.nowplaying-time-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+/* Duration flips to time-remaining on tap; keep it looking like text. */
+.nowplaying-duration {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+
+@media (max-width: 520px) {
+  /* Match the queue page's phone gutter so both pages share one edge. */
+  .now-playing-card {
+    padding-inline: 0.75rem;
   }
 }

@@ -1,11 +1,13 @@
 mod auth;
 mod chat;
 mod db;
+mod import;
 mod loudness;
 mod metadata;
 mod radio;
 mod routes;
 mod subsonic;
+mod tempo;
 
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
@@ -108,6 +110,14 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     let config = AppConfig::from_env()?;
+
+    // `import <dir> [--did <did>]` runs the one-shot local library importer and
+    // exits instead of starting the HTTP server.
+    let mut args = std::env::args().skip(1);
+    if args.next().as_deref() == Some("import") {
+        return run_import_command(&config, args.collect()).await;
+    }
+
     let db = Database::connect(&config.database_url).await?;
     db.prepare().await?;
     let pds_signing_key = routes::pds::load_or_create_signing_key(db.pool()).await?;
@@ -163,6 +173,11 @@ async fn main() -> anyhow::Result<()> {
         Err(error) => tracing::warn!(%error, "failed to auto-sync album loops on boot"),
     }
 
+    match radio.reconcile_shuffle_on_boot().await {
+        Ok(()) => {}
+        Err(error) => tracing::warn!(%error, "failed to reconcile shuffle queue on boot"),
+    }
+
     // Cover and genre backfills hit online metadata services per missing song,
     // so run them in the background to keep the HTTP listener responsive at
     // boot. Covers run first because yt-dlp imports can leave a large artwork
@@ -183,16 +198,25 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Loudness backfill can take seconds-per-track via ffmpeg; run it in the
-    // background so the HTTP listener comes up immediately.
-    let loudness_radio = radio.clone();
+    // Loudness and tempo backfills can take seconds-per-track via ffmpeg; run
+    // them in the background (and one after the other, so only one ffmpeg
+    // scan hits the disk at a time) so the HTTP listener comes up immediately.
+    let analysis_radio = radio.clone();
     tokio::spawn(async move {
         tracing::info!("starting loudness backfill in background");
-        match loudness_radio.backfill_missing_loudness_on_boot().await {
+        match analysis_radio.backfill_missing_loudness_on_boot().await {
             Ok(0) => tracing::info!("loudness backfill: nothing to do"),
             Ok(updated) => tracing::info!(updated, "loudness backfill complete"),
             Err(error) => {
                 tracing::warn!(%error, "loudness backfill failed")
+            }
+        }
+        tracing::info!("starting tempo backfill in background");
+        match analysis_radio.backfill_missing_bpm_on_boot().await {
+            Ok(0) => tracing::info!("tempo backfill: nothing to do"),
+            Ok(updated) => tracing::info!(updated, "tempo backfill complete"),
+            Err(error) => {
+                tracing::warn!(%error, "tempo backfill failed")
             }
         }
     });
@@ -274,6 +298,44 @@ async fn main() -> anyhow::Result<()> {
         .context("running axum server")?;
 
     Ok(())
+}
+
+/// Parses `import <dir> [--did <did>]` args and runs the local library importer.
+async fn run_import_command(config: &AppConfig, args: Vec<String>) -> anyhow::Result<()> {
+    let mut dir: Option<String> = None;
+    let mut did_override: Option<String> = None;
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--did" => {
+                did_override = Some(
+                    iter.next()
+                        .context("--did requires a value (the admin DID to attribute songs to)")?,
+                );
+            }
+            other if dir.is_none() => dir = Some(other.to_owned()),
+            other => return Err(anyhow::anyhow!("unexpected argument: {other}")),
+        }
+    }
+
+    let dir = dir.context(
+        "usage: radio import <dir> [--did <did>]  (path to the music library to import)",
+    )?;
+
+    // Attribute imported songs to an admin so they behave like a normal upload.
+    let admin_did = did_override
+        .or_else(|| config.admin_dids.first().cloned())
+        .context(
+            "no admin DID available: set ADMIN_DIDS in .env or pass --did <did> to the importer",
+        )?;
+
+    import::run(
+        &config.database_url,
+        config.audio_dir.clone(),
+        &admin_did,
+        std::path::Path::new(&dir),
+    )
+    .await
 }
 
 fn service_did_from_env(app_url: &str) -> anyhow::Result<Did<'static>> {

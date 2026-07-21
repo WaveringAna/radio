@@ -5,6 +5,10 @@ export default defineConfig({
   plugins: [solid()],
   build: {
     sourcemap: true,
+    // Without this the minifier rewrites breakpoints to media-query range
+    // syntax (`@media (width<=860px)`), which Safari ignores before 16.4 —
+    // every breakpoint silently stops matching and phones get the desktop grid.
+    cssTarget: 'safari14',
   },
   server: {
     host: '127.0.0.1',

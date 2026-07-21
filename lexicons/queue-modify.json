@@ -14,7 +14,7 @@
             "action": {
               "type": "string",
               "description": "Queue operation to perform. Required companion fields are enforced by the server.",
-              "knownValues": ["enqueue", "remove", "clear", "reorder"]
+              "knownValues": ["enqueue", "remove", "clear", "reorder", "sequence"]
             },
             "songIds": {
               "type": "array",
@@ -22,6 +22,14 @@
               "items": {
                 "type": "string"
               }
+            },
+            "atTop": {
+              "type": "boolean",
+              "description": "Insert ahead of the rest of the queue instead of appending, when action is enqueue. Default false."
+            },
+            "sequence": {
+              "type": "boolean",
+              "description": "Order the enqueued songs by transition score (artist and album separation, energy, genre, tempo) instead of keeping the given order. Default false."
             },
             "queueId": {
               "type": "string",

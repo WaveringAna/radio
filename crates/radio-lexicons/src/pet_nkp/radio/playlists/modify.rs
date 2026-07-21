@@ -8,41 +8,61 @@
 #[allow(unused_imports)]
 use alloc::collections::BTreeMap;
 
+use crate::pet_nkp::radio::Playlist;
+use crate::pet_nkp::radio::RadioSnapshot;
 #[allow(unused_imports)]
 use core::marker::PhantomData;
 use jacquard_common::CowStr;
 use jacquard_derive::{IntoStatic, lexicon, open_union};
-use serde::{Serialize, Deserialize};
-use crate::pet_nkp::radio::Playlist;
-use crate::pet_nkp::radio::RadioSnapshot;
+use serde::{Deserialize, Serialize};
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Modify<'a> {
+    ///Playlist operation to perform. Required companion fields are enforced by the server.
     #[serde(borrow)]
     pub action: ModifyAction<'a>,
+    ///New playlist name for create, rename, and duplicate.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(borrow)]
     pub name: Option<CowStr<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(borrow)]
     pub playlist_id: Option<CowStr<'a>>,
+    ///One-based track position to drop when action is removeTrack.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<i64>,
     /// Defaults to `false`.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default = "_default_modify_replace")]
     pub replace: Option<bool>,
+    ///Overrides the playlist's stored shuffleOnLoad for this load only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shuffle: Option<bool>,
+    ///Whether loading this playlist randomizes its order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shuffle_on_load: Option<bool>,
+    ///Track song ids: the full contents for create, the appended tracks for addTracks, the complete new order for reorder.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(borrow)]
     pub song_ids: Option<Vec<CowStr<'a>>>,
 }
 
+/// Playlist operation to perform. Required companion fields are enforced by the server.
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ModifyAction<'a> {
     Create,
     Delete,
     Load,
+    Rename,
+    AddTracks,
+    RemoveTrack,
+    Reorder,
+    Duplicate,
+    SetShuffleOnLoad,
+    SequenceTracks,
     Other(CowStr<'a>),
 }
 
@@ -52,6 +72,13 @@ impl<'a> ModifyAction<'a> {
             Self::Create => "create",
             Self::Delete => "delete",
             Self::Load => "load",
+            Self::Rename => "rename",
+            Self::AddTracks => "addTracks",
+            Self::RemoveTrack => "removeTrack",
+            Self::Reorder => "reorder",
+            Self::Duplicate => "duplicate",
+            Self::SetShuffleOnLoad => "setShuffleOnLoad",
+            Self::SequenceTracks => "sequenceTracks",
             Self::Other(s) => s.as_ref(),
         }
     }
@@ -63,6 +90,13 @@ impl<'a> From<&'a str> for ModifyAction<'a> {
             "create" => Self::Create,
             "delete" => Self::Delete,
             "load" => Self::Load,
+            "rename" => Self::Rename,
+            "addTracks" => Self::AddTracks,
+            "removeTrack" => Self::RemoveTrack,
+            "reorder" => Self::Reorder,
+            "duplicate" => Self::Duplicate,
+            "setShuffleOnLoad" => Self::SetShuffleOnLoad,
+            "sequenceTracks" => Self::SequenceTracks,
             _ => Self::Other(CowStr::from(s)),
         }
     }
@@ -74,6 +108,13 @@ impl<'a> From<String> for ModifyAction<'a> {
             "create" => Self::Create,
             "delete" => Self::Delete,
             "load" => Self::Load,
+            "rename" => Self::Rename,
+            "addTracks" => Self::AddTracks,
+            "removeTrack" => Self::RemoveTrack,
+            "reorder" => Self::Reorder,
+            "duplicate" => Self::Duplicate,
+            "setShuffleOnLoad" => Self::SetShuffleOnLoad,
+            "sequenceTracks" => Self::SequenceTracks,
             _ => Self::Other(CowStr::from(s)),
         }
     }
@@ -126,11 +167,17 @@ impl jacquard_common::IntoStatic for ModifyAction<'_> {
             ModifyAction::Create => ModifyAction::Create,
             ModifyAction::Delete => ModifyAction::Delete,
             ModifyAction::Load => ModifyAction::Load,
+            ModifyAction::Rename => ModifyAction::Rename,
+            ModifyAction::AddTracks => ModifyAction::AddTracks,
+            ModifyAction::RemoveTrack => ModifyAction::RemoveTrack,
+            ModifyAction::Reorder => ModifyAction::Reorder,
+            ModifyAction::Duplicate => ModifyAction::Duplicate,
+            ModifyAction::SetShuffleOnLoad => ModifyAction::SetShuffleOnLoad,
+            ModifyAction::SequenceTracks => ModifyAction::SequenceTracks,
             ModifyAction::Other(v) => ModifyAction::Other(v.into_static()),
         }
     }
 }
-
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic, Default)]
@@ -144,7 +191,6 @@ pub struct ModifyOutput<'a> {
     pub snapshot: Option<RadioSnapshot<'a>>,
 }
 
-
 #[open_union]
 #[derive(
     Serialize,
@@ -155,9 +201,8 @@ pub struct ModifyOutput<'a> {
     Eq,
     thiserror::Error,
     miette::Diagnostic,
-    IntoStatic
+    IntoStatic,
 )]
-
 #[serde(tag = "error", content = "message")]
 #[serde(bound(deserialize = "'de: 'a"))]
 pub enum ModifyError<'a> {
@@ -218,9 +263,8 @@ impl jacquard_common::xrpc::XrpcResp for ModifyResponse {
 
 impl<'a> jacquard_common::xrpc::XrpcRequest for Modify<'a> {
     const NSID: &'static str = "pet.nkp.radio.playlists.modify";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Response = ModifyResponse;
 }
 
@@ -228,9 +272,8 @@ impl<'a> jacquard_common::xrpc::XrpcRequest for Modify<'a> {
 pub struct ModifyRequest;
 impl jacquard_common::xrpc::XrpcEndpoint for ModifyRequest {
     const PATH: &'static str = "/xrpc/pet.nkp.radio.playlists.modify";
-    const METHOD: jacquard_common::xrpc::XrpcMethod = jacquard_common::xrpc::XrpcMethod::Procedure(
-        "application/json",
-    );
+    const METHOD: jacquard_common::xrpc::XrpcMethod =
+        jacquard_common::xrpc::XrpcMethod::Procedure("application/json");
     type Request<'de> = Modify<'de>;
     type Response = ModifyResponse;
 }

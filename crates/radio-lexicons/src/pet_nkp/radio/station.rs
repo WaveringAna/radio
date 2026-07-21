@@ -24,12 +24,16 @@ use jacquard_lexicon::schema::LexiconSchema;
 
 #[allow(unused_imports)]
 use jacquard_lexicon::validation::{ConstraintError, ValidationPath};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 /// Singleton station advertisement for discovery.
 
 #[lexicon]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoStatic)]
-#[serde(rename_all = "camelCase", rename = "pet.nkp.radio.station", tag = "$type")]
+#[serde(
+    rename_all = "camelCase",
+    rename = "pet.nkp.radio.station",
+    tag = "$type"
+)]
 pub struct Station<'a> {
     ///Optional short station description.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -60,9 +64,7 @@ pub struct StationGetRecordOutput<'a> {
 }
 
 impl<'a> Station<'a> {
-    pub fn uri(
-        uri: impl Into<CowStr<'a>>,
-    ) -> Result<RecordUri<'a, StationRecord>, UriError> {
+    pub fn uri(uri: impl Into<CowStr<'a>>) -> Result<RecordUri<'a, StationRecord>, UriError> {
         RecordUri::try_from_uri(AtUri::new_cow(uri.into())?)
     }
 }
@@ -133,7 +135,7 @@ impl<'a> LexiconSchema for Station<'a> {
 
 pub mod station_state {
 
-    pub use crate::builder_types::{Set, Unset, IsSet, IsUnset};
+    pub use crate::builder_types::{IsSet, IsUnset, Set, Unset};
     #[allow(unused)]
     use ::core::marker::PhantomData;
     mod sealed {
@@ -142,50 +144,50 @@ pub mod station_state {
     /// State trait tracking which required fields have been set
     pub trait State: sealed::Sealed {
         type UpdatedAt;
-        type Url;
         type Name;
+        type Url;
     }
     /// Empty state - all required fields are unset
     pub struct Empty(());
     impl sealed::Sealed for Empty {}
     impl State for Empty {
         type UpdatedAt = Unset;
-        type Url = Unset;
         type Name = Unset;
+        type Url = Unset;
     }
     ///State transition - sets the `updated_at` field to Set
     pub struct SetUpdatedAt<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetUpdatedAt<S> {}
     impl<S: State> State for SetUpdatedAt<S> {
         type UpdatedAt = Set<members::updated_at>;
+        type Name = S::Name;
         type Url = S::Url;
-        type Name = S::Name;
-    }
-    ///State transition - sets the `url` field to Set
-    pub struct SetUrl<S: State = Empty>(PhantomData<fn() -> S>);
-    impl<S: State> sealed::Sealed for SetUrl<S> {}
-    impl<S: State> State for SetUrl<S> {
-        type UpdatedAt = S::UpdatedAt;
-        type Url = Set<members::url>;
-        type Name = S::Name;
     }
     ///State transition - sets the `name` field to Set
     pub struct SetName<S: State = Empty>(PhantomData<fn() -> S>);
     impl<S: State> sealed::Sealed for SetName<S> {}
     impl<S: State> State for SetName<S> {
         type UpdatedAt = S::UpdatedAt;
-        type Url = S::Url;
         type Name = Set<members::name>;
+        type Url = S::Url;
+    }
+    ///State transition - sets the `url` field to Set
+    pub struct SetUrl<S: State = Empty>(PhantomData<fn() -> S>);
+    impl<S: State> sealed::Sealed for SetUrl<S> {}
+    impl<S: State> State for SetUrl<S> {
+        type UpdatedAt = S::UpdatedAt;
+        type Name = S::Name;
+        type Url = Set<members::url>;
     }
     /// Marker types for field names
     #[allow(non_camel_case_types)]
     pub mod members {
         ///Marker type for the `updated_at` field
         pub struct updated_at(());
-        ///Marker type for the `url` field
-        pub struct url(());
         ///Marker type for the `name` field
         pub struct name(());
+        ///Marker type for the `url` field
+        pub struct url(());
     }
 }
 
@@ -293,8 +295,8 @@ impl<'a, S> StationBuilder<'a, S>
 where
     S: station_state::State,
     S::UpdatedAt: station_state::IsSet,
-    S::Url: station_state::IsSet,
     S::Name: station_state::IsSet,
+    S::Url: station_state::IsSet,
 {
     /// Build the final struct
     pub fn build(self) -> Station<'a> {
@@ -325,10 +327,10 @@ where
 }
 
 fn lexicon_doc_pet_nkp_radio_station() -> LexiconDoc<'static> {
+    use alloc::collections::BTreeMap;
     #[allow(unused_imports)]
     use jacquard_common::{CowStr, deps::smol_str::SmolStr, types::blob::MimeType};
     use jacquard_lexicon::lexicon::*;
-    use alloc::collections::BTreeMap;
     LexiconDoc {
         lexicon: Lexicon::Lexicon1,
         id: CowStr::new_static("pet.nkp.radio.station"),

@@ -4,7 +4,7 @@
   "defs": {
     "main": {
       "type": "procedure",
-      "description": "Create, delete, or load a saved playlist.",
+      "description": "Create, edit, delete, or load a saved playlist.",
       "input": {
         "encoding": "application/json",
         "schema": {
@@ -13,17 +13,43 @@
           "properties": {
             "action": {
               "type": "string",
-              "knownValues": ["create", "delete", "load"]
+              "description": "Playlist operation to perform. Required companion fields are enforced by the server.",
+              "knownValues": [
+                "create",
+                "delete",
+                "load",
+                "rename",
+                "addTracks",
+                "removeTrack",
+                "reorder",
+                "duplicate",
+                "setShuffleOnLoad",
+                "sequenceTracks"
+              ]
             },
             "playlistId": {
               "type": "string"
             },
             "name": {
-              "type": "string"
+              "type": "string",
+              "description": "New playlist name for create, rename, and duplicate."
             },
             "songIds": {
               "type": "array",
+              "description": "Track song ids: the full contents for create, the appended tracks for addTracks, the complete new order for reorder.",
               "items": { "type": "string" }
+            },
+            "position": {
+              "type": "integer",
+              "description": "One-based track position to drop when action is removeTrack."
+            },
+            "shuffleOnLoad": {
+              "type": "boolean",
+              "description": "Whether loading this playlist randomizes its order."
+            },
+            "shuffle": {
+              "type": "boolean",
+              "description": "Overrides the playlist's stored shuffleOnLoad for this load only."
             },
             "replace": {
               "type": "boolean",

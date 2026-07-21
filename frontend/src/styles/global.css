@@ -40,7 +40,8 @@ body {
   background: var(--bg);
   background-attachment: fixed;
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-family: var(--sans);
   --mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", "Courier New", monospace;
   -webkit-font-smoothing: antialiased;
 }
@@ -145,12 +146,13 @@ main > section {
     margin-inline: 0;
   }
 
-  .album-ambient-layer {
-    background:
-      radial-gradient(circle at 22% 8%, var(--ambient-a-wash, transparent) 0, transparent 64rem),
-      radial-gradient(circle at 78% 4%, var(--ambient-b-wash, transparent) 0, transparent 60rem),
-      radial-gradient(circle at 50% 100%, var(--ambient-a-wash, transparent) 0, transparent 56rem),
-      linear-gradient(180deg, var(--ambient-top-wash, transparent) 0, transparent 56rem);
+  /* The ambient stack (accent washes + noise texture) never worked at phone
+     scale — the washes haze or blob, and without them the noise overlay has
+     nothing to blend into and degrades to a flat grey film over the empty
+     parts of the page. Phones get the plain dark background; the art itself
+     carries the color. */
+  .album-ambient {
+    display: none;
   }
 }
 
@@ -170,7 +172,9 @@ main > section {
   gap: 0.35rem;
   width: fit-content;
   min-height: 2.65rem;
-  margin: 1rem auto 1.25rem;
+  /* Installed to the home screen the viewport reaches under the status bar
+     (viewport-fit=cover); the inset is 0 in a normal browser tab. */
+  margin: calc(1rem + env(safe-area-inset-top, 0px)) auto 1.25rem;
   padding: 0;
   border: 0;
   background: transparent;

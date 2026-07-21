@@ -1,6 +1,6 @@
 mod admin;
 mod chat;
-mod helpers;
+pub(crate) mod helpers;
 pub(crate) mod pds;
 mod radio;
 mod songs;
@@ -349,6 +349,7 @@ pub(crate) fn app(state: AppState, _app_url: &str) -> Router {
         .route("/api/health", get(well_known::health))
         .route("/api/radio/state", get(radio::get_radio_state))
         .route("/api/radio/seek", get(radio::get_radio_seek))
+        .route("/api/radio/rotation-info", get(radio::get_rotation_info))
         .route("/api/radio/ws", get(radio::radio_ws))
         .route("/api/radio/chat/ws", get(chat::chat_ws))
         .route(

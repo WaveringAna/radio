@@ -6,6 +6,7 @@ pub(crate) mod types;
 pub(crate) use events::event_message;
 pub(crate) use service::RadioService;
 pub(crate) use types::{
-    NewSongUpload, Playlist, QueueItem, RadioAlbum, RadioControlAction, RadioEvent, RadioSeek,
-    RadioSnapshot, RadioState, Song, SongFile, SongMetadataUpdate,
+    NewSongUpload, PlayHistoryItem, Playlist, QueueItem, RadioAlbum, RadioControlAction,
+    RadioEvent, RadioSeek, RadioSnapshot, RadioState, RotationInfo, RotationUpNext, Song, SongFile,
+    SongMetadataUpdate,
 };

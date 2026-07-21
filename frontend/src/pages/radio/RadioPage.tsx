@@ -3,6 +3,7 @@ import { AudioLines, ChevronLeft, ChevronRight, Eye, Play, RadioTower, Send, Vol
 import { resolveAtprotoProfile, type AtprotoProfile } from '../../shared/lib/atproto'
 import {
   fetchRadioSnapshot,
+  fetchRotationInfo,
   fetchSongs,
   fetchSyndicatedStations,
   canUseRadioXrpcTarget,
@@ -81,16 +82,28 @@ function writeVolumeCookie(volume: number): void {
   document.cookie = `radio_volume=${volume}; Max-Age=31536000; Path=/; SameSite=Lax`
 }
 
+// iOS silently ignores volume writes on media elements — and on some
+// versions the property still echoes the written value back, so a
+// write-then-read probe reports success while nothing audible changes.
+// Treat element volume as uncontrollable there so callers fall back to the
+// Web Audio gain, which is the only volume control iOS actually honors.
+function isIosDevice(): boolean {
+  if (typeof navigator === 'undefined') return false
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent)) return true
+  return /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1
+}
+
 function setElementVolume(audioElement: HTMLAudioElement, nextVolume: number): boolean {
+  if (isIosDevice()) return false
   audioElement.volume = nextVolume
   return Math.abs(audioElement.volume - nextVolume) < 0.001
 }
 
 // Mobile browsers suspend <audio> in the background once it's routed through a
 // Web Audio graph (MediaElementSource). iOS Safari is strict about it; Android
-// is inconsistent but vulnerable on lock screen / battery saver. On mobile we
-// defer attaching the equalizer graph until the user opts in. Desktop keeps
-// visualizer + EQ from the start.
+// is inconsistent but vulnerable on lock screen / battery saver. So the EQ
+// panel is not offered on mobile at all, and the graph stays detached there.
+// Desktop keeps visualizer + EQ from the start.
 export function isMobileDevice(): boolean {
   if (typeof navigator === 'undefined') return false
   if (/Android|iPad|iPhone|iPod|Mobi/i.test(navigator.userAgent)) return true
@@ -697,12 +710,29 @@ export default function RadioPage(props: RadioPageProps) {
     const text = titleTextEl()
     currentSongTitle()
     if (!heading || !text) return
-    const measure = () => setShouldMarqueeTitle(text.scrollWidth > heading.clientWidth + 1)
-    measure()
+    // Drop the marquee first so a title change restarts the animation from
+    // zero instead of swapping text into a half-scrolled track, then measure
+    // on the next frame once the new title has laid out.
+    setShouldMarqueeTitle(false)
+    const measure = () => {
+      const overflowing = text.scrollWidth > heading.clientWidth + 1
+      // Classic <marquee>: enter from the right edge, travel until the tail
+      // clears the left edge, repeat. Constant px/s keeps long titles from
+      // whipping past. Values land before the marquee class flips on, so the
+      // running animation is never retargeted.
+      heading.style.setProperty('--marquee-start', `${heading.clientWidth}px`)
+      const distance = heading.clientWidth + text.scrollWidth
+      heading.style.setProperty('--marquee-duration', `${Math.min(45, Math.max(8, distance / 60))}s`)
+      setShouldMarqueeTitle(overflowing)
+    }
+    const raf = requestAnimationFrame(measure)
     const observer = new ResizeObserver(measure)
     observer.observe(heading)
     observer.observe(text)
-    onCleanup(() => observer.disconnect())
+    onCleanup(() => {
+      cancelAnimationFrame(raf)
+      observer.disconnect()
+    })
   })
   const viewerCountValue = () => viewerCount() ?? 0
   const viewerCountLabel = () => viewerCountValue().toString()
@@ -783,16 +813,19 @@ export default function RadioPage(props: RadioPageProps) {
     stationListKey(station.url) === stationListKey(selectedStation().url)
   const stationHost = (station: TuneInStation) => labelFromStationUrl(station.url)
   const stationSubtitle = (station: TuneInStation) => {
-    if (station.local) return 'local preview'
-
     const name = station.name.trim()
     const host = stationHost(station)
-    if (name && name.toLowerCase() !== host.toLowerCase() && name.toLowerCase() !== 'radio') {
+    if (
+      name &&
+      name.toLowerCase() !== host.toLowerCase() &&
+      name.toLowerCase() !== 'radio' &&
+      name.toLowerCase() !== 'this radio'
+    ) {
       return name
     }
 
     const description = station.description?.trim()
-    return description || 'public station'
+    return description || (station.local ? 'local preview' : 'public station')
   }
   const stationPresetName = (station: TuneInStation) => {
     const name = station.name.trim()
@@ -1005,10 +1038,112 @@ export default function RadioPage(props: RadioPageProps) {
   const queuePageSize = 6
   const upNextPaging = createPagedList(localQueue, queuePageSize)
 
+  // Live progress readout mirroring the queue page's banner. When actually
+  // listening, the audio element is the truth; otherwise derive the position
+  // from the snapshot state plus elapsed wall time.
+  const [clock, setClock] = createSignal(Date.now())
+  const [stateSyncedAt, setStateSyncedAt] = createSignal(Date.now())
+  {
+    const interval = window.setInterval(() => setClock(Date.now()), 1000)
+    onCleanup(() => window.clearInterval(interval))
+  }
+  createEffect(() => {
+    if (snapshot()) setStateSyncedAt(Date.now())
+  })
+  const liveDisplayPosition = () => {
+    void clock()
+    if (audioRef && isAudioPlaying()) return audioRef.currentTime
+    const state = snapshot()?.state
+    if (!state) return 0
+    if (state.status !== 'playing') return state.positionSeconds
+    return Math.max(0, state.positionSeconds + Math.floor((clock() - stateSyncedAt()) / 1000))
+  }
+  const displayProgressPercent = () => {
+    const duration = currentSong()?.durationSeconds
+    if (!duration || duration <= 0) return 0
+    return Math.min(100, Math.max(0, (liveDisplayPosition() / duration) * 100))
+  }
+  const formatClock = (seconds: number | null | undefined) => {
+    if (!seconds || seconds < 0) return '0:00'
+    const minutes = Math.floor(seconds / 60)
+    return `${minutes}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`
+  }
+  const [showRemaining, setShowRemaining] = createSignal(false)
+  // Station-log style: when this song hit the air, in wall-clock time.
+  // Derived from the displayed position so it always agrees with the bar.
+  const wallClockLabel = (msFromNow: number) => {
+    const at = new Date(Date.now() + msFromNow)
+    let hours = at.getHours()
+    const minutes = at.getMinutes()
+    const ampm = hours >= 12 ? 'pm' : 'am'
+    hours = hours % 12 || 12
+    return `${hours}:${minutes < 10 ? '0' + minutes : minutes} ${ampm}`
+  }
+  const songStartedLabel = () => wallClockLabel(-liveDisplayPosition() * 1000)
+  const songEndsLabel = () => wallClockLabel(Math.max(0, (currentSong()?.durationSeconds ?? 0) - liveDisplayPosition()) * 1000)
+
+  // Deterministic rotation peek, so an empty queue can still say what's next.
+  const [rotationInfo, { refetch: refetchRotationInfo }] = createResource(
+    stationResourceKey,
+    ({ target }) => fetchRotationInfo(target),
+  )
+  createEffect(() => {
+    void currentSong()?.id
+    void refetchRotationInfo()
+  })
+
+  const upNextCard = () => (
+    <section class="glass-card up-next-card">
+      <div class="section-heading">
+        <p class="eyebrow">up next</p>
+        <span>{snapshot()?.state.status ?? 'loading'}</span>
+      </div>
+      <Show when={!snapshot.loading} fallback={<p class="muted">loading queue...</p>}>
+        <ul class="queue-list">
+          <For
+            each={upNextPaging.paged()}
+            fallback={
+              <li class="muted up-next-rotation-peek">
+                <Show when={rotationInfo()?.upNext} fallback={<>queue is empty</>}>
+                  {(next) => <>next from rotation: {next().title} — {next().artist}</>}
+                </Show>
+              </li>
+            }
+          >
+            {(item, index) => {
+              const profile = () => profileFor(item.queuedByDid)
+              const hasCover = () => (songs() ?? []).some((song) => song.id === item.songId && song.hasCover)
+              return (
+                <li>
+                  <span class="queue-number">{upNextPaging.page() * queuePageSize + index() + 1}</span>
+                  <SongCoverThumb songId={item.songId} hasCover={hasCover()} baseUrl={selectedApiBase()} />
+                  <div class="up-next-copy">
+                    <span class="up-next-title">{item.title}</span>
+                    <small class="up-next-artist">{item.artist || 'unknown artist'}</small>
+                  </div>
+                  <ProfileAvatar profile={profile()} class="up-next-profile-avatar" title={`@${profile().handle}`} />
+                </li>
+              )
+            }}
+          </For>
+        </ul>
+        <Show when={upNextPaging.pageCount() > 1}>
+          <PaginationRow page={upNextPaging.page()} pageCount={upNextPaging.pageCount()} onPageChange={upNextPaging.setPage} compact />
+        </Show>
+      </Show>
+    </section>
+  )
+
+  const equalizerCard = () => (
+    <section class="glass-card equalizer-card">
+      <EqualizerPanel controller={equalizer} />
+    </section>
+  )
+
   const startListening = async () => {
     if (!audioRef) return
     setHasStarted(true)
-    if (!setElementVolume(audioRef, volume())) {
+    if (!setElementVolume(audioRef, volume()) && !isIosDevice()) {
       equalizer.setOutputVolume(volume())
       void equalizer.ensureGraph()
     }
@@ -1019,10 +1154,10 @@ export default function RadioPage(props: RadioPageProps) {
     // play() must happen synchronously inside the user-gesture call stack on
     // mobile, so do not await Web Audio setup before it.
     void audioRef.play().catch(() => undefined)
-    // On desktop, attach the equalizer graph upfront so visualizer + EQ work
-    // immediately. On mobile we defer until the user opens the EQ panel —
-    // routing through MediaElementSource makes the OS suspend audio when the
-    // tab backgrounds / screen locks.
+    // Desktop only: attach the equalizer graph upfront so visualizer + EQ work
+    // immediately. Mobile never attaches it — routing through
+    // MediaElementSource makes the OS suspend audio when the tab backgrounds
+    // or the screen locks, which is why the EQ panel is desktop-only.
     if (!isMobileDevice()) {
       void equalizer.ensureGraph()
     }
@@ -1097,8 +1232,13 @@ export default function RadioPage(props: RadioPageProps) {
     const nextVolume = volume()
     writeVolumeCookie(nextVolume)
     equalizer.setOutputVolume(nextVolume)
-    if (audioRef && !setElementVolume(audioRef, nextVolume) && hasStarted()) {
-      void equalizer.ensureGraph()
+    if (audioRef) {
+      // iOS ignores element volume but honors `muted`, so mute works there
+      // without routing through Web Audio (which suspends on screen lock).
+      audioRef.muted = nextVolume === 0
+      if (!setElementVolume(audioRef, nextVolume) && hasStarted() && !isIosDevice()) {
+        void equalizer.ensureGraph()
+      }
     }
   })
 
@@ -1219,13 +1359,11 @@ export default function RadioPage(props: RadioPageProps) {
           </Index>
         </div>
         <section class="nowplaying-details" aria-label="now playing">
+          <p class="nowplaying-eyebrow">now playing</p>
           <div class="nowplaying-title-row">
             <h1 ref={setTitleHeadingEl} classList={{ marquee: shouldMarqueeTitle() }} title={currentSongTitle()}>
               <span class="marquee-track">
                 <span ref={setTitleTextEl}>{currentSongTitle()}</span>
-                <Show when={shouldMarqueeTitle()}>
-                  <span aria-hidden="true">{currentSongTitle()}</span>
-                </Show>
               </span>
             </h1>
             <Show when={currentSong() && snapshot()?.state.status === 'playing'}>
@@ -1243,6 +1381,65 @@ export default function RadioPage(props: RadioPageProps) {
             </Show>
           </div>
           <p class="subtitle nowplaying-artist-album" title={artistAlbumLine()}>{artistAlbumLine()}</p>
+          <Show when={currentSong()?.durationSeconds}>
+            <div class="nowplaying-progress">
+              <div
+                class="nowplaying-progress-track"
+                role="progressbar"
+                aria-label="song progress"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow={Math.round(displayProgressPercent())}
+                style={`--progress-pct: ${displayProgressPercent()}%`}
+              />
+              <div class="nowplaying-time-row">
+                <span title="when this song started">started {songStartedLabel()}</span>
+                <button
+                  class="nowplaying-duration"
+                  type="button"
+                  title={showRemaining() ? 'show end time' : 'show time remaining'}
+                  onClick={() => setShowRemaining((prev) => !prev)}
+                >
+                  {showRemaining()
+                    ? `-${formatClock(Math.max(0, (currentSong()?.durationSeconds ?? 0) - liveDisplayPosition()))}`
+                    : `ends ${songEndsLabel()}`}
+                </button>
+              </div>
+            </div>
+          </Show>
+          <div class="volume-control local-volume">
+            <button
+              type="button"
+              class="volume-mute-btn"
+              aria-label={volume() === 0 ? 'unmute' : 'mute'}
+              aria-pressed={volume() === 0}
+              title={volume() === 0 ? 'unmute' : 'mute'}
+              onClick={toggleMute}
+            >
+              <Show when={volume() === 0} fallback={<Volume2 size={17} />}>
+                <VolumeX size={17} />
+              </Show>
+            </button>
+            <Show when={!isIosDevice()}>
+            <input
+              type="range"
+              aria-label="volume"
+              min="0"
+              max="1"
+              step="0.01"
+              value={volume()}
+              style={`--volume-progress: ${volume() * 100}%`}
+              onInput={(event) => {
+                const nextVolume = event.currentTarget.valueAsNumber
+                setVolume(nextVolume)
+                equalizer.setOutputVolume(nextVolume)
+                if (audioRef && !setElementVolume(audioRef, nextVolume) && hasStarted() && !isIosDevice()) {
+                  void equalizer.ensureGraph()
+                }
+              }}
+            />
+            </Show>
+          </div>
           <div class="nowplaying-meta-row">
             <div class="live-viewer-counter compact-viewer-counter" aria-live="polite">
               <Eye size={16} />
@@ -1304,50 +1501,6 @@ export default function RadioPage(props: RadioPageProps) {
                 </ul>
               </Show>
             </div>
-            <Show when={currentSong()}>
-              {(song) => {
-                const profile = () => profileFor(song().addedByDid)
-                return (
-                  <a class="track-attribution" href={`https://bsky.app/profile/${profile().handle}`} target="_blank" rel="noreferrer" title={`uploaded by @${profile().handle}`}>
-                    <ProfileAvatar profile={profile()} class="track-attribution-avatar" title={`@${profile().handle}`} />
-                    <span>
-                      uploaded by <strong>@{profile().handle}</strong>
-                    </span>
-                  </a>
-                )
-              }}
-            </Show>
-          </div>
-          <div class="volume-control local-volume">
-            <button
-              type="button"
-              class="volume-mute-btn"
-              aria-label={volume() === 0 ? 'unmute' : 'mute'}
-              aria-pressed={volume() === 0}
-              title={volume() === 0 ? 'unmute' : 'mute'}
-              onClick={toggleMute}
-            >
-              <Show when={volume() === 0} fallback={<Volume2 size={17} />}>
-                <VolumeX size={17} />
-              </Show>
-            </button>
-            <input
-              type="range"
-              aria-label="volume"
-              min="0"
-              max="1"
-              step="0.01"
-              value={volume()}
-              style={`--volume-progress: ${volume() * 100}%`}
-              onInput={(event) => {
-                const nextVolume = event.currentTarget.valueAsNumber
-                setVolume(nextVolume)
-                equalizer.setOutputVolume(nextVolume)
-                if (audioRef && !setElementVolume(audioRef, nextVolume) && hasStarted()) {
-                  void equalizer.ensureGraph()
-                }
-              }}
-            />
           </div>
         </section>
         <audio
@@ -1364,48 +1517,16 @@ export default function RadioPage(props: RadioPageProps) {
           {(url) => <audio src={url()} preload="auto" crossOrigin="anonymous" aria-hidden="true" style="display:none" />}
         </Show>
         {onMobile && tuneInCard()}
+        {onMobile && upNextCard()}
         {onMobile && chatCard()}
       </div>
 
       <Show when={!onMobile}>
         <aside class="radio-panel">
           {tuneInCard()}
+          {upNextCard()}
           {chatCard()}
-
-          <section class="glass-card up-next-card">
-            <div class="section-heading">
-              <p class="eyebrow">up next</p>
-              <span>{snapshot()?.state.status ?? 'loading'}</span>
-            </div>
-            <Show when={!snapshot.loading} fallback={<p class="muted">loading queue...</p>}>
-              <ul class="queue-list">
-                <For each={upNextPaging.paged()} fallback={<li class="muted">queue is empty</li>}>
-                  {(item, index) => {
-                    const profile = () => profileFor(item.queuedByDid)
-                    const hasCover = () => (songs() ?? []).some((song) => song.id === item.songId && song.hasCover)
-                    return (
-                      <li>
-                        <span class="queue-number">{upNextPaging.page() * queuePageSize + index() + 1}</span>
-                        <SongCoverThumb songId={item.songId} hasCover={hasCover()} baseUrl={selectedApiBase()} />
-                        <div class="up-next-copy">
-                          <span class="up-next-title">{item.title}</span>
-                          <small class="up-next-artist">{item.artist || 'unknown artist'}</small>
-                        </div>
-                        <ProfileAvatar profile={profile()} class="up-next-profile-avatar" title={`@${profile().handle}`} />
-                      </li>
-                    )
-                  }}
-                </For>
-              </ul>
-              <Show when={upNextPaging.pageCount() > 1}>
-                <PaginationRow page={upNextPaging.page()} pageCount={upNextPaging.pageCount()} onPageChange={upNextPaging.setPage} compact />
-              </Show>
-            </Show>
-          </section>
-
-          <section class="glass-card equalizer-card">
-            <EqualizerPanel controller={equalizer} />
-          </section>
+          {equalizerCard()}
         </aside>
       </Show>
       </section>
